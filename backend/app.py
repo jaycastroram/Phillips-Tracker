@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover - local SQLite dev can run without psyco
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "tracker.db"
+SEED_ITEMS_PATH = BASE_DIR / "data" / "seed_items.json"
 FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 IS_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
@@ -287,6 +288,48 @@ def write_audit_log(
     )
 
 
+def seed_tracker_items_if_empty(conn: Any) -> None:
+    if not SEED_ITEMS_PATH.exists():
+        return
+
+    row_count = execute(conn, "SELECT COUNT(*) AS row_count FROM tracker_items").fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    seed_items = json.loads(SEED_ITEMS_PATH.read_text(encoding="utf-8"))
+    for item in seed_items:
+        execute(
+            conn,
+            """
+            INSERT INTO tracker_items (
+                sheet, source_row, sort_order, date_or_buy, current_status,
+                visual_reference, brand, program_name, item_name, qty,
+                important_notes, mrl_order_number, estimated_ship_date,
+                estimated_ihd, tracking, extra_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item.get("sheet", "ad-hoc"),
+                item.get("source_row"),
+                item.get("sort_order", 0),
+                item.get("date_or_buy", ""),
+                item.get("current_status", ""),
+                item.get("visual_reference", ""),
+                item.get("brand", ""),
+                item.get("program_name", ""),
+                item.get("item_name", ""),
+                item.get("qty", ""),
+                item.get("important_notes", ""),
+                item.get("mrl_order_number", ""),
+                item.get("estimated_ship_date", ""),
+                item.get("estimated_ihd", ""),
+                item.get("tracking", ""),
+                item.get("extra_json", "{}"),
+            ),
+        )
+
+
 def init_db() -> None:
     with connect() as conn:
         if IS_POSTGRES:
@@ -437,6 +480,7 @@ def init_db() -> None:
                 """,
                 (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD)),
             )
+        seed_tracker_items_if_empty(conn)
 
 
 def row_to_item(row: sqlite3.Row) -> dict:

@@ -91,5 +91,6 @@ Render will:
 - install backend dependencies
 - build the React frontend
 - start the backend with `python backend/app.py`
+- load `backend/data/seed_items.json` into an empty tracker database
 
 Before deploying publicly, set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME` in Render.

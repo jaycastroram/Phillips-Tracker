@@ -1,0 +1,5 @@
+__pycache__/
+*.py[cod]
+backend/data/tracker.db
+frontend/dist/
+node_modules/
