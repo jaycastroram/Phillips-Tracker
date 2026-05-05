@@ -1,0 +1,980 @@
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import os
+import secrets
+import sqlite3
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Any, Literal
+
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, EmailStr, Field
+
+try:
+    import psycopg
+    from psycopg.rows import dict_row
+except ImportError:  # pragma: no cover - local SQLite dev can run without psycopg installed.
+    psycopg = None
+    dict_row = None
+
+
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "tracker.db"
+FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+IS_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
+SESSION_DAYS = 7
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_NAME = os.getenv("ADMIN_NAME", "Dev Admin")
+CORS_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    ).split(",")
+    if origin.strip()
+]
+DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
+if psycopg is not None:
+    DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
+
+SHEETS = {
+    "ad-hoc": {
+        "label": "Ad Hoc",
+        "dateLabel": "Request Date",
+        "statuses": [
+            "Details Needed",
+            "Quoting",
+            "Pending Feedback",
+            "Creative",
+            "Processing OA",
+            "OA Pending Approval",
+            "PPS Underway",
+            "PPS In Transit",
+            "PPS Pending Approval",
+            "Order In Production",
+            "Order In Transit",
+            "Delivered",
+            "ON HOLD",
+        ],
+    },
+    "buys": {
+        "label": "Buys",
+        "dateLabel": "Buy",
+        "statuses": [
+            "Details Needed",
+            "Quoting",
+            "Pending Feedback",
+            "Creative",
+            "FINAL Quoting",
+            "Canceled",
+            "Processing OA",
+            "OA Pending Approval",
+            "PPS Underway",
+            "PPS In Transit",
+            "PPS Pending Approval",
+            "Order In Production",
+            "Order In Transit",
+            "Delivered",
+            "ON HOLD",
+        ],
+    },
+    "completed": {
+        "label": "Completed",
+        "dateLabel": "Date/Buy",
+        "statuses": [
+            "Details Needed",
+            "Quoting",
+            "Pending Feedback",
+            "Creative",
+            "Processing OA",
+            "OA Pending Approval",
+            "PPS Underway",
+            "PPS In Transit",
+            "PPS Pending Approval",
+            "Order In Production",
+            "Order In Transit",
+            "Delivered",
+            "ON HOLD",
+        ],
+    },
+}
+
+EDITABLE_FIELDS = {
+    "date_or_buy",
+    "current_status",
+    "visual_reference",
+    "brand",
+    "program_name",
+    "item_name",
+    "qty",
+    "important_notes",
+    "mrl_order_number",
+    "estimated_ship_date",
+    "estimated_ihd",
+    "tracking",
+}
+
+Role = Literal["admin", "editor"]
+
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class ItemCreate(BaseModel):
+    sheet: str = "ad-hoc"
+    date_or_buy: str = ""
+    current_status: str = ""
+    visual_reference: str = ""
+    brand: str = ""
+    program_name: str = ""
+    item_name: str = ""
+    qty: str = ""
+    important_notes: str = ""
+    mrl_order_number: str = ""
+    estimated_ship_date: str = ""
+    estimated_ihd: str = ""
+    tracking: str = ""
+
+
+class ItemUpdate(BaseModel):
+    date_or_buy: str | None = None
+    current_status: str | None = None
+    visual_reference: str | None = None
+    brand: str | None = None
+    program_name: str | None = None
+    item_name: str | None = None
+    qty: str | None = None
+    important_notes: str | None = None
+    mrl_order_number: str | None = None
+    estimated_ship_date: str | None = None
+    estimated_ihd: str | None = None
+    tracking: str | None = None
+
+
+class ItemBatchUpdate(BaseModel):
+    id: int
+    changes: ItemUpdate
+
+
+class ItemChangeBatch(BaseModel):
+    creates: list[ItemCreate] = []
+    updates: list[ItemBatchUpdate] = []
+    deletes: list[int] = []
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    name: str = ""
+    password: str = Field(min_length=6)
+    role: Role = "editor"
+    is_active: bool = True
+
+
+class UserUpdate(BaseModel):
+    email: EmailStr | None = None
+    name: str | None = None
+    role: Role | None = None
+    is_active: bool | None = None
+
+
+class PasswordReset(BaseModel):
+    password: str = Field(min_length=6)
+
+
+def connect() -> Any:
+    if IS_POSTGRES:
+        if psycopg is None or dict_row is None:
+            raise RuntimeError("psycopg is required when DATABASE_URL points to PostgreSQL")
+        return psycopg.connect(DATABASE_URL, row_factory=dict_row)
+
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def db_sql(query: str) -> str:
+    if IS_POSTGRES:
+        return query.replace("?", "%s")
+    return query
+
+
+def execute(conn: Any, query: str, params: tuple | list = ()) -> Any:
+    return conn.execute(db_sql(query), tuple(params))
+
+
+def hash_password(password: str, salt: str | None = None) -> str:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return f"{salt}${digest.hex()}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    try:
+        salt, _ = password_hash.split("$", 1)
+    except ValueError:
+        return False
+    return hmac.compare_digest(hash_password(password, salt), password_hash)
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def user_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "email": row["email"],
+        "name": row["name"],
+        "role": row["role"],
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def audit_log_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "user_email": row["user_email"],
+        "action": row["action"],
+        "sheet": row["sheet"],
+        "item_id": row["item_id"],
+        "before": json.loads(row["before_json"] or "null"),
+        "after": json.loads(row["after_json"] or "null"),
+        "created_at": row["created_at"],
+    }
+
+
+def write_audit_log(
+    conn: Any,
+    user: sqlite3.Row,
+    action: str,
+    sheet: str | None = None,
+    item_id: int | None = None,
+    before: dict | None = None,
+    after: dict | None = None,
+) -> None:
+    execute(
+        conn,
+        """
+        INSERT INTO audit_logs (
+            user_id, user_email, action, sheet, item_id, before_json, after_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user["id"],
+            user["email"],
+            action,
+            sheet,
+            item_id,
+            json.dumps(before, default=str) if before is not None else None,
+            json.dumps(after, default=str) if after is not None else None,
+        ),
+    )
+
+
+def init_db() -> None:
+    with connect() as conn:
+        if IS_POSTGRES:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tracker_items (
+                    id SERIAL PRIMARY KEY,
+                    sheet TEXT NOT NULL,
+                    source_row INTEGER,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    date_or_buy TEXT,
+                    current_status TEXT,
+                    visual_reference TEXT,
+                    brand TEXT,
+                    program_name TEXT,
+                    item_name TEXT,
+                    qty TEXT,
+                    important_notes TEXT,
+                    mrl_order_number TEXT,
+                    estimated_ship_date TEXT,
+                    estimated_ihd TEXT,
+                    tracking TEXT,
+                    extra_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    email TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'editor')),
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                    expires_at TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id SERIAL PRIMARY KEY,
+                    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                    user_email TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    sheet TEXT,
+                    item_id INTEGER,
+                    before_json TEXT,
+                    after_json TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+        else:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS tracker_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sheet TEXT NOT NULL,
+                    source_row INTEGER,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    date_or_buy TEXT,
+                    current_status TEXT,
+                    visual_reference TEXT,
+                    brand TEXT,
+                    program_name TEXT,
+                    item_name TEXT,
+                    qty TEXT,
+                    important_notes TEXT,
+                    mrl_order_number TEXT,
+                    estimated_ship_date TEXT,
+                    estimated_ihd TEXT,
+                    tracking TEXT,
+                    extra_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS users (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    email TEXT NOT NULL UNIQUE,
+                    name TEXT NOT NULL DEFAULT '',
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('admin', 'editor')),
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    user_email TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    sheet TEXT,
+                    item_id INTEGER,
+                    before_json TEXT,
+                    after_json TEXT,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+                )
+                """
+            )
+
+        execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
+        existing_admin = execute(
+            conn,
+            "SELECT id FROM users WHERE lower(email) = lower(?)",
+            (ADMIN_EMAIL,),
+        ).fetchone()
+        if existing_admin is None:
+            execute(
+                conn,
+                """
+                INSERT INTO users (email, name, password_hash, role)
+                VALUES (?, ?, ?, 'admin')
+                """,
+                (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD)),
+            )
+
+
+def row_to_item(row: sqlite3.Row) -> dict:
+    item = dict(row)
+    item["extra"] = json.loads(item.pop("extra_json") or "{}")
+    return item
+
+
+init_db()
+app = FastAPI(title="Phillips Project Tracker API", version="0.2.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def get_current_user(authorization: str | None = Header(default=None)) -> sqlite3.Row:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing login token")
+
+    token = authorization.split(" ", 1)[1].strip()
+    with connect() as conn:
+        row = execute(
+            conn,
+            """
+            SELECT users.*
+            FROM sessions
+            JOIN users ON users.id = sessions.user_id
+            WHERE sessions.token = ? AND sessions.expires_at > ?
+            """,
+            (token, utc_now().isoformat()),
+        ).fetchone()
+
+    if row is None or not row["is_active"]:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired login token")
+    return row
+
+
+def require_admin(user: sqlite3.Row = Depends(get_current_user)) -> sqlite3.Row:
+    if user["role"] != "admin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Admin access required")
+    return user
+
+
+@app.get("/api/health")
+def health() -> dict:
+    return {"ok": True}
+
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest) -> dict:
+    with connect() as conn:
+        user = execute(
+            conn,
+            "SELECT * FROM users WHERE lower(email) = lower(?)",
+            (payload.email,),
+        ).fetchone()
+        if user is None or not verify_password(payload.password, user["password_hash"]):
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
+        if not user["is_active"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is inactive")
+
+        token = secrets.token_urlsafe(32)
+        expires_at = (utc_now() + timedelta(days=SESSION_DAYS)).isoformat()
+        execute(
+            conn,
+            "INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, ?)",
+            (token, user["id"], expires_at),
+        )
+
+    return {"token": token, "user": user_to_public(user)}
+
+
+@app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(
+    response: Response,
+    authorization: str | None = Header(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> Response:
+    del user
+    if authorization:
+        token = authorization.split(" ", 1)[1].strip()
+        with connect() as conn:
+            execute(conn, "DELETE FROM sessions WHERE token = ?", (token,))
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@app.get("/api/auth/me")
+def me(user: sqlite3.Row = Depends(get_current_user)) -> dict:
+    return {"user": user_to_public(user)}
+
+
+@app.get("/api/sheets")
+def get_sheets(user: sqlite3.Row = Depends(get_current_user)) -> dict:
+    del user
+    return {"sheets": SHEETS}
+
+
+@app.get("/api/items")
+def list_items(
+    sheet: str = "ad-hoc",
+    q: str = "",
+    status_filter: str = Query("", alias="status"),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    del user
+    if sheet not in SHEETS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
+
+    clauses = ["sheet = ?"]
+    args: list[str] = [sheet]
+    if status_filter:
+        clauses.append("current_status = ?")
+        args.append(status_filter)
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        clauses.append(
+            "("
+            "lower(brand) LIKE ? OR lower(program_name) LIKE ? OR "
+            "lower(item_name) LIKE ? OR lower(important_notes) LIKE ? OR "
+            "lower(mrl_order_number) LIKE ? OR lower(tracking) LIKE ?"
+            ")"
+        )
+        args.extend([like] * 6)
+
+    with connect() as conn:
+        rows = execute(
+            conn,
+            f"""
+            SELECT * FROM tracker_items
+            WHERE {' AND '.join(clauses)}
+            ORDER BY sort_order ASC, id ASC
+            """,
+            args,
+        ).fetchall()
+    return {"items": [row_to_item(row) for row in rows]}
+
+
+@app.post("/api/items", status_code=status.HTTP_201_CREATED)
+def create_item(payload: ItemCreate, user: sqlite3.Row = Depends(get_current_user)) -> dict:
+    if payload.sheet not in SHEETS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
+
+    with connect() as conn:
+        max_sort_row = execute(
+            conn,
+            "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM tracker_items WHERE sheet = ?",
+            (payload.sheet,),
+        ).fetchone()
+        max_sort = max_sort_row["max_sort"]
+        values = (
+            payload.sheet,
+            max_sort + 1,
+            payload.date_or_buy,
+            payload.current_status,
+            payload.visual_reference,
+            payload.brand,
+            payload.program_name,
+            payload.item_name,
+            payload.qty,
+            payload.important_notes,
+            payload.mrl_order_number,
+            payload.estimated_ship_date,
+            payload.estimated_ihd,
+            payload.tracking,
+        )
+        if IS_POSTGRES:
+            row = execute(
+                conn,
+                """
+                INSERT INTO tracker_items (
+                    sheet, sort_order, date_or_buy, current_status, visual_reference,
+                    brand, program_name, item_name, qty, important_notes,
+                    mrl_order_number, estimated_ship_date, estimated_ihd, tracking
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                values,
+            ).fetchone()
+        else:
+            cursor = execute(
+                conn,
+                """
+                INSERT INTO tracker_items (
+                    sheet, sort_order, date_or_buy, current_status, visual_reference,
+                    brand, program_name, item_name, qty, important_notes,
+                    mrl_order_number, estimated_ship_date, estimated_ihd, tracking
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        write_audit_log(
+            conn,
+            user,
+            "create",
+            sheet=payload.sheet,
+            item_id=row["id"],
+            after=row_to_item(row),
+        )
+    return {"item": row_to_item(row)}
+
+
+@app.patch("/api/items/{item_id}")
+def update_item(item_id: int, payload: ItemUpdate, user: sqlite3.Row = Depends(get_current_user)) -> dict:
+    updates = payload.model_dump(exclude_unset=True)
+    updates = {key: "" if value is None else str(value) for key, value in updates.items()}
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No editable fields supplied")
+
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    values = list(updates.values())
+    values.append(item_id)
+
+    with connect() as conn:
+        before_row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (item_id,)).fetchone()
+        if before_row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+        cursor = execute(
+            conn,
+            f"""
+            UPDATE tracker_items
+            SET {assignments}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            values,
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+        row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (item_id,)).fetchone()
+        write_audit_log(
+            conn,
+            user,
+            "update",
+            sheet=row["sheet"],
+            item_id=item_id,
+            before=row_to_item(before_row),
+            after=row_to_item(row),
+        )
+    return {"item": row_to_item(row)}
+
+
+@app.delete("/api/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_item(
+    item_id: int,
+    response: Response,
+    user: sqlite3.Row = Depends(require_admin),
+) -> Response:
+    with connect() as conn:
+        before_row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (item_id,)).fetchone()
+        if before_row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+        cursor = execute(conn, "DELETE FROM tracker_items WHERE id = ?", (item_id,))
+        write_audit_log(
+            conn,
+            user,
+            "delete",
+            sheet=before_row["sheet"],
+            item_id=item_id,
+            before=row_to_item(before_row),
+        )
+    if cursor.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@app.post("/api/items/changes")
+def submit_item_changes(
+    payload: ItemChangeBatch,
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    created = 0
+    updated = 0
+    deleted = 0
+
+    with connect() as conn:
+        for create_payload in payload.creates:
+            if create_payload.sheet not in SHEETS:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
+            max_sort_row = execute(
+                conn,
+                "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM tracker_items WHERE sheet = ?",
+                (create_payload.sheet,),
+            ).fetchone()
+            values = (
+                create_payload.sheet,
+                max_sort_row["max_sort"] + 1,
+                create_payload.date_or_buy,
+                create_payload.current_status,
+                create_payload.visual_reference,
+                create_payload.brand,
+                create_payload.program_name,
+                create_payload.item_name,
+                create_payload.qty,
+                create_payload.important_notes,
+                create_payload.mrl_order_number,
+                create_payload.estimated_ship_date,
+                create_payload.estimated_ihd,
+                create_payload.tracking,
+            )
+            if IS_POSTGRES:
+                row = execute(
+                    conn,
+                    """
+                    INSERT INTO tracker_items (
+                        sheet, sort_order, date_or_buy, current_status, visual_reference,
+                        brand, program_name, item_name, qty, important_notes,
+                        mrl_order_number, estimated_ship_date, estimated_ihd, tracking
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING *
+                    """,
+                    values,
+                ).fetchone()
+            else:
+                cursor = execute(
+                    conn,
+                    """
+                    INSERT INTO tracker_items (
+                        sheet, sort_order, date_or_buy, current_status, visual_reference,
+                        brand, program_name, item_name, qty, important_notes,
+                        mrl_order_number, estimated_ship_date, estimated_ihd, tracking
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    values,
+                )
+                row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            created += 1
+            write_audit_log(
+                conn,
+                user,
+                "create",
+                sheet=create_payload.sheet,
+                item_id=row["id"],
+                after=row_to_item(row),
+            )
+
+        for update_payload in payload.updates:
+            updates = update_payload.changes.model_dump(exclude_unset=True)
+            updates = {key: "" if value is None else str(value) for key, value in updates.items()}
+            if not updates:
+                continue
+            before_row = execute(
+                conn,
+                "SELECT * FROM tracker_items WHERE id = ?",
+                (update_payload.id,),
+            ).fetchone()
+            if before_row is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+            assignments = ", ".join(f"{field} = ?" for field in updates)
+            values = list(updates.values())
+            values.append(update_payload.id)
+            execute(
+                conn,
+                f"""
+                UPDATE tracker_items
+                SET {assignments}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                values,
+            )
+            after_row = execute(
+                conn,
+                "SELECT * FROM tracker_items WHERE id = ?",
+                (update_payload.id,),
+            ).fetchone()
+            updated += 1
+            write_audit_log(
+                conn,
+                user,
+                "update",
+                sheet=after_row["sheet"],
+                item_id=update_payload.id,
+                before=row_to_item(before_row),
+                after=row_to_item(after_row),
+            )
+
+        for item_id in payload.deletes:
+            before_row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (item_id,)).fetchone()
+            if before_row is None:
+                continue
+            execute(conn, "DELETE FROM tracker_items WHERE id = ?", (item_id,))
+            deleted += 1
+            write_audit_log(
+                conn,
+                user,
+                "delete",
+                sheet=before_row["sheet"],
+                item_id=item_id,
+                before=row_to_item(before_row),
+            )
+
+    return {"ok": True, "created": created, "updated": updated, "deleted": deleted}
+
+
+@app.get("/api/admin/users")
+def list_users(user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    with connect() as conn:
+        rows = execute(conn, "SELECT * FROM users ORDER BY created_at DESC, id DESC").fetchall()
+    return {"users": [user_to_public(row) for row in rows]}
+
+
+@app.get("/api/admin/audit-logs")
+def list_audit_logs(user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    with connect() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT * FROM audit_logs
+            ORDER BY created_at DESC, id DESC
+            LIMIT 250
+            """,
+        ).fetchall()
+    return {"logs": [audit_log_to_public(row) for row in rows]}
+
+
+@app.post("/api/admin/users", status_code=status.HTTP_201_CREATED)
+def create_user(payload: UserCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    try:
+        with connect() as conn:
+            values = (
+                str(payload.email).lower(),
+                payload.name,
+                hash_password(payload.password),
+                payload.role,
+                payload.is_active,
+            )
+            if IS_POSTGRES:
+                row = execute(
+                    conn,
+                    """
+                    INSERT INTO users (email, name, password_hash, role, is_active)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING *
+                    """,
+                    values,
+                ).fetchone()
+            else:
+                cursor = execute(
+                    conn,
+                    """
+                    INSERT INTO users (email, name, password_hash, role, is_active)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    values,
+                )
+                row = execute(conn, "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    except DB_INTEGRITY_ERRORS:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A user with that email already exists")
+    return {"user": user_to_public(row)}
+
+
+@app.patch("/api/admin/users/{user_id}")
+def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    if user_id == user["id"] and payload.is_active is False:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "You cannot deactivate your own account")
+
+    updates = payload.model_dump(exclude_unset=True)
+    if "email" in updates and updates["email"] is not None:
+        updates["email"] = str(updates["email"]).lower()
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No user fields supplied")
+
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    values = list(updates.values())
+    values.append(user_id)
+
+    try:
+        with connect() as conn:
+            cursor = execute(
+                conn,
+                f"""
+                UPDATE users
+                SET {assignments}, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                values,
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+            row = execute(conn, "SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    except DB_INTEGRITY_ERRORS:
+        raise HTTPException(status.HTTP_409_CONFLICT, "A user with that email already exists")
+    return {"user": user_to_public(row)}
+
+
+@app.post("/api/admin/users/{user_id}/reset-password")
+def reset_password(
+    user_id: int,
+    payload: PasswordReset,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    del user
+    with connect() as conn:
+        cursor = execute(
+            conn,
+            """
+            UPDATE users
+            SET password_hash = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (hash_password(payload.password), user_id),
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+        execute(conn, "DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    return {"ok": True}
+
+
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def serve_frontend(full_path: str) -> FileResponse:
+        requested_file = FRONTEND_DIST / full_path
+        if full_path and requested_file.is_file():
+            return FileResponse(requested_file)
+        return FileResponse(FRONTEND_DIST / "index.html")
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")))

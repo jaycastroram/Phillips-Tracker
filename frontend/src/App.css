@@ -1,0 +1,771 @@
+.app-shell {
+  min-height: 100vh;
+  padding: 0 32px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background:
+    linear-gradient(90deg, rgba(204, 204, 204, 0.3) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(204, 204, 204, 0.3) 1px, transparent 1px),
+    var(--brand-white);
+  background-size: 48px 48px;
+}
+
+.toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.brand-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-inline: -32px;
+  padding: 12px 32px;
+  border-bottom: 1px solid var(--brand-light-gray);
+  background: var(--brand-white);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.06);
+}
+
+.brand-topline {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+}
+
+.smartbuy-logo {
+  width: 126px;
+  height: auto;
+  display: block;
+}
+
+.client-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 18px 0 10px;
+  text-align: left;
+}
+
+.client-title-copy {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.phillips-logo {
+  width: 235px;
+  max-width: 34vw;
+  height: auto;
+  display: block;
+}
+
+.client-title-divider {
+  width: 2px;
+  align-self: stretch;
+  min-height: 54px;
+  background: var(--brand-red);
+}
+
+.app-nav,
+.tracker-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--brand-red);
+  font-family: "Poppins", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.client-title-row h1 {
+  margin: 0;
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+  font-size: clamp(24px, 3vw, 38px);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.subtitle {
+  margin: 10px 0 0;
+  color: var(--brand-ink);
+  letter-spacing: 0.05em;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.primary-action,
+.app-nav button,
+.tabs button,
+.status-summary button,
+.actions button {
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.app-nav button {
+  padding: 10px 14px;
+}
+
+.app-nav button.active {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+  color: var(--brand-white);
+}
+
+.primary-action {
+  padding: 12px 18px;
+  background: var(--brand-red);
+  color: var(--brand-white);
+  border-color: var(--brand-red);
+  box-shadow: 0 12px 30px rgba(253, 67, 56, 0.18);
+}
+
+.submit-action {
+  border: 1px solid var(--brand-light-gray);
+  border-radius: 999px;
+  padding: 12px 18px;
+  background: var(--brand-light-gray);
+  color: var(--brand-dark-gray);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.submit-action.ready {
+  border-color: var(--brand-blue);
+  background: var(--brand-blue);
+  color: var(--brand-white);
+  box-shadow: 0 12px 30px rgba(75, 120, 255, 0.18);
+}
+
+.submit-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.8;
+}
+
+.auth-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    linear-gradient(90deg, rgba(204, 204, 204, 0.3) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(204, 204, 204, 0.3) 1px, transparent 1px),
+    var(--brand-white);
+  background-size: 48px 48px;
+}
+
+.auth-card {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 16px;
+  padding: 32px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+}
+
+.auth-logo {
+  width: 160px;
+  height: auto;
+}
+
+.auth-card h1,
+.admin-create-card h2 {
+  margin: 0;
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+}
+
+.auth-card label,
+.admin-create-card label {
+  display: grid;
+  gap: 6px;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.auth-card input,
+.admin-create-card input,
+.admin-create-card select {
+  min-height: 42px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+}
+
+.dev-note,
+.muted {
+  color: #666;
+  font-size: 12px;
+}
+
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tabs button {
+  padding: 10px 16px;
+}
+
+.tabs button.active {
+  background: var(--brand-black);
+  color: var(--brand-white);
+  border-color: var(--brand-black);
+}
+
+.toolbar {
+  padding: 16px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.08);
+}
+
+.toolbar label {
+  min-width: min(360px, 100%);
+  display: grid;
+  gap: 6px;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.toolbar input,
+.toolbar select {
+  min-height: 42px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+}
+
+.secondary-action {
+  min-height: 42px;
+  align-self: end;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 0 16px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.row-count {
+  margin-left: auto;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.error {
+  border: 1px solid #fecaca;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #fef2f2;
+  color: var(--brand-red);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.success {
+  border: 1px solid #bbf7d0;
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: #f0fdf4;
+  color: #166534;
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.admin-page {
+  display: grid;
+  gap: 20px;
+}
+
+.admin-create-card {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(120px, 1fr));
+  gap: 14px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 50px rgba(0, 0, 0, 0.08);
+}
+
+.admin-create-card h2 {
+  grid-column: 1 / -1;
+}
+
+.checkbox-label {
+  min-height: 42px;
+  display: flex !important;
+  align-items: center;
+  gap: 8px !important;
+}
+
+.checkbox-label input,
+td.actions input[type="checkbox"] {
+  width: auto;
+}
+
+.admin-users-card table {
+  width: 100%;
+  min-width: 900px;
+}
+
+.audit-log-card table {
+  width: 100%;
+  min-width: 980px;
+}
+
+.status-summary {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.status-summary button {
+  min-width: 150px;
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+  padding: 14px 18px;
+  border-color: var(--brand-light-gray);
+  background: var(--brand-light-gray);
+  color: var(--brand-black);
+  text-align: center;
+}
+
+.status-summary strong {
+  order: 2;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.status-summary span {
+  order: 1;
+  color: var(--brand-black);
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.table-card {
+  border: 1px solid var(--brand-gridline);
+  border-radius: 22px;
+  background: var(--brand-white);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.table-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--brand-gridline);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--brand-ink);
+  font-size: 13px;
+}
+
+.table-tool-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.table-tool-actions label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.table-tool-actions select {
+  min-height: 34px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 0 30px 0 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.table-tools button,
+.table-pagination button {
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 7px 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+td.actions button {
+  border-color: var(--brand-red);
+  background: var(--brand-red);
+  color: var(--brand-white);
+}
+
+.table-scroll {
+  overflow: auto;
+  height: clamp(520px, 68vh, 760px);
+}
+
+table {
+  width: max-content;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--brand-gridline);
+  border-right: 1px solid var(--brand-gridline);
+  padding: 8px;
+  vertical-align: top;
+}
+
+th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--brand-black);
+  color: var(--brand-white);
+  font-family: "Poppins", sans-serif;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: left;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.column-sort {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 0;
+  padding: 0 14px 0 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: left;
+  text-transform: inherit;
+}
+
+.sort-arrows {
+  display: inline-grid;
+  gap: 1px;
+  color: #8f8f8f;
+  font-size: 9px;
+  line-height: 1;
+}
+
+.sort-arrows .active {
+  color: var(--brand-white);
+}
+
+.column-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  z-index: 2;
+  width: 10px;
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  cursor: col-resize;
+}
+
+.column-resizer::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  right: 4px;
+  bottom: 8px;
+  width: 2px;
+  border-radius: 99px;
+  background: transparent;
+}
+
+.column-resizer:hover::after,
+.is-resizing-column .column-resizer::after {
+  background: var(--brand-blue);
+}
+
+.is-resizing-column {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--brand-gridline);
+  background: rgba(255, 255, 255, 0.96);
+  color: var(--brand-ink);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.table-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+td {
+  background: var(--brand-white);
+}
+
+td.actions,
+th.actions {
+  text-align: center;
+}
+
+td input,
+td select,
+td textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--brand-soft);
+  color: var(--brand-black);
+}
+
+td input:focus,
+td select:focus,
+td textarea:focus {
+  outline: 2px solid var(--brand-blue);
+  background: var(--brand-white);
+}
+
+td textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.saving {
+  display: block;
+  margin-top: 4px;
+  color: var(--brand-blue);
+  font-family: "Poppins", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.empty-state {
+  padding: 48px;
+  color: var(--brand-ink);
+  text-align: center;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.modal-card {
+  width: min(980px, 100%);
+  max-height: min(88vh, 840px);
+  display: grid;
+  gap: 18px;
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 24px;
+  background: var(--brand-white);
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.24);
+}
+
+.modal-header,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+}
+
+.modal-header button,
+.modal-actions button:not(.primary-action) {
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 10px 14px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+}
+
+.add-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 14px;
+}
+
+.add-form-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.add-form-grid input,
+.add-form-grid select,
+.add-form-grid textarea {
+  min-height: 42px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 0 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+}
+
+.add-form-grid textarea {
+  min-height: 96px;
+  padding-block: 10px;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .app-shell {
+    padding: 0 18px 18px;
+  }
+
+  .brand-header {
+    align-items: flex-start;
+    flex-direction: column;
+    margin-inline: -18px;
+    padding: 12px 18px;
+  }
+
+  .client-title-row {
+    align-items: flex-start;
+    flex-direction: column;
+    text-align: left;
+  }
+
+  .client-title-copy {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .client-title-divider {
+    width: 72px;
+    min-height: 2px;
+  }
+
+  .toolbar {
+    align-items: stretch;
+  }
+
+  .row-count {
+    margin-left: 0;
+  }
+
+  .table-tools,
+  .table-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .table-tool-actions,
+  .pagination-actions {
+    justify-content: flex-start;
+  }
+
+  .table-scroll {
+    height: 520px;
+  }
+
+  .admin-create-card {
+    grid-template-columns: 1fr;
+  }
+}
