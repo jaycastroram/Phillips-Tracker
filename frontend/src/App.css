@@ -232,6 +232,47 @@ button {
   color: var(--brand-black);
 }
 
+.password-field {
+  position: relative;
+}
+
+.password-field input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+  color: var(--brand-dark-gray);
+  transform: translateY(-50%);
+}
+
+.password-toggle:hover,
+.password-toggle:focus-visible {
+  background: var(--brand-soft);
+  color: var(--brand-blue);
+}
+
+.password-toggle svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .dev-note,
 .muted {
   color: #666;
@@ -617,6 +658,49 @@ td textarea:focus {
 td textarea {
   min-height: 68px;
   resize: vertical;
+}
+
+.visual-reference-field {
+  display: grid;
+  gap: 6px;
+}
+
+.visual-reference-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.visual-reference-actions a,
+.upload-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 0 10px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.upload-chip {
+  cursor: pointer;
+}
+
+.upload-chip:hover,
+.visual-reference-actions a:hover {
+  border-color: var(--brand-blue);
+  color: var(--brand-blue);
+}
+
+.upload-chip input {
+  display: none;
 }
 
 .saving {

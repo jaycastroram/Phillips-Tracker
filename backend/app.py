@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import json
 import os
 import secrets
@@ -10,11 +11,17 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
+
+try:
+    import cloudinary
+    import cloudinary.uploader
+except ImportError:  # pragma: no cover - uploads are disabled until the dependency is installed.
+    cloudinary = None
 
 try:
     import psycopg
@@ -32,8 +39,11 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 IS_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 SESSION_DAYS = 7
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "admin@example.com")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Admin123")
 ADMIN_NAME = os.getenv("ADMIN_NAME", "Dev Admin")
+CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()
+CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "").strip()
+CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "").strip()
 CORS_ORIGINS = [
     origin.strip()
     for origin in os.getenv(
@@ -45,6 +55,14 @@ CORS_ORIGINS = [
 DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError,)
 if psycopg is not None:
     DB_INTEGRITY_ERRORS = (sqlite3.IntegrityError, psycopg.IntegrityError)
+
+if cloudinary is not None:
+    cloudinary.config(
+        cloud_name=CLOUDINARY_CLOUD_NAME,
+        api_key=CLOUDINARY_API_KEY,
+        api_secret=CLOUDINARY_API_SECRET,
+        secure=True,
+    )
 
 SHEETS = {
     "ad-hoc": {
@@ -122,6 +140,8 @@ EDITABLE_FIELDS = {
     "estimated_ihd",
     "tracking",
 }
+ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp"}
+MAX_UPLOAD_BYTES = 8 * 1024 * 1024
 
 Role = Literal["admin", "editor"]
 
@@ -581,6 +601,34 @@ def me(user: sqlite3.Row = Depends(get_current_user)) -> dict:
 def get_sheets(user: sqlite3.Row = Depends(get_current_user)) -> dict:
     del user
     return {"sheets": SHEETS}
+
+
+@app.post("/api/uploads/visual-reference")
+async def upload_visual_reference(
+    file: UploadFile = File(...),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    del user
+    if cloudinary is None:
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Cloudinary dependency is not installed")
+    if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Cloudinary is not configured")
+    if file.content_type not in ALLOWED_UPLOAD_TYPES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Upload a JPG, PNG, or WEBP image")
+
+    contents = await file.read()
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image must be 8 MB or smaller")
+
+    result = cloudinary.uploader.upload(
+        io.BytesIO(contents),
+        folder="phillips-tracker/visual-references",
+        resource_type="image",
+    )
+    return {
+        "url": result["secure_url"],
+        "public_id": result["public_id"],
+    }
 
 
 @app.get("/api/items")

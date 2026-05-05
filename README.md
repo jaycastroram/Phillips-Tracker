@@ -19,7 +19,7 @@ React + FastAPI replacement for the Excel tracker tabs:
 For local development, the backend creates this admin automatically unless env vars override it:
 
 - Email: `admin@example.com`
-- Password: `admin123`
+- Password: `Admin123`
 
 For Render/production, set:
 
@@ -27,6 +27,9 @@ For Render/production, set:
 - `ADMIN_PASSWORD`
 - `ADMIN_NAME`
 - `DATABASE_URL` from the Render PostgreSQL database
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
 
 ## Import the Workbook
 
@@ -93,4 +96,5 @@ Render will:
 - start the backend with `python backend/app.py`
 - load `backend/data/seed_items.json` into an empty tracker database
 
-Before deploying publicly, set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ADMIN_NAME` in Render.
+Before deploying publicly, set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, and the
+`CLOUDINARY_*` values in Render.

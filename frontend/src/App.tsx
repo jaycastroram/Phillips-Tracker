@@ -139,10 +139,12 @@ function App() {
   const [usersLoading, setUsersLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
+  const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [authError, setAuthError] = useState('')
   const [adminMessage, setAdminMessage] = useState('')
-  const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'admin123' })
+  const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
+  const [showNewUserPassword, setShowNewUserPassword] = useState(false)
   const [newUser, setNewUser] = useState({
     email: '',
     name: '',
@@ -185,7 +187,7 @@ function App() {
 
   const apiFetch = useCallback(async (path: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers)
-    if (!headers.has('Content-Type') && options.body) {
+    if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
       headers.set('Content-Type', 'application/json')
     }
     if (token) headers.set('Authorization', `Bearer ${token}`)
@@ -402,6 +404,43 @@ function App() {
       delete next[itemId]
       return next
     })
+  }
+
+  async function uploadVisualReference(
+    file: File,
+    uploadKey: string,
+    applyUrl: (url: string) => void,
+  ) {
+    if (!file.type.startsWith('image/')) {
+      setError('Please upload a picture file.')
+      return
+    }
+
+    const formData = new FormData()
+    formData.append('file', file)
+    setUploadingVisualReference(uploadKey)
+    setError('')
+
+    try {
+      const response = await apiFetch('/uploads/visual-reference', {
+        method: 'POST',
+        body: formData,
+      })
+      if (!response.ok) {
+        const message =
+          response.status === 500
+            ? 'Cloudinary is not configured yet.'
+            : 'Unable to upload that image.'
+        throw new Error(message)
+      }
+
+      const data = await response.json()
+      applyUrl(data.url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to upload that image.')
+    } finally {
+      setUploadingVisualReference(null)
+    }
   }
 
   async function submitChanges() {
@@ -667,7 +706,7 @@ function App() {
           <button className="primary-action" type="submit">
             Log In
           </button>
-          <p className="dev-note">Dev admin: admin@example.com / admin123</p>
+          <p className="dev-note">Dev admin: admin@example.com / Admin123</p>
         </form>
       </main>
     )
@@ -761,15 +800,28 @@ function App() {
             </label>
             <label>
               Temporary Password
-              <input
-                required
-                minLength={6}
-                type="password"
-                value={newUser.password}
-                onChange={(event) =>
-                  setNewUser((current) => ({ ...current, password: event.target.value }))
-                }
-              />
+              <div className="password-field">
+                <input
+                  required
+                  minLength={6}
+                  type={showNewUserPassword ? 'text' : 'password'}
+                  value={newUser.password}
+                  onChange={(event) =>
+                    setNewUser((current) => ({ ...current, password: event.target.value }))
+                  }
+                />
+                <button
+                  aria-label={showNewUserPassword ? 'Hide temporary password' : 'Show temporary password'}
+                  className="password-toggle"
+                  type="button"
+                  onClick={() => setShowNewUserPassword((current) => !current)}
+                >
+                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </div>
             </label>
             <label>
               Role
@@ -1042,6 +1094,44 @@ function App() {
                             </option>
                           ))}
                         </select>
+                      ) : column.field === 'visual_reference' ? (
+                        <div className="visual-reference-field">
+                          <input
+                            value={addForm.visual_reference}
+                            onChange={(event) =>
+                              setAddForm((current) => ({
+                                ...current,
+                                visual_reference: event.target.value,
+                              }))
+                            }
+                            placeholder="Paste a URL or upload an image"
+                          />
+                          <div className="visual-reference-actions">
+                            <label className="upload-chip">
+                              {uploadingVisualReference === 'add-visual-reference'
+                                ? 'Uploading...'
+                                : 'Upload Image'}
+                              <input
+                                accept="image/jpeg,image/png,image/webp"
+                                disabled={uploadingVisualReference === 'add-visual-reference'}
+                                type="file"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0]
+                                  event.target.value = ''
+                                  if (!file) return
+                                  uploadVisualReference(file, 'add-visual-reference', (url) =>
+                                    setAddForm((current) => ({ ...current, visual_reference: url })),
+                                  )
+                                }}
+                              />
+                            </label>
+                            {addForm.visual_reference && (
+                              <a href={addForm.visual_reference} target="_blank" rel="noreferrer">
+                                Preview
+                              </a>
+                            )}
+                          </div>
+                        </div>
                       ) : column.field === 'important_notes' || column.field === 'tracking' ? (
                         <textarea
                           value={addForm[column.field]}
@@ -1195,6 +1285,40 @@ function App() {
                                 </option>
                               ))}
                             </select>
+                          ) : column.field === 'visual_reference' ? (
+                            <div className="visual-reference-field">
+                              <input
+                                value={value}
+                                onChange={(event) =>
+                                  updateDraft(item.id, column.field, event.target.value)
+                                }
+                              />
+                              <div className="visual-reference-actions">
+                                <label className="upload-chip">
+                                  {uploadingVisualReference === `${item.id}-visual-reference`
+                                    ? 'Uploading...'
+                                    : 'Upload'}
+                                  <input
+                                    accept="image/jpeg,image/png,image/webp"
+                                    disabled={uploadingVisualReference === `${item.id}-visual-reference`}
+                                    type="file"
+                                    onChange={(event) => {
+                                      const file = event.target.files?.[0]
+                                      event.target.value = ''
+                                      if (!file) return
+                                      uploadVisualReference(file, `${item.id}-visual-reference`, (url) =>
+                                        updateDraft(item.id, column.field, url),
+                                      )
+                                    }}
+                                  />
+                                </label>
+                                {value && (
+                                  <a href={value} target="_blank" rel="noreferrer">
+                                    Preview
+                                  </a>
+                                )}
+                              </div>
+                            </div>
                           ) : column.field === 'important_notes' || column.field === 'tracking' ? (
                             <textarea
                               value={value}
