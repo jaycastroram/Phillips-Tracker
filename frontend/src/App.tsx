@@ -647,6 +647,20 @@ function App() {
     setCurrentTablePage(1)
   }
 
+  function isImageReference(value: string) {
+    if (!value.trim()) return false
+
+    try {
+      const url = new URL(value)
+      return (
+        url.hostname.includes('res.cloudinary.com') ||
+        /\.(avif|gif|jpe?g|png|webp)$/i.test(url.pathname)
+      )
+    } catch {
+      return false
+    }
+  }
+
   function auditLogSummary(log: AuditLog) {
     if (log.action === 'update' && log.before && log.after) {
       const changes = BASE_COLUMNS.flatMap((column) => {
@@ -1096,6 +1110,16 @@ function App() {
                         </select>
                       ) : column.field === 'visual_reference' ? (
                         <div className="visual-reference-field">
+                          {isImageReference(addForm.visual_reference) && (
+                            <a
+                              className="visual-reference-preview"
+                              href={addForm.visual_reference}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              <img src={addForm.visual_reference} alt="Visual reference preview" />
+                            </a>
+                          )}
                           <input
                             value={addForm.visual_reference}
                             onChange={(event) =>
@@ -1287,6 +1311,16 @@ function App() {
                             </select>
                           ) : column.field === 'visual_reference' ? (
                             <div className="visual-reference-field">
+                              {isImageReference(value) && (
+                                <a
+                                  className="visual-reference-preview"
+                                  href={value}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  <img src={value} alt="Visual reference preview" />
+                                </a>
+                              )}
                               <input
                                 value={value}
                                 onChange={(event) =>

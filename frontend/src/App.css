@@ -665,6 +665,21 @@ td textarea {
   gap: 6px;
 }
 
+.visual-reference-preview {
+  display: block;
+  overflow: hidden;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  background: var(--brand-soft);
+}
+
+.visual-reference-preview img {
+  width: 100%;
+  height: 120px;
+  display: block;
+  object-fit: contain;
+}
+
 .visual-reference-actions {
   display: flex;
   align-items: center;
