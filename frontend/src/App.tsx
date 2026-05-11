@@ -15,6 +15,7 @@ type Role = 'admin' | 'editor'
 type Page = 'tracker' | 'admin-users' | 'system-log'
 type RowPageSize = 10 | 20 | 30 | 'all'
 type SortDirection = 'asc' | 'desc'
+type ViewerStatus = 'on-track' | 'not-on-track'
 
 type SheetMeta = {
   label: string
@@ -76,7 +77,15 @@ type AppUser = {
 const API_BASE = '/api'
 const AUTH_STORAGE_KEY = 'phillips-tracker-auth-token'
 const SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys', 'completed']
+const PUBLIC_SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys']
 const COLUMN_WIDTH_STORAGE_KEY = 'phillips-tracker-column-widths'
+const NOT_ON_TRACK_STATUSES = new Set([
+  'Details Needed',
+  'Quoting',
+  'Pending Feedback',
+  'ON HOLD',
+  'Canceled',
+])
 
 const BASE_COLUMNS: { field: EditableField; label: string; width: number; className?: string }[] = [
   { field: 'date_or_buy', label: 'Date/Buy', width: 140 },
@@ -114,6 +123,7 @@ const EMPTY_ITEM_DRAFT: ItemDraft = {
 }
 
 function App() {
+  const [currentPath, setCurrentPath] = useState(window.location.pathname)
   const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '')
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null)
   const [page, setPage] = useState<Page>('tracker')
@@ -124,7 +134,9 @@ function App() {
   const [users, setUsers] = useState<AppUser[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [query, setQuery] = useState('')
+  const [publicQuery, setPublicQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
+  const [publicItems, setPublicItems] = useState<TrackerItem[]>([])
   const [rowPageSize, setRowPageSize] = useState<RowPageSize>(20)
   const [currentTablePage, setCurrentTablePage] = useState(1)
   const [sortField, setSortField] = useState<EditableField>('date_or_buy')
@@ -136,11 +148,13 @@ function App() {
   const [addForm, setAddForm] = useState<ItemDraft>(EMPTY_ITEM_DRAFT)
   const [refreshItemsToken, setRefreshItemsToken] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [publicLoading, setPublicLoading] = useState(false)
   const [usersLoading, setUsersLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [publicError, setPublicError] = useState('')
   const [authError, setAuthError] = useState('')
   const [adminMessage, setAdminMessage] = useState('')
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
@@ -170,6 +184,18 @@ function App() {
         : column,
     )
   }, [activeSheet, sheets])
+
+  const isPublicViewerPath = currentPath === '/viewer' || currentPath === '/viewer/kanban'
+  const isPublicKanbanPath = currentPath === '/viewer/kanban'
+
+  useEffect(() => {
+    function handlePopState() {
+      setCurrentPath(window.location.pathname)
+    }
+
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
 
   const handleLogout = useCallback(() => {
     window.localStorage.removeItem(AUTH_STORAGE_KEY)
@@ -249,6 +275,36 @@ function App() {
 
     loadCurrentUser()
   }, [handleLogout, token])
+
+  useEffect(() => {
+    if (!isPublicViewerPath) return
+
+    const controller = new AbortController()
+
+    async function loadPublicItems() {
+      setPublicLoading(true)
+      setPublicError('')
+      const params = new URLSearchParams()
+      if (publicQuery.trim()) params.set('q', publicQuery.trim())
+
+      try {
+        const response = await fetch(`${API_BASE}/public/items?${params}`, {
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('Unable to load viewer data.')
+        const data = await response.json()
+        setPublicItems(data.items)
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return
+        setPublicError(err instanceof Error ? err.message : 'Unable to load viewer data.')
+      } finally {
+        setPublicLoading(false)
+      }
+    }
+
+    loadPublicItems()
+    return () => controller.abort()
+  }, [isPublicViewerPath, publicQuery])
 
   useEffect(() => {
     if (!currentUser) return
@@ -602,6 +658,33 @@ function App() {
     }, {})
   }, [items])
 
+  const publicCounts = useMemo(() => {
+    return publicItems.reduce(
+      (counts, item) => {
+        counts[getViewerStatus(item)] += 1
+        return counts
+      },
+      { 'on-track': 0, 'not-on-track': 0 } as Record<ViewerStatus, number>,
+    )
+  }, [publicItems])
+
+  const publicItemsBySheet = useMemo(() => {
+    return PUBLIC_SHEET_ORDER.reduce(
+      (groups, sheet) => {
+        groups[sheet] = publicItems.filter((item) => item.sheet === sheet)
+        return groups
+      },
+      {} as Record<SheetKey, TrackerItem[]>,
+    )
+  }, [publicItems])
+
+  const publicKanbanColumns = useMemo(() => {
+    return {
+      'not-on-track': publicItems.filter((item) => getViewerStatus(item) === 'not-on-track'),
+      'on-track': publicItems.filter((item) => getViewerStatus(item) === 'on-track'),
+    } as Record<ViewerStatus, TrackerItem[]>
+  }, [publicItems])
+
   function resizeColumn(column: ColumnKey, event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault()
     const startX = event.clientX
@@ -661,6 +744,56 @@ function App() {
     }
   }
 
+  function getViewerStatus(item: TrackerItem): ViewerStatus {
+    return NOT_ON_TRACK_STATUSES.has(item.current_status) ? 'not-on-track' : 'on-track'
+  }
+
+  function viewerStatusLabel(status: ViewerStatus) {
+    return status === 'on-track' ? 'On Track' : 'Not On Track'
+  }
+
+  function publicSheetLabel(sheet: SheetKey) {
+    if (sheet === 'ad-hoc') return 'Ad Hoc'
+    if (sheet === 'buys') return 'Buys'
+    return 'Completed'
+  }
+
+  function goToPath(path: string) {
+    window.history.pushState({}, '', path)
+    setCurrentPath(path)
+  }
+
+  function publicCard(item: TrackerItem) {
+    return (
+      <article key={item.id} className={`viewer-card ${getViewerStatus(item)}`}>
+        <div className="viewer-card-topline">
+          <span>{publicSheetLabel(item.sheet)}</span>
+          <strong>{viewerStatusLabel(getViewerStatus(item))}</strong>
+        </div>
+        {isImageReference(item.visual_reference) && (
+          <a className="viewer-card-image" href={item.visual_reference} target="_blank" rel="noreferrer">
+            <img src={item.visual_reference} alt="" />
+          </a>
+        )}
+        <h3>{item.item_name || 'Untitled Item'}</h3>
+        <p className="viewer-card-meta">
+          {[item.brand, item.program_name].filter(Boolean).join(' | ') || 'No brand/program listed'}
+        </p>
+        <dl>
+          <div>
+            <dt>Qty</dt>
+            <dd>{item.qty || '-'}</dd>
+          </div>
+          <div>
+            <dt>Status</dt>
+            <dd>{item.current_status || 'No Status'}</dd>
+          </div>
+        </dl>
+        {item.important_notes && <p className="viewer-notes">{item.important_notes}</p>}
+      </article>
+    )
+  }
+
   function auditLogSummary(log: AuditLog) {
     if (log.action === 'update' && log.before && log.after) {
       const changes = BASE_COLUMNS.flatMap((column) => {
@@ -677,6 +810,131 @@ function App() {
     if (log.action === 'create') return label ? `Created ${label}` : 'Created tracker row'
     if (log.action === 'delete') return label ? `Deleted ${label}` : 'Deleted tracker row'
     return 'Tracker row changed'
+  }
+
+  if (isPublicViewerPath) {
+    return (
+      <main className="app-shell viewer-shell">
+        <header className="brand-header">
+          <div className="brand-topline">
+            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+            <span>Public Viewer</span>
+          </div>
+          <nav className="app-nav" aria-label="Viewer navigation">
+            <button
+              className={!isPublicKanbanPath ? 'active' : ''}
+              type="button"
+              onClick={() => goToPath('/viewer')}
+            >
+              Viewer Summary
+            </button>
+            <button
+              className={isPublicKanbanPath ? 'active' : ''}
+              type="button"
+              onClick={() => goToPath('/viewer/kanban')}
+            >
+              Kanban Board
+            </button>
+            <button type="button" onClick={() => goToPath('/')}>
+              Sign In
+            </button>
+          </nav>
+        </header>
+
+        <section className="client-title-row viewer-title-row">
+          <div className="client-title-copy">
+            <div className="client-title-divider" />
+            <div>
+              <p className="eyebrow">Order Interest Viewer</p>
+              <h1>{isPublicKanbanPath ? 'Viewer Kanban' : 'Viewer Dashboard'}</h1>
+              <p className="subtitle">
+                Ad Hoc and Buy period items summarized for public review.
+              </p>
+            </div>
+          </div>
+          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
+        </section>
+
+        <section className="viewer-toolbar">
+          <label>
+            Search
+            <input
+              value={publicQuery}
+              onChange={(event) => setPublicQuery(event.target.value)}
+              placeholder="Brand, program, item, notes, tracking..."
+            />
+          </label>
+          <div className="viewer-toolbar-actions">
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => setPublicQuery('')}
+            >
+              Reset Search
+            </button>
+            <span>{publicLoading ? 'Loading...' : `${publicItems.length.toLocaleString()} items`}</span>
+          </div>
+        </section>
+
+        {publicError && <div className="error">{publicError}</div>}
+
+        <section className="viewer-summary" aria-label="Viewer status summary">
+          <article className="on-track">
+            <span>On Track</span>
+            <strong>{publicCounts['on-track']}</strong>
+          </article>
+          <article className="not-on-track">
+            <span>Not On Track</span>
+            <strong>{publicCounts['not-on-track']}</strong>
+          </article>
+        </section>
+
+        {isPublicKanbanPath ? (
+          <section className="kanban-board" aria-label="Viewer kanban board">
+            {(['not-on-track', 'on-track'] as ViewerStatus[]).map((status) => (
+              <div key={status} className={`kanban-column ${status}`}>
+                <div className="kanban-column-header">
+                  <h2>{viewerStatusLabel(status)}</h2>
+                  <span>{publicKanbanColumns[status].length}</span>
+                </div>
+                <div className="kanban-column-cards">
+                  {publicKanbanColumns[status].map((item) => publicCard(item))}
+                  {!publicLoading && publicKanbanColumns[status].length === 0 && (
+                    <div className="empty-state">No items in this lane.</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </section>
+        ) : (
+          <section className="viewer-sections" aria-label="Viewer item sections">
+            {PUBLIC_SHEET_ORDER.map((sheet) => (
+              <section key={sheet} className="viewer-section">
+                <div className="viewer-section-header">
+                  <div>
+                    <p className="eyebrow">{publicSheetLabel(sheet)}</p>
+                    <h2>
+                      {sheet === 'ad-hoc'
+                        ? 'Outside Buy Period Requests'
+                        : 'Buy Period Requests'}
+                    </h2>
+                  </div>
+                  <button type="button" onClick={() => goToPath('/viewer/kanban')}>
+                    Open Kanban Board
+                  </button>
+                </div>
+                <div className="viewer-card-grid">
+                  {(publicItemsBySheet[sheet] ?? []).map((item) => publicCard(item))}
+                  {!publicLoading && (publicItemsBySheet[sheet] ?? []).length === 0 && (
+                    <div className="empty-state">No viewer items found for this section.</div>
+                  )}
+                </div>
+              </section>
+            ))}
+          </section>
+        )}
+      </main>
+    )
   }
 
   if (authChecking) {
@@ -761,6 +1019,9 @@ function App() {
               </button>
             </>
           )}
+          <button type="button" onClick={() => goToPath('/viewer')}>
+            Viewer
+          </button>
           <button type="button" onClick={handleLogout}>
             Log Out
           </button>
@@ -992,6 +1253,9 @@ function App() {
           <div className="tracker-actions">
             <button className="primary-action" type="button" onClick={openAddForm}>
               Add
+            </button>
+            <button className="secondary-action" type="button" onClick={() => goToPath('/viewer/kanban')}>
+              Viewer Kanban
             </button>
             <button
               className={`submit-action ${hasPendingChanges ? 'ready' : ''}`}

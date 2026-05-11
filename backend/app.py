@@ -603,6 +603,35 @@ def get_sheets(user: sqlite3.Row = Depends(get_current_user)) -> dict:
     return {"sheets": SHEETS}
 
 
+@app.get("/api/public/items")
+def list_public_items(q: str = "") -> dict:
+    clauses = ["sheet IN (?, ?)", "COALESCE(current_status, '') != ?"]
+    args: list[str] = ["ad-hoc", "buys", "Delivered"]
+
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        clauses.append(
+            "("
+            "lower(brand) LIKE ? OR lower(program_name) LIKE ? OR "
+            "lower(item_name) LIKE ? OR lower(important_notes) LIKE ? OR "
+            "lower(mrl_order_number) LIKE ? OR lower(tracking) LIKE ?"
+            ")"
+        )
+        args.extend([like] * 6)
+
+    with connect() as conn:
+        rows = execute(
+            conn,
+            f"""
+            SELECT * FROM tracker_items
+            WHERE {' AND '.join(clauses)}
+            ORDER BY sheet ASC, sort_order ASC, id ASC
+            """,
+            args,
+        ).fetchall()
+    return {"items": [row_to_item(row) for row in rows]}
+
+
 @app.post("/api/uploads/visual-reference")
 async def upload_visual_reference(
     file: UploadFile = File(...),
