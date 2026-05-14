@@ -12,7 +12,8 @@ import './App.css'
 
 type SheetKey = 'ad-hoc' | 'buys' | 'completed'
 type Role = 'admin' | 'editor'
-type Page = 'tracker' | 'admin-users' | 'system-log' | 'kanban-settings'
+type Page = 'tracker' | 'admin-users' | 'system-log'
+type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
 type RowPageSize = 10 | 20 | 30 | 'all'
 type SortDirection = 'asc' | 'desc'
 type ViewerStatus = 'on-track' | 'not-on-track'
@@ -146,6 +147,7 @@ function App() {
   const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '')
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null)
   const [page, setPage] = useState<Page>('tracker')
+  const [adminSettingsTab, setAdminSettingsTab] = useState<AdminSettingsTab>('users')
   const [authChecking, setAuthChecking] = useState(Boolean(token))
   const [sheets, setSheets] = useState<Record<SheetKey, SheetMeta> | null>(null)
   const [activeSheet, setActiveSheet] = useState<SheetKey>('ad-hoc')
@@ -405,14 +407,16 @@ function App() {
   }, [apiFetch])
 
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users') return
+    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users' || adminSettingsTab !== 'users') {
+      return
+    }
 
     const timeoutId = window.setTimeout(() => {
       loadUsers()
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [currentUser, loadUsers, page])
+  }, [adminSettingsTab, currentUser, loadUsers, page])
 
   const loadAuditLogs = useCallback(async () => {
     setLogsLoading(true)
@@ -492,7 +496,9 @@ function App() {
   }, [isPublicViewerPath, loadKanbanColumns])
 
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'kanban-settings') return
+    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users' || adminSettingsTab !== 'kanban') {
+      return
+    }
 
     const timeoutId = window.setTimeout(() => {
       loadKanbanColumns(true)
@@ -500,17 +506,24 @@ function App() {
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [currentUser, loadKanbanColumns, loadSheetStatuses, page])
+  }, [adminSettingsTab, currentUser, loadKanbanColumns, loadSheetStatuses, page])
 
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users') return
+    if (
+      !currentUser ||
+      currentUser.role !== 'admin' ||
+      page !== 'admin-users' ||
+      adminSettingsTab !== 'statuses'
+    ) {
+      return
+    }
 
     const timeoutId = window.setTimeout(() => {
       loadSheetStatuses()
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [currentUser, loadSheetStatuses, page])
+  }, [adminSettingsTab, currentUser, loadSheetStatuses, page])
 
   function updateDraft(itemId: number, field: EditableField, value: string) {
     setItems((current) =>
@@ -1291,13 +1304,6 @@ function App() {
               >
                 System Log
               </button>
-              <button
-                className={page === 'kanban-settings' ? 'active' : ''}
-                type="button"
-                onClick={() => setPage('kanban-settings')}
-              >
-                Kanban Settings
-              </button>
             </>
           )}
           <button type="button" onClick={() => goToPath('/viewer')}>
@@ -1319,9 +1325,7 @@ function App() {
                 ? 'Admin Settings'
                 : page === 'system-log'
                   ? 'System Log'
-                  : page === 'kanban-settings'
-                    ? 'Kanban Settings'
-                    : 'Tracker Dashboard'}
+                  : 'Tracker Dashboard'}
             </h1>
             <p className="subtitle">
               Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).
@@ -1335,7 +1339,34 @@ function App() {
         <section className="admin-page">
           {error && <div className="error">{error}</div>}
           {adminMessage && <div className="success">{adminMessage}</div>}
+          {kanbanMessage && <div className="success">{kanbanMessage}</div>}
 
+          <div className="admin-tabs" role="tablist" aria-label="Admin settings sections">
+            <button
+              className={adminSettingsTab === 'users' ? 'active' : ''}
+              type="button"
+              onClick={() => setAdminSettingsTab('users')}
+            >
+              Manage Users
+            </button>
+            <button
+              className={adminSettingsTab === 'statuses' ? 'active' : ''}
+              type="button"
+              onClick={() => setAdminSettingsTab('statuses')}
+            >
+              Manage Statuses
+            </button>
+            <button
+              className={adminSettingsTab === 'kanban' ? 'active' : ''}
+              type="button"
+              onClick={() => setAdminSettingsTab('kanban')}
+            >
+              Kanban Settings
+            </button>
+          </div>
+
+          {adminSettingsTab === 'users' && (
+            <>
           <form className="admin-create-card" onSubmit={createUser}>
             <h2>Create User</h2>
             <label>
@@ -1407,7 +1438,10 @@ function App() {
               Create User
             </button>
           </form>
+            </>
+          )}
 
+          {adminSettingsTab === 'statuses' && (
           <section className="admin-create-card status-settings-card">
             <form onSubmit={createSheetStatus}>
               <h2>Manage Statuses</h2>
@@ -1475,7 +1509,9 @@ function App() {
               })}
             </div>
           </section>
+          )}
 
+          {adminSettingsTab === 'users' && (
           <section className="table-card admin-users-card">
             <div className="table-tools">
               <span>{usersLoading ? 'Loading users...' : `${users.length} users`}</span>
@@ -1551,12 +1587,10 @@ function App() {
               </table>
             </div>
           </section>
-        </section>
-      ) : page === 'kanban-settings' ? (
-        <section className="admin-page kanban-settings-page">
-          {error && <div className="error">{error}</div>}
-          {kanbanMessage && <div className="success">{kanbanMessage}</div>}
+          )}
 
+          {adminSettingsTab === 'kanban' && (
+        <section className="kanban-settings-page">
           <form className="admin-create-card kanban-create-card" onSubmit={createKanbanColumn}>
             <h2>Create Kanban Column</h2>
             <label>
@@ -1692,6 +1726,8 @@ function App() {
               </table>
             </div>
           </section>
+        </section>
+          )}
         </section>
       ) : page === 'system-log' ? (
         <>

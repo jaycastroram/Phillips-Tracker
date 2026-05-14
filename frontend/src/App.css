@@ -367,6 +367,34 @@ button {
   gap: 20px;
 }
 
+.admin-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.08);
+}
+
+.admin-tabs button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: transparent;
+  color: var(--brand-dark-gray);
+  font-family: "Poppins", sans-serif;
+  font-weight: 800;
+}
+
+.admin-tabs button.active {
+  background: var(--brand-blue);
+  color: var(--brand-white);
+  box-shadow: 0 10px 24px rgba(75, 120, 255, 0.24);
+}
+
 .admin-create-card {
   display: grid;
   grid-template-columns: repeat(6, minmax(120px, 1fr));
@@ -1197,6 +1225,8 @@ td textarea {
   border-radius: 999px;
   background: var(--brand-white);
   color: var(--brand-black);
+  font-size: 16px;
+  letter-spacing: -0.02em;
 }
 
 .kanban-column-cards {
