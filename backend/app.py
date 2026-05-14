@@ -142,6 +142,38 @@ EDITABLE_FIELDS = {
 }
 ALLOWED_UPLOAD_TYPES = {"image/jpeg", "image/png", "image/webp"}
 MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+DEFAULT_KANBAN_COLUMNS = [
+    {
+        "title": "Needs Details",
+        "statuses": ["Details Needed"],
+        "sort_order": 1,
+    },
+    {
+        "title": "Quoting / Feedback",
+        "statuses": ["Quoting", "Pending Feedback", "FINAL Quoting"],
+        "sort_order": 2,
+    },
+    {
+        "title": "Creative / OA",
+        "statuses": ["Creative", "Processing OA", "OA Pending Approval"],
+        "sort_order": 3,
+    },
+    {
+        "title": "PPS",
+        "statuses": ["PPS Underway", "PPS In Transit", "PPS Pending Approval"],
+        "sort_order": 4,
+    },
+    {
+        "title": "Production / Transit",
+        "statuses": ["Order In Production", "Order In Transit"],
+        "sort_order": 5,
+    },
+    {
+        "title": "On Hold / Canceled",
+        "statuses": ["ON HOLD", "Canceled"],
+        "sort_order": 6,
+    },
+]
 
 Role = Literal["admin", "editor"]
 
@@ -212,6 +244,20 @@ class PasswordReset(BaseModel):
     password: str = Field(min_length=6)
 
 
+class KanbanColumnCreate(BaseModel):
+    title: str = Field(min_length=1)
+    statuses: list[str] = []
+    sort_order: int = 0
+    is_visible: bool = True
+
+
+class KanbanColumnUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1)
+    statuses: list[str] | None = None
+    sort_order: int | None = None
+    is_visible: bool | None = None
+
+
 def connect() -> Any:
     if IS_POSTGRES:
         if psycopg is None or dict_row is None:
@@ -276,6 +322,18 @@ def audit_log_to_public(row: sqlite3.Row) -> dict:
         "before": json.loads(row["before_json"] or "null"),
         "after": json.loads(row["after_json"] or "null"),
         "created_at": row["created_at"],
+    }
+
+
+def kanban_column_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "statuses": json.loads(row["statuses_json"] or "[]"),
+        "sort_order": row["sort_order"],
+        "is_visible": bool(row["is_visible"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
     }
 
 
@@ -350,6 +408,27 @@ def seed_tracker_items_if_empty(conn: Any) -> None:
         )
 
 
+def seed_kanban_columns_if_empty(conn: Any) -> None:
+    row_count = execute(conn, "SELECT COUNT(*) AS row_count FROM kanban_columns").fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    for column in DEFAULT_KANBAN_COLUMNS:
+        execute(
+            conn,
+            """
+            INSERT INTO kanban_columns (title, statuses_json, sort_order, is_visible)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                column["title"],
+                json.dumps(column["statuses"]),
+                column["sort_order"],
+                True,
+            ),
+        )
+
+
 def init_db() -> None:
     with connect() as conn:
         if IS_POSTGRES:
@@ -414,6 +493,19 @@ def init_db() -> None:
                     before_json TEXT,
                     after_json TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kanban_columns (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    statuses_json TEXT NOT NULL DEFAULT '[]',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_visible BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
                 """
             )
@@ -484,6 +576,19 @@ def init_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS kanban_columns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    statuses_json TEXT NOT NULL DEFAULT '[]',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_visible INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
         existing_admin = execute(
@@ -501,6 +606,7 @@ def init_db() -> None:
                 (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD)),
             )
         seed_tracker_items_if_empty(conn)
+        seed_kanban_columns_if_empty(conn)
 
 
 def row_to_item(row: sqlite3.Row) -> dict:
@@ -630,6 +736,21 @@ def list_public_items(q: str = "") -> dict:
             args,
         ).fetchall()
     return {"items": [row_to_item(row) for row in rows]}
+
+
+@app.get("/api/public/kanban-columns")
+def list_public_kanban_columns() -> dict:
+    with connect() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT * FROM kanban_columns
+            WHERE is_visible = ?
+            ORDER BY sort_order ASC, id ASC
+            """,
+            (True,),
+        ).fetchall()
+    return {"columns": [kanban_column_to_public(row) for row in rows]}
 
 
 @app.post("/api/uploads/visual-reference")
@@ -967,6 +1088,102 @@ def list_users(user: sqlite3.Row = Depends(require_admin)) -> dict:
     with connect() as conn:
         rows = execute(conn, "SELECT * FROM users ORDER BY created_at DESC, id DESC").fetchall()
     return {"users": [user_to_public(row) for row in rows]}
+
+
+@app.get("/api/admin/kanban-columns")
+def list_admin_kanban_columns(user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    with connect() as conn:
+        rows = execute(
+            conn,
+            "SELECT * FROM kanban_columns ORDER BY sort_order ASC, id ASC",
+        ).fetchall()
+    return {"columns": [kanban_column_to_public(row) for row in rows]}
+
+
+@app.post("/api/admin/kanban-columns", status_code=status.HTTP_201_CREATED)
+def create_kanban_column(
+    payload: KanbanColumnCreate,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    del user
+    with connect() as conn:
+        values = (
+            payload.title.strip(),
+            json.dumps(payload.statuses),
+            payload.sort_order,
+            payload.is_visible,
+        )
+        if IS_POSTGRES:
+            row = execute(
+                conn,
+                """
+                INSERT INTO kanban_columns (title, statuses_json, sort_order, is_visible)
+                VALUES (?, ?, ?, ?)
+                RETURNING *
+                """,
+                values,
+            ).fetchone()
+        else:
+            cursor = execute(
+                conn,
+                """
+                INSERT INTO kanban_columns (title, statuses_json, sort_order, is_visible)
+                VALUES (?, ?, ?, ?)
+                """,
+                values,
+            )
+            row = execute(conn, "SELECT * FROM kanban_columns WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return {"column": kanban_column_to_public(row)}
+
+
+@app.patch("/api/admin/kanban-columns/{column_id}")
+def update_kanban_column(
+    column_id: int,
+    payload: KanbanColumnUpdate,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    del user
+    updates = payload.model_dump(exclude_unset=True)
+    if "title" in updates and updates["title"] is not None:
+        updates["title"] = updates["title"].strip()
+    if "statuses" in updates:
+        updates["statuses_json"] = json.dumps(updates.pop("statuses") or [])
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No kanban column fields supplied")
+
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    values = list(updates.values())
+    values.append(column_id)
+    with connect() as conn:
+        cursor = execute(
+            conn,
+            f"""
+            UPDATE kanban_columns
+            SET {assignments}, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            values,
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Kanban column not found")
+        row = execute(conn, "SELECT * FROM kanban_columns WHERE id = ?", (column_id,)).fetchone()
+    return {"column": kanban_column_to_public(row)}
+
+
+@app.delete("/api/admin/kanban-columns/{column_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_kanban_column(
+    column_id: int,
+    response: Response,
+    user: sqlite3.Row = Depends(require_admin),
+) -> Response:
+    del user
+    with connect() as conn:
+        cursor = execute(conn, "DELETE FROM kanban_columns WHERE id = ?", (column_id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Kanban column not found")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
 
 
 @app.get("/api/admin/audit-logs")

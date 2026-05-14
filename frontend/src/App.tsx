@@ -12,7 +12,7 @@ import './App.css'
 
 type SheetKey = 'ad-hoc' | 'buys' | 'completed'
 type Role = 'admin' | 'editor'
-type Page = 'tracker' | 'admin-users' | 'system-log'
+type Page = 'tracker' | 'admin-users' | 'system-log' | 'kanban-settings'
 type RowPageSize = 10 | 20 | 30 | 'all'
 type SortDirection = 'asc' | 'desc'
 type ViewerStatus = 'on-track' | 'not-on-track'
@@ -62,6 +62,16 @@ type AuditLog = {
   before: Record<string, unknown> | null
   after: Record<string, unknown> | null
   created_at: string
+}
+
+type KanbanColumn = {
+  id: number
+  title: string
+  statuses: string[]
+  sort_order: number
+  is_visible: boolean
+  created_at: string
+  updated_at: string
 }
 
 type AppUser = {
@@ -133,6 +143,7 @@ function App() {
   const [items, setItems] = useState<TrackerItem[]>([])
   const [users, setUsers] = useState<AppUser[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
+  const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([])
   const [query, setQuery] = useState('')
   const [publicQuery, setPublicQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -151,12 +162,14 @@ function App() {
   const [publicLoading, setPublicLoading] = useState(false)
   const [usersLoading, setUsersLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
+  const [kanbanColumnsLoading, setKanbanColumnsLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [publicError, setPublicError] = useState('')
   const [authError, setAuthError] = useState('')
   const [adminMessage, setAdminMessage] = useState('')
+  const [kanbanMessage, setKanbanMessage] = useState('')
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
   const [showNewUserPassword, setShowNewUserPassword] = useState(false)
   const [newUser, setNewUser] = useState({
@@ -165,6 +178,12 @@ function App() {
     password: '',
     role: 'editor' as Role,
     is_active: true,
+  })
+  const [newKanbanColumn, setNewKanbanColumn] = useState({
+    title: '',
+    statusesText: '',
+    sort_order: 0,
+    is_visible: true,
   })
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(() => {
     const saved = window.localStorage.getItem(COLUMN_WIDTH_STORAGE_KEY)
@@ -205,6 +224,7 @@ function App() {
     setItems([])
     setUsers([])
     setAuditLogs([])
+    setKanbanColumns([])
     setPendingCreates([])
     setPendingUpdates({})
     setPendingDeletes([])
@@ -398,6 +418,53 @@ function App() {
 
     return () => window.clearTimeout(timeoutId)
   }, [currentUser, loadAuditLogs, page])
+
+  const loadKanbanColumns = useCallback(async (admin = false) => {
+    setKanbanColumnsLoading(true)
+    if (admin) {
+      setError('')
+    } else {
+      setPublicError('')
+    }
+
+    try {
+      const response = admin
+        ? await apiFetch('/admin/kanban-columns')
+        : await fetch(`${API_BASE}/public/kanban-columns`)
+      if (!response.ok) throw new Error('Unable to load kanban columns.')
+      const data = await response.json()
+      setKanbanColumns(data.columns)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unable to load kanban columns.'
+      if (admin) {
+        setError(message)
+      } else {
+        setPublicError(message)
+      }
+    } finally {
+      setKanbanColumnsLoading(false)
+    }
+  }, [apiFetch])
+
+  useEffect(() => {
+    if (!isPublicViewerPath) return
+
+    const timeoutId = window.setTimeout(() => {
+      loadKanbanColumns(false)
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [isPublicViewerPath, loadKanbanColumns])
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin' || page !== 'kanban-settings') return
+
+    const timeoutId = window.setTimeout(() => {
+      loadKanbanColumns(true)
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [currentUser, loadKanbanColumns, page])
 
   function updateDraft(itemId: number, field: EditableField, value: string) {
     setItems((current) =>
@@ -599,6 +666,72 @@ function App() {
     setAdminMessage('Password reset.')
   }
 
+  function parseStatusesText(value: string) {
+    return value
+      .split(',')
+      .map((status) => status.trim())
+      .filter(Boolean)
+  }
+
+  function formatStatusesText(statuses: string[]) {
+    return statuses.join(', ')
+  }
+
+  async function createKanbanColumn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setKanbanMessage('')
+    setError('')
+    const response = await apiFetch('/admin/kanban-columns', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: newKanbanColumn.title,
+        statuses: parseStatusesText(newKanbanColumn.statusesText),
+        sort_order: newKanbanColumn.sort_order,
+        is_visible: newKanbanColumn.is_visible,
+      }),
+    })
+    if (!response.ok) {
+      setError('Unable to create kanban column.')
+      return
+    }
+    const data = await response.json()
+    setKanbanColumns((current) => [...current, data.column])
+    setNewKanbanColumn({ title: '', statusesText: '', sort_order: 0, is_visible: true })
+    setKanbanMessage('Kanban column created.')
+  }
+
+  async function updateKanbanColumn(columnId: number, updates: Partial<KanbanColumn>) {
+    setKanbanMessage('')
+    setError('')
+    const response = await apiFetch(`/admin/kanban-columns/${columnId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    })
+    if (!response.ok) {
+      setError('Unable to update kanban column.')
+      return
+    }
+    const data = await response.json()
+    setKanbanColumns((current) =>
+      current.map((column) => (column.id === columnId ? data.column : column)),
+    )
+    setKanbanMessage('Kanban column updated.')
+  }
+
+  async function deleteKanbanColumn(columnId: number) {
+    const confirmed = window.confirm('Delete this kanban column? Items will not be deleted.')
+    if (!confirmed) return
+    setKanbanMessage('')
+    setError('')
+    const response = await apiFetch(`/admin/kanban-columns/${columnId}`, { method: 'DELETE' })
+    if (!response.ok) {
+      setError('Unable to delete kanban column.')
+      return
+    }
+    setKanbanColumns((current) => current.filter((column) => column.id !== columnId))
+    setKanbanMessage('Kanban column deleted.')
+  }
+
   const activeStatuses = sheets?.[activeSheet]?.statuses ?? []
   const pendingUpdateCount = Object.keys(pendingUpdates).length
   const pendingChangeCount = pendingCreates.length + pendingUpdateCount + pendingDeletes.length
@@ -678,12 +811,35 @@ function App() {
     )
   }, [publicItems])
 
+  const visibleKanbanColumns = useMemo(() => {
+    return [...kanbanColumns]
+      .filter((column) => column.is_visible)
+      .sort((first, second) => first.sort_order - second.sort_order || first.id - second.id)
+  }, [kanbanColumns])
+
   const publicKanbanColumns = useMemo(() => {
-    return {
-      'not-on-track': publicItems.filter((item) => getViewerStatus(item) === 'not-on-track'),
-      'on-track': publicItems.filter((item) => getViewerStatus(item) === 'on-track'),
-    } as Record<ViewerStatus, TrackerItem[]>
-  }, [publicItems])
+    const columnsWithItems = visibleKanbanColumns.map((column) => ({
+      column,
+      items: publicItems.filter((item) => column.statuses.includes(item.current_status)),
+    }))
+    const matchedStatuses = new Set(visibleKanbanColumns.flatMap((column) => column.statuses))
+    const unmatchedItems = publicItems.filter((item) => !matchedStatuses.has(item.current_status))
+    if (unmatchedItems.length > 0) {
+      columnsWithItems.push({
+        column: {
+          id: -1,
+          title: 'Other',
+          statuses: [],
+          sort_order: 999,
+          is_visible: true,
+          created_at: '',
+          updated_at: '',
+        },
+        items: unmatchedItems,
+      })
+    }
+    return columnsWithItems
+  }, [publicItems, visibleKanbanColumns])
 
   function resizeColumn(column: ColumnKey, event: ReactMouseEvent<HTMLButtonElement>) {
     event.preventDefault()
@@ -891,15 +1047,15 @@ function App() {
 
         {isPublicKanbanPath ? (
           <section className="kanban-board" aria-label="Viewer kanban board">
-            {(['not-on-track', 'on-track'] as ViewerStatus[]).map((status) => (
-              <div key={status} className={`kanban-column ${status}`}>
+            {publicKanbanColumns.map(({ column, items }) => (
+              <div key={column.id} className="kanban-column">
                 <div className="kanban-column-header">
-                  <h2>{viewerStatusLabel(status)}</h2>
-                  <span>{publicKanbanColumns[status].length}</span>
+                  <h2>{column.title}</h2>
+                  <span>{items.length}</span>
                 </div>
                 <div className="kanban-column-cards">
-                  {publicKanbanColumns[status].map((item) => publicCard(item))}
-                  {!publicLoading && publicKanbanColumns[status].length === 0 && (
+                  {items.map((item) => publicCard(item))}
+                  {!publicLoading && items.length === 0 && (
                     <div className="empty-state">No items in this lane.</div>
                   )}
                 </div>
@@ -1017,6 +1173,13 @@ function App() {
               >
                 System Log
               </button>
+              <button
+                className={page === 'kanban-settings' ? 'active' : ''}
+                type="button"
+                onClick={() => setPage('kanban-settings')}
+              >
+                Kanban Settings
+              </button>
             </>
           )}
           <button type="button" onClick={() => goToPath('/viewer')}>
@@ -1038,7 +1201,9 @@ function App() {
                 ? 'Admin Users'
                 : page === 'system-log'
                   ? 'System Log'
-                  : 'Tracker Dashboard'}
+                  : page === 'kanban-settings'
+                    ? 'Kanban Settings'
+                    : 'Tracker Dashboard'}
             </h1>
             <p className="subtitle">
               Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).
@@ -1196,6 +1361,157 @@ function App() {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      ) : page === 'kanban-settings' ? (
+        <section className="admin-page kanban-settings-page">
+          {error && <div className="error">{error}</div>}
+          {kanbanMessage && <div className="success">{kanbanMessage}</div>}
+
+          <form className="admin-create-card kanban-create-card" onSubmit={createKanbanColumn}>
+            <h2>Create Kanban Column</h2>
+            <label>
+              Header
+              <input
+                required
+                value={newKanbanColumn.title}
+                onChange={(event) =>
+                  setNewKanbanColumn((current) => ({ ...current, title: event.target.value }))
+                }
+                placeholder="Needs Details"
+              />
+            </label>
+            <label className="wide-field">
+              Statuses
+              <textarea
+                value={newKanbanColumn.statusesText}
+                onChange={(event) =>
+                  setNewKanbanColumn((current) => ({ ...current, statusesText: event.target.value }))
+                }
+                placeholder="Details Needed, Quoting"
+              />
+            </label>
+            <label>
+              Order
+              <input
+                type="number"
+                value={newKanbanColumn.sort_order}
+                onChange={(event) =>
+                  setNewKanbanColumn((current) => ({
+                    ...current,
+                    sort_order: Number(event.target.value),
+                  }))
+                }
+              />
+            </label>
+            <label className="checkbox-label">
+              <input
+                checked={newKanbanColumn.is_visible}
+                type="checkbox"
+                onChange={(event) =>
+                  setNewKanbanColumn((current) => ({ ...current, is_visible: event.target.checked }))
+                }
+              />
+              Visible
+            </label>
+            <button className="primary-action" type="submit">
+              Create Column
+            </button>
+          </form>
+
+          <section className="table-card kanban-settings-card">
+            <div className="table-tools">
+              <span>
+                {kanbanColumnsLoading
+                  ? 'Loading kanban columns...'
+                  : `${kanbanColumns.length} kanban columns`}
+              </span>
+              <button type="button" onClick={() => loadKanbanColumns(true)}>
+                Refresh
+              </button>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Header</th>
+                    <th>Statuses</th>
+                    <th>Order</th>
+                    <th>Visible</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {kanbanColumns.map((column) => (
+                    <tr key={column.id}>
+                      <td>
+                        <input
+                          value={column.title}
+                          onBlur={(event) => updateKanbanColumn(column.id, { title: event.target.value })}
+                          onChange={(event) =>
+                            setKanbanColumns((current) =>
+                              current.map((row) =>
+                                row.id === column.id ? { ...row, title: event.target.value } : row,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td>
+                        <textarea
+                          key={`${column.id}-${column.updated_at}`}
+                          defaultValue={formatStatusesText(column.statuses)}
+                          onBlur={(event) =>
+                            updateKanbanColumn(column.id, {
+                              statuses: parseStatusesText(event.target.value),
+                            })
+                          }
+                        />
+                      </td>
+                      <td>
+                        <input
+                          type="number"
+                          value={column.sort_order}
+                          onBlur={(event) =>
+                            updateKanbanColumn(column.id, { sort_order: Number(event.target.value) })
+                          }
+                          onChange={(event) =>
+                            setKanbanColumns((current) =>
+                              current.map((row) =>
+                                row.id === column.id
+                                  ? { ...row, sort_order: Number(event.target.value) }
+                                  : row,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="actions">
+                        <input
+                          checked={column.is_visible}
+                          type="checkbox"
+                          onChange={(event) =>
+                            updateKanbanColumn(column.id, { is_visible: event.target.checked })
+                          }
+                        />
+                      </td>
+                      <td className="actions">
+                        <button type="button" onClick={() => deleteKanbanColumn(column.id)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {!kanbanColumnsLoading && kanbanColumns.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="empty-state">
+                        No kanban columns yet.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>

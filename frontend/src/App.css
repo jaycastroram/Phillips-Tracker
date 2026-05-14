@@ -400,6 +400,25 @@ td.actions input[type="checkbox"] {
   min-width: 900px;
 }
 
+.kanban-settings-card table {
+  width: 100%;
+  min-width: 980px;
+}
+
+.kanban-create-card textarea {
+  min-height: 42px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  resize: vertical;
+}
+
+.kanban-create-card .wide-field {
+  grid-column: span 2;
+}
+
 .audit-log-card table {
   width: 100%;
   min-width: 980px;
@@ -1025,13 +1044,16 @@ td textarea {
 }
 
 .kanban-board {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(280px, 1fr));
+  display: flex;
   gap: 16px;
   align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
 }
 
 .kanban-column {
+  min-width: 300px;
+  flex: 1 0 300px;
   min-height: 420px;
   display: grid;
   align-content: start;
@@ -1041,14 +1063,6 @@ td textarea {
   border-radius: 22px;
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.08);
-}
-
-.kanban-column.not-on-track {
-  background: rgba(253, 67, 56, 0.06);
-}
-
-.kanban-column.on-track {
-  background: rgba(75, 120, 255, 0.06);
 }
 
 .kanban-column-header span {
