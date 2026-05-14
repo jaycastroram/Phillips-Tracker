@@ -1181,23 +1181,22 @@ td textarea {
 }
 
 .kanban-board {
-  display: flex;
-  gap: 16px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
   align-items: start;
-  overflow-x: auto;
   padding-bottom: 8px;
 }
 
 .kanban-column {
-  min-width: 300px;
-  flex: 1 0 300px;
+  min-width: 0;
   min-height: 420px;
   display: grid;
   align-content: start;
-  gap: 12px;
-  padding: 14px;
+  gap: 10px;
+  padding: 12px;
   border: 1px solid var(--brand-gridline);
-  border-radius: 22px;
+  border-radius: 18px;
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.08);
 }
@@ -1231,7 +1230,32 @@ td textarea {
 
 .kanban-column-cards {
   display: grid;
-  gap: 12px;
+  gap: 10px;
+}
+
+.kanban-column .viewer-card {
+  gap: 8px;
+  padding: 10px;
+  border-radius: 14px;
+}
+
+.kanban-column .viewer-card h3 {
+  font-size: 14px;
+  line-height: 1.25;
+}
+
+.kanban-column .viewer-card-meta,
+.kanban-column .viewer-notes {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.kanban-column .viewer-card dl {
+  gap: 6px;
+}
+
+.kanban-column .viewer-card dl div {
+  padding: 6px;
 }
 
 @media (max-width: 720px) {

@@ -11,6 +11,7 @@ import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
 import './App.css'
 
 type SheetKey = 'ad-hoc' | 'buys' | 'completed'
+type StatusTargetSheet = SheetKey | 'all'
 type Role = 'admin' | 'editor'
 type Page = 'tracker' | 'admin-users' | 'system-log'
 type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
@@ -199,7 +200,7 @@ function App() {
     is_visible: true,
   })
   const [newSheetStatus, setNewSheetStatus] = useState({
-    sheet: 'ad-hoc' as SheetKey,
+    sheet: 'ad-hoc' as StatusTargetSheet,
     status: '',
   })
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(() => {
@@ -729,19 +730,41 @@ function App() {
     event.preventDefault()
     setAdminMessage('')
     setError('')
-    const response = await apiFetch('/admin/sheet-statuses', {
-      method: 'POST',
-      body: JSON.stringify(newSheetStatus),
-    })
-    if (!response.ok) {
-      setError(response.status === 409 ? 'That status already exists for this sheet.' : 'Unable to create status.')
-      return
+
+    const targetSheets = newSheetStatus.sheet === 'all' ? SHEET_ORDER : [newSheetStatus.sheet]
+    const createdStatuses: SheetStatus[] = []
+    const skippedSheets: string[] = []
+
+    for (const sheetKey of targetSheets) {
+      const response = await apiFetch('/admin/sheet-statuses', {
+        method: 'POST',
+        body: JSON.stringify({ sheet: sheetKey, status: newSheetStatus.status }),
+      })
+      if (response.status === 409) {
+        skippedSheets.push(sheets?.[sheetKey]?.label ?? sheetKey)
+        continue
+      }
+      if (!response.ok) {
+        setError('Unable to create status.')
+        return
+      }
+      const data = await response.json()
+      createdStatuses.push(data.status)
     }
-    const data = await response.json()
-    setSheetStatuses((current) => [...current, data.status])
+
+    if (createdStatuses.length > 0) {
+      setSheetStatuses((current) => [...current, ...createdStatuses])
+    }
     setNewSheetStatus((current) => ({ ...current, status: '' }))
     await loadSheets()
-    setAdminMessage('Status created.')
+
+    const createdMessage =
+      createdStatuses.length === 1 ? 'Status created.' : `Status created for ${createdStatuses.length} sheets.`
+    setAdminMessage(
+      skippedSheets.length
+        ? `${createdMessage} Already existed for: ${skippedSheets.join(', ')}.`
+        : createdMessage,
+    )
   }
 
   async function deleteSheetStatus(statusRow: SheetStatus) {
@@ -1452,10 +1475,11 @@ function App() {
                   onChange={(event) =>
                     setNewSheetStatus((current) => ({
                       ...current,
-                      sheet: event.target.value as SheetKey,
+                      sheet: event.target.value as StatusTargetSheet,
                     }))
                   }
                 >
+                  <option value="all">All Sheets</option>
                   {SHEET_ORDER.map((sheetKey) => (
                     <option key={sheetKey} value={sheetKey}>
                       {sheets?.[sheetKey]?.label ?? sheetKey}
