@@ -258,6 +258,11 @@ class KanbanColumnUpdate(BaseModel):
     is_visible: bool | None = None
 
 
+class SheetStatusCreate(BaseModel):
+    sheet: str
+    status: str = Field(min_length=1)
+
+
 def connect() -> Any:
     if IS_POSTGRES:
         if psycopg is None or dict_row is None:
@@ -332,6 +337,17 @@ def kanban_column_to_public(row: sqlite3.Row) -> dict:
         "statuses": json.loads(row["statuses_json"] or "[]"),
         "sort_order": row["sort_order"],
         "is_visible": bool(row["is_visible"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def sheet_status_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "sheet": row["sheet"],
+        "status": row["status"],
+        "sort_order": row["sort_order"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -429,6 +445,45 @@ def seed_kanban_columns_if_empty(conn: Any) -> None:
         )
 
 
+def seed_sheet_statuses_if_empty(conn: Any) -> None:
+    row_count = execute(conn, "SELECT COUNT(*) AS row_count FROM sheet_statuses").fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    for sheet_key, sheet_config in SHEETS.items():
+        for sort_order, status_label in enumerate(sheet_config["statuses"], start=1):
+            execute(
+                conn,
+                """
+                INSERT INTO sheet_statuses (sheet, status, sort_order)
+                VALUES (?, ?, ?)
+                """,
+                (sheet_key, status_label, sort_order),
+            )
+
+
+def get_sheet_config() -> dict:
+    sheets = {
+        sheet_key: {
+            "label": sheet_config["label"],
+            "dateLabel": sheet_config["dateLabel"],
+            "statuses": [],
+        }
+        for sheet_key, sheet_config in SHEETS.items()
+    }
+    with connect() as conn:
+        rows = execute(
+            conn,
+            "SELECT * FROM sheet_statuses ORDER BY sheet ASC, sort_order ASC, id ASC",
+        ).fetchall()
+
+    for row in rows:
+        if row["sheet"] in sheets:
+            sheets[row["sheet"]]["statuses"].append(row["status"])
+
+    return sheets
+
+
 def init_db() -> None:
     with connect() as conn:
         if IS_POSTGRES:
@@ -506,6 +561,19 @@ def init_db() -> None:
                     is_visible BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sheet_statuses (
+                    id SERIAL PRIMARY KEY,
+                    sheet TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(sheet, status)
                 )
                 """
             )
@@ -589,6 +657,19 @@ def init_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sheet_statuses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    sheet TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(sheet, status)
+                )
+                """
+            )
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
         existing_admin = execute(
@@ -607,6 +688,7 @@ def init_db() -> None:
             )
         seed_tracker_items_if_empty(conn)
         seed_kanban_columns_if_empty(conn)
+        seed_sheet_statuses_if_empty(conn)
 
 
 def row_to_item(row: sqlite3.Row) -> dict:
@@ -706,7 +788,7 @@ def me(user: sqlite3.Row = Depends(get_current_user)) -> dict:
 @app.get("/api/sheets")
 def get_sheets(user: sqlite3.Row = Depends(get_current_user)) -> dict:
     del user
-    return {"sheets": SHEETS}
+    return {"sheets": get_sheet_config()}
 
 
 @app.get("/api/public/items")
@@ -1182,6 +1264,78 @@ def delete_kanban_column(
         cursor = execute(conn, "DELETE FROM kanban_columns WHERE id = ?", (column_id,))
     if cursor.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Kanban column not found")
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@app.get("/api/admin/sheet-statuses")
+def list_sheet_statuses(user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    with connect() as conn:
+        rows = execute(
+            conn,
+            "SELECT * FROM sheet_statuses ORDER BY sheet ASC, sort_order ASC, id ASC",
+        ).fetchall()
+    return {"statuses": [sheet_status_to_public(row) for row in rows]}
+
+
+@app.post("/api/admin/sheet-statuses", status_code=status.HTTP_201_CREATED)
+def create_sheet_status(
+    payload: SheetStatusCreate,
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    del user
+    if payload.sheet not in SHEETS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
+
+    status_label = payload.status.strip()
+    if not status_label:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Status is required")
+
+    try:
+        with connect() as conn:
+            max_sort_row = execute(
+                conn,
+                "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM sheet_statuses WHERE sheet = ?",
+                (payload.sheet,),
+            ).fetchone()
+            values = (payload.sheet, status_label, max_sort_row["max_sort"] + 1)
+            if IS_POSTGRES:
+                row = execute(
+                    conn,
+                    """
+                    INSERT INTO sheet_statuses (sheet, status, sort_order)
+                    VALUES (?, ?, ?)
+                    RETURNING *
+                    """,
+                    values,
+                ).fetchone()
+            else:
+                cursor = execute(
+                    conn,
+                    """
+                    INSERT INTO sheet_statuses (sheet, status, sort_order)
+                    VALUES (?, ?, ?)
+                    """,
+                    values,
+                )
+                row = execute(conn, "SELECT * FROM sheet_statuses WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    except DB_INTEGRITY_ERRORS:
+        raise HTTPException(status.HTTP_409_CONFLICT, "That status already exists for this sheet")
+    return {"status": sheet_status_to_public(row)}
+
+
+@app.delete("/api/admin/sheet-statuses/{status_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_sheet_status(
+    status_id: int,
+    response: Response,
+    user: sqlite3.Row = Depends(require_admin),
+) -> Response:
+    del user
+    with connect() as conn:
+        cursor = execute(conn, "DELETE FROM sheet_statuses WHERE id = ?", (status_id,))
+    if cursor.rowcount == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Status not found")
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 

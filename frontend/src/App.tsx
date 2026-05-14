@@ -74,6 +74,15 @@ type KanbanColumn = {
   updated_at: string
 }
 
+type SheetStatus = {
+  id: number
+  sheet: SheetKey
+  status: string
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
 type AppUser = {
   id: number
   email: string
@@ -144,6 +153,7 @@ function App() {
   const [users, setUsers] = useState<AppUser[]>([])
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([])
+  const [sheetStatuses, setSheetStatuses] = useState<SheetStatus[]>([])
   const [query, setQuery] = useState('')
   const [publicQuery, setPublicQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
@@ -163,6 +173,7 @@ function App() {
   const [usersLoading, setUsersLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
   const [kanbanColumnsLoading, setKanbanColumnsLoading] = useState(false)
+  const [statusesLoading, setStatusesLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
@@ -181,9 +192,13 @@ function App() {
   })
   const [newKanbanColumn, setNewKanbanColumn] = useState({
     title: '',
-    statusesText: '',
+    statuses: [] as string[],
     sort_order: 0,
     is_visible: true,
+  })
+  const [newSheetStatus, setNewSheetStatus] = useState({
+    sheet: 'ad-hoc' as SheetKey,
+    status: '',
   })
   const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(() => {
     const saved = window.localStorage.getItem(COLUMN_WIDTH_STORAGE_KEY)
@@ -225,6 +240,7 @@ function App() {
     setUsers([])
     setAuditLogs([])
     setKanbanColumns([])
+    setSheetStatuses([])
     setPendingCreates([])
     setPendingUpdates({})
     setPendingDeletes([])
@@ -326,18 +342,22 @@ function App() {
     return () => controller.abort()
   }, [isPublicViewerPath, publicQuery])
 
+  const loadSheets = useCallback(async () => {
+    const response = await apiFetch('/sheets')
+    if (!response.ok) throw new Error('Unable to load sheet configuration.')
+    const data = await response.json()
+    setSheets(data.sheets)
+  }, [apiFetch])
+
   useEffect(() => {
     if (!currentUser) return
 
-    async function loadSheets() {
-      const response = await apiFetch('/sheets')
-      if (!response.ok) throw new Error('Unable to load sheet configuration.')
-      const data = await response.json()
-      setSheets(data.sheets)
-    }
+    const timeoutId = window.setTimeout(() => {
+      loadSheets().catch((err: Error) => setError(err.message))
+    }, 0)
 
-    loadSheets().catch((err: Error) => setError(err.message))
-  }, [apiFetch, currentUser])
+    return () => window.clearTimeout(timeoutId)
+  }, [currentUser, loadSheets])
 
   useEffect(() => {
     if (!currentUser || page !== 'tracker') return
@@ -446,6 +466,21 @@ function App() {
     }
   }, [apiFetch])
 
+  const loadSheetStatuses = useCallback(async () => {
+    setStatusesLoading(true)
+    setError('')
+    try {
+      const response = await apiFetch('/admin/sheet-statuses')
+      if (!response.ok) throw new Error('Unable to load tracker statuses.')
+      const data = await response.json()
+      setSheetStatuses(data.statuses)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to load tracker statuses.')
+    } finally {
+      setStatusesLoading(false)
+    }
+  }, [apiFetch])
+
   useEffect(() => {
     if (!isPublicViewerPath) return
 
@@ -461,10 +496,21 @@ function App() {
 
     const timeoutId = window.setTimeout(() => {
       loadKanbanColumns(true)
+      loadSheetStatuses()
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [currentUser, loadKanbanColumns, page])
+  }, [currentUser, loadKanbanColumns, loadSheetStatuses, page])
+
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users') return
+
+    const timeoutId = window.setTimeout(() => {
+      loadSheetStatuses()
+    }, 0)
+
+    return () => window.clearTimeout(timeoutId)
+  }, [currentUser, loadSheetStatuses, page])
 
   function updateDraft(itemId: number, field: EditableField, value: string) {
     setItems((current) =>
@@ -666,15 +712,44 @@ function App() {
     setAdminMessage('Password reset.')
   }
 
-  function parseStatusesText(value: string) {
-    return value
-      .split(',')
-      .map((status) => status.trim())
-      .filter(Boolean)
+  async function createSheetStatus(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setAdminMessage('')
+    setError('')
+    const response = await apiFetch('/admin/sheet-statuses', {
+      method: 'POST',
+      body: JSON.stringify(newSheetStatus),
+    })
+    if (!response.ok) {
+      setError(response.status === 409 ? 'That status already exists for this sheet.' : 'Unable to create status.')
+      return
+    }
+    const data = await response.json()
+    setSheetStatuses((current) => [...current, data.status])
+    setNewSheetStatus((current) => ({ ...current, status: '' }))
+    await loadSheets()
+    setAdminMessage('Status created.')
   }
 
-  function formatStatusesText(statuses: string[]) {
-    return statuses.join(', ')
+  async function deleteSheetStatus(statusRow: SheetStatus) {
+    const confirmed = window.confirm(`Remove "${statusRow.status}" from ${sheets?.[statusRow.sheet]?.label ?? 'this sheet'}?`)
+    if (!confirmed) return
+    setAdminMessage('')
+    setError('')
+    const response = await apiFetch(`/admin/sheet-statuses/${statusRow.id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      setError('Unable to remove status.')
+      return
+    }
+    setSheetStatuses((current) => current.filter((row) => row.id !== statusRow.id))
+    await loadSheets()
+    setAdminMessage('Status removed.')
+  }
+
+  function toggleStatusSelection(selectedStatuses: string[], statusLabel: string) {
+    return selectedStatuses.includes(statusLabel)
+      ? selectedStatuses.filter((status) => status !== statusLabel)
+      : [...selectedStatuses, statusLabel]
   }
 
   async function createKanbanColumn(event: FormEvent<HTMLFormElement>) {
@@ -685,7 +760,7 @@ function App() {
       method: 'POST',
       body: JSON.stringify({
         title: newKanbanColumn.title,
-        statuses: parseStatusesText(newKanbanColumn.statusesText),
+        statuses: newKanbanColumn.statuses,
         sort_order: newKanbanColumn.sort_order,
         is_visible: newKanbanColumn.is_visible,
       }),
@@ -696,7 +771,7 @@ function App() {
     }
     const data = await response.json()
     setKanbanColumns((current) => [...current, data.column])
-    setNewKanbanColumn({ title: '', statusesText: '', sort_order: 0, is_visible: true })
+    setNewKanbanColumn({ title: '', statuses: [], sort_order: 0, is_visible: true })
     setKanbanMessage('Kanban column created.')
   }
 
@@ -733,6 +808,16 @@ function App() {
   }
 
   const activeStatuses = sheets?.[activeSheet]?.statuses ?? []
+  const allStatusOptions = useMemo(() => {
+    const statuses = new Set<string>()
+    if (sheets) {
+      SHEET_ORDER.forEach((sheetKey) => {
+        sheets[sheetKey]?.statuses.forEach((statusLabel) => statuses.add(statusLabel))
+      })
+    }
+    sheetStatuses.forEach((statusRow) => statuses.add(statusRow.status))
+    return [...statuses].sort((first, second) => first.localeCompare(second))
+  }, [sheets, sheetStatuses])
   const pendingUpdateCount = Object.keys(pendingUpdates).length
   const pendingChangeCount = pendingCreates.length + pendingUpdateCount + pendingDeletes.length
   const hasPendingChanges = pendingChangeCount > 0
@@ -968,6 +1053,39 @@ function App() {
     return 'Tracker row changed'
   }
 
+  function renderStatusMultiSelect(
+    selectedStatuses: string[],
+    onChange: (nextStatuses: string[]) => void,
+  ) {
+    return (
+      <details className="status-multi-select">
+        <summary>
+          <span>{selectedStatuses.length ? `${selectedStatuses.length} selected` : 'Choose statuses'}</span>
+        </summary>
+        <div className="status-multi-menu">
+          {allStatusOptions.map((statusLabel) => (
+            <label key={statusLabel} className="status-option">
+              <input
+                checked={selectedStatuses.includes(statusLabel)}
+                type="checkbox"
+                onChange={() => onChange(toggleStatusSelection(selectedStatuses, statusLabel))}
+              />
+              {statusLabel}
+            </label>
+          ))}
+          {allStatusOptions.length === 0 && <span className="muted">No statuses available yet.</span>}
+        </div>
+        {selectedStatuses.length > 0 && (
+          <div className="selected-status-chips">
+            {selectedStatuses.map((statusLabel) => (
+              <span key={statusLabel}>{statusLabel}</span>
+            ))}
+          </div>
+        )}
+      </details>
+    )
+  }
+
   if (isPublicViewerPath) {
     return (
       <main className="app-shell viewer-shell">
@@ -1164,7 +1282,7 @@ function App() {
                 type="button"
                 onClick={() => setPage('admin-users')}
               >
-                Admin Users
+                Admin Settings
               </button>
               <button
                 className={page === 'system-log' ? 'active' : ''}
@@ -1198,7 +1316,7 @@ function App() {
             <p className="eyebrow">Project Tracker</p>
             <h1>
               {page === 'admin-users'
-                ? 'Admin Users'
+                ? 'Admin Settings'
                 : page === 'system-log'
                   ? 'System Log'
                   : page === 'kanban-settings'
@@ -1289,6 +1407,74 @@ function App() {
               Create User
             </button>
           </form>
+
+          <section className="admin-create-card status-settings-card">
+            <form onSubmit={createSheetStatus}>
+              <h2>Manage Statuses</h2>
+              <label>
+                Sheet
+                <select
+                  value={newSheetStatus.sheet}
+                  onChange={(event) =>
+                    setNewSheetStatus((current) => ({
+                      ...current,
+                      sheet: event.target.value as SheetKey,
+                    }))
+                  }
+                >
+                  {SHEET_ORDER.map((sheetKey) => (
+                    <option key={sheetKey} value={sheetKey}>
+                      {sheets?.[sheetKey]?.label ?? sheetKey}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                New Status
+                <input
+                  required
+                  value={newSheetStatus.status}
+                  onChange={(event) =>
+                    setNewSheetStatus((current) => ({ ...current, status: event.target.value }))
+                  }
+                  placeholder="New status label"
+                />
+              </label>
+              <button className="primary-action" type="submit">
+                Add Status
+              </button>
+            </form>
+
+            <div className="status-settings-list">
+              <div className="table-tools">
+                <span>
+                  {statusesLoading ? 'Loading statuses...' : `${sheetStatuses.length} tracker statuses`}
+                </span>
+                <button type="button" onClick={loadSheetStatuses}>
+                  Refresh
+                </button>
+              </div>
+              {SHEET_ORDER.map((sheetKey) => {
+                const rows = sheetStatuses.filter((statusRow) => statusRow.sheet === sheetKey)
+                return (
+                  <div key={sheetKey} className="status-group">
+                    <h3>{sheets?.[sheetKey]?.label ?? sheetKey}</h3>
+                    <div className="selected-status-chips removable-status-chips">
+                      {rows.map((statusRow) => (
+                        <span key={statusRow.id}>
+                          {statusRow.status}
+                          <button type="button" onClick={() => deleteSheetStatus(statusRow)}>
+                            Remove
+                          </button>
+                        </span>
+                      ))}
+                      {!rows.length && <em>No statuses yet.</em>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
 
           <section className="table-card admin-users-card">
             <div className="table-tools">
@@ -1386,13 +1572,9 @@ function App() {
             </label>
             <label className="wide-field">
               Statuses
-              <textarea
-                value={newKanbanColumn.statusesText}
-                onChange={(event) =>
-                  setNewKanbanColumn((current) => ({ ...current, statusesText: event.target.value }))
-                }
-                placeholder="Details Needed, Quoting"
-              />
+              {renderStatusMultiSelect(newKanbanColumn.statuses, (nextStatuses) =>
+                setNewKanbanColumn((current) => ({ ...current, statuses: nextStatuses })),
+              )}
             </label>
             <label>
               Order
@@ -1461,15 +1643,9 @@ function App() {
                         />
                       </td>
                       <td>
-                        <textarea
-                          key={`${column.id}-${column.updated_at}`}
-                          defaultValue={formatStatusesText(column.statuses)}
-                          onBlur={(event) =>
-                            updateKanbanColumn(column.id, {
-                              statuses: parseStatusesText(event.target.value),
-                            })
-                          }
-                        />
+                        {renderStatusMultiSelect(column.statuses, (nextStatuses) =>
+                          updateKanbanColumn(column.id, { statuses: nextStatuses }),
+                        )}
                       </td>
                       <td>
                         <input

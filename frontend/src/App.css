@@ -405,11 +405,120 @@ td.actions input[type="checkbox"] {
   min-width: 980px;
 }
 
-.kanban-create-card textarea {
+.status-settings-card {
+  grid-template-columns: 1fr;
+  align-items: start;
+}
+
+.status-settings-card form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(160px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.status-settings-card h2 {
+  grid-column: 1 / -1;
+}
+
+.status-settings-list {
+  display: grid;
+  gap: 14px;
+}
+
+.status-group {
+  display: grid;
+  gap: 8px;
+}
+
+.status-group h3 {
+  margin: 0;
+  font-family: "Poppins", sans-serif;
+  font-size: 0.95rem;
+}
+
+.status-multi-select {
+  min-width: 220px;
+}
+
+.status-multi-select summary {
   min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
   border: 1px solid var(--brand-gridline);
   border-radius: 12px;
   padding: 10px 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-weight: 700;
+}
+
+.status-multi-menu {
+  max-height: 240px;
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  background: var(--brand-white);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.12);
+}
+
+.status-option {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  gap: 8px !important;
+  color: var(--brand-black);
+  font-weight: 600;
+}
+
+.status-option input {
+  width: auto;
+  min-height: auto;
+}
+
+.selected-status-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.selected-status-chips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--brand-soft);
+  color: var(--brand-black);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.removable-status-chips button {
+  border: 0;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: var(--brand-red);
+  color: var(--brand-white);
+  font-size: 0.72rem;
+}
+
+.kanban-create-card .status-multi-select {
+  width: 100%;
+}
+
+.kanban-create-card textarea {
+  min-height: 42px;
+  border: 5px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 12px 12px;
   background: var(--brand-white);
   color: var(--brand-black);
   resize: vertical;
@@ -905,7 +1014,7 @@ td textarea {
 .kanban-column-header span {
   color: var(--brand-dark-gray);
   font-family: "Poppins", sans-serif;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1065,7 +1174,22 @@ td textarea {
   box-shadow: 0 16px 50px rgba(0, 0, 0, 0.08);
 }
 
+.kanban-column-header {
+  min-height: 46px;
+  align-items: flex-start;
+}
+
+.kanban-column-header h2 {
+  min-height: 42px;
+  display: flex;
+  align-items: flex-start;
+  font-size: 16px;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+}
+
 .kanban-column-header span {
+  flex: 0 0 auto;
   display: inline-grid;
   min-width: 34px;
   min-height: 34px;
