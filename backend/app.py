@@ -174,6 +174,58 @@ DEFAULT_KANBAN_COLUMNS = [
         "sort_order": 6,
     },
 ]
+DEFAULT_SURVEY_ITEMS = [
+    {
+        "item_name": "Corona MLB Baseball Wall Sign",
+        "brand": "Corona",
+        "channel": "On Premise",
+        "item_description": "Baseball-themed wall sign for seasonal retail and bar displays.",
+        "uom": "Each",
+        "price": "$24.99",
+        "image_url": "",
+        "sort_order": 1,
+    },
+    {
+        "item_name": "Corona A-Frame",
+        "brand": "Corona",
+        "channel": "On Premise",
+        "item_description": "Sidewalk A-frame sign for event and account visibility.",
+        "uom": "Each",
+        "price": "$89.00",
+        "image_url": "",
+        "sort_order": 2,
+    },
+    {
+        "item_name": "Corona Pennant Strings",
+        "brand": "Corona",
+        "channel": "Retail",
+        "item_description": "Hanging pennant string for aisle or display merchandising.",
+        "uom": "Pack",
+        "price": "$14.50",
+        "image_url": "",
+        "sort_order": 3,
+    },
+    {
+        "item_name": "Corona Display Card",
+        "brand": "Corona",
+        "channel": "Retail",
+        "item_description": "Display card for product callouts and feature tables.",
+        "uom": "Each",
+        "price": "$4.75",
+        "image_url": "",
+        "sort_order": 4,
+    },
+    {
+        "item_name": "Corona Tacker",
+        "brand": "Corona",
+        "channel": "On Premise",
+        "item_description": "Classic branded tacker sign for permanent account placement.",
+        "uom": "Each",
+        "price": "$19.99",
+        "image_url": "",
+        "sort_order": 5,
+    },
+]
 
 Role = Literal["admin", "editor"]
 
@@ -263,6 +315,17 @@ class SheetStatusCreate(BaseModel):
     status: str = Field(min_length=1)
 
 
+class SurveyResponseCreate(BaseModel):
+    survey_item_id: int
+    email: EmailStr
+    attention_effectiveness: int = Field(ge=1, le=5)
+    recommend_rollout: Literal["Yes", "No", "Maybe"]
+    retail_engagement: int = Field(ge=1, le=5)
+    stands_out: Literal["Yes", "No", "Neutral"]
+    price_reasonable: Literal["Yes", "No"]
+    feedback: str = ""
+
+
 def connect() -> Any:
     if IS_POSTGRES:
         if psycopg is None or dict_row is None:
@@ -350,6 +413,38 @@ def sheet_status_to_public(row: sqlite3.Row) -> dict:
         "sort_order": row["sort_order"],
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+    }
+
+
+def survey_item_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "item_name": row["item_name"],
+        "brand": row["brand"],
+        "channel": row["channel"],
+        "item_description": row["item_description"],
+        "uom": row["uom"],
+        "price": row["price"],
+        "image_url": row["image_url"],
+        "sort_order": row["sort_order"],
+        "is_active": bool(row["is_active"]),
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def survey_response_to_public(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "survey_item_id": row["survey_item_id"],
+        "email": row["email"],
+        "attention_effectiveness": row["attention_effectiveness"],
+        "recommend_rollout": row["recommend_rollout"],
+        "retail_engagement": row["retail_engagement"],
+        "stands_out": row["stands_out"],
+        "price_reasonable": row["price_reasonable"],
+        "feedback": row["feedback"],
+        "created_at": row["created_at"],
     }
 
 
@@ -460,6 +555,35 @@ def seed_sheet_statuses_if_empty(conn: Any) -> None:
                 """,
                 (sheet_key, status_label, sort_order),
             )
+
+
+def seed_survey_items_if_empty(conn: Any) -> None:
+    row_count = execute(conn, "SELECT COUNT(*) AS row_count FROM survey_items").fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    for item in DEFAULT_SURVEY_ITEMS:
+        execute(
+            conn,
+            """
+            INSERT INTO survey_items (
+                item_name, brand, channel, item_description, uom, price,
+                image_url, sort_order, is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["item_name"],
+                item["brand"],
+                item["channel"],
+                item["item_description"],
+                item["uom"],
+                item["price"],
+                item["image_url"],
+                item["sort_order"],
+                True,
+            ),
+        )
 
 
 def get_sheet_config() -> dict:
@@ -577,6 +701,40 @@ def init_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS survey_items (
+                    id SERIAL PRIMARY KEY,
+                    item_name TEXT NOT NULL,
+                    brand TEXT NOT NULL DEFAULT '',
+                    channel TEXT NOT NULL DEFAULT '',
+                    item_description TEXT NOT NULL DEFAULT '',
+                    uom TEXT NOT NULL DEFAULT '',
+                    price TEXT NOT NULL DEFAULT '',
+                    image_url TEXT NOT NULL DEFAULT '',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS survey_responses (
+                    id SERIAL PRIMARY KEY,
+                    survey_item_id INTEGER NOT NULL REFERENCES survey_items(id) ON DELETE CASCADE,
+                    email TEXT NOT NULL,
+                    attention_effectiveness INTEGER NOT NULL,
+                    recommend_rollout TEXT NOT NULL,
+                    retail_engagement INTEGER NOT NULL,
+                    stands_out TEXT NOT NULL,
+                    price_reasonable TEXT NOT NULL,
+                    feedback TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
         else:
             conn.execute(
                 """
@@ -670,6 +828,41 @@ def init_db() -> None:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS survey_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    item_name TEXT NOT NULL,
+                    brand TEXT NOT NULL DEFAULT '',
+                    channel TEXT NOT NULL DEFAULT '',
+                    item_description TEXT NOT NULL DEFAULT '',
+                    uom TEXT NOT NULL DEFAULT '',
+                    price TEXT NOT NULL DEFAULT '',
+                    image_url TEXT NOT NULL DEFAULT '',
+                    sort_order INTEGER NOT NULL DEFAULT 0,
+                    is_active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS survey_responses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    survey_item_id INTEGER NOT NULL,
+                    email TEXT NOT NULL,
+                    attention_effectiveness INTEGER NOT NULL,
+                    recommend_rollout TEXT NOT NULL,
+                    retail_engagement INTEGER NOT NULL,
+                    stands_out TEXT NOT NULL,
+                    price_reasonable TEXT NOT NULL,
+                    feedback TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (survey_item_id) REFERENCES survey_items(id) ON DELETE CASCADE
+                )
+                """
+            )
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
         existing_admin = execute(
@@ -689,6 +882,7 @@ def init_db() -> None:
         seed_tracker_items_if_empty(conn)
         seed_kanban_columns_if_empty(conn)
         seed_sheet_statuses_if_empty(conn)
+        seed_survey_items_if_empty(conn)
 
 
 def row_to_item(row: sqlite3.Row) -> dict:
@@ -833,6 +1027,83 @@ def list_public_kanban_columns() -> dict:
             (True,),
         ).fetchall()
     return {"columns": [kanban_column_to_public(row) for row in rows]}
+
+
+@app.get("/api/public/survey-items")
+def list_public_survey_items(q: str = "") -> dict:
+    clauses = ["is_active = ?"]
+    args: list[Any] = [True]
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        clauses.append(
+            "("
+            "lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ? OR "
+            "lower(item_description) LIKE ?"
+            ")"
+        )
+        args.extend([like] * 4)
+
+    with connect() as conn:
+        rows = execute(
+            conn,
+            f"""
+            SELECT * FROM survey_items
+            WHERE {' AND '.join(clauses)}
+            ORDER BY sort_order ASC, id ASC
+            """,
+            args,
+        ).fetchall()
+    return {"items": [survey_item_to_public(row) for row in rows]}
+
+
+@app.post("/api/public/survey-responses", status_code=status.HTTP_201_CREATED)
+def create_public_survey_response(payload: SurveyResponseCreate) -> dict:
+    with connect() as conn:
+        survey_item = execute(
+            conn,
+            "SELECT id FROM survey_items WHERE id = ? AND is_active = ?",
+            (payload.survey_item_id, True),
+        ).fetchone()
+        if survey_item is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey item not found")
+
+        values = (
+            payload.survey_item_id,
+            str(payload.email).lower(),
+            payload.attention_effectiveness,
+            payload.recommend_rollout,
+            payload.retail_engagement,
+            payload.stands_out,
+            payload.price_reasonable,
+            payload.feedback.strip(),
+        )
+        if IS_POSTGRES:
+            row = execute(
+                conn,
+                """
+                INSERT INTO survey_responses (
+                    survey_item_id, email, attention_effectiveness, recommend_rollout,
+                    retail_engagement, stands_out, price_reasonable, feedback
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                RETURNING *
+                """,
+                values,
+            ).fetchone()
+        else:
+            cursor = execute(
+                conn,
+                """
+                INSERT INTO survey_responses (
+                    survey_item_id, email, attention_effectiveness, recommend_rollout,
+                    retail_engagement, stands_out, price_reasonable, feedback
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    return {"response": survey_response_to_public(row)}
 
 
 @app.post("/api/uploads/visual-reference")

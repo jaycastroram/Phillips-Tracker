@@ -85,6 +85,31 @@ type SheetStatus = {
   updated_at: string
 }
 
+type SurveyItem = {
+  id: number
+  item_name: string
+  brand: string
+  channel: string
+  item_description: string
+  uom: string
+  price: string
+  image_url: string
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+type SurveyResponseDraft = {
+  email: string
+  attention_effectiveness: number
+  recommend_rollout: 'Yes' | 'No' | 'Maybe'
+  retail_engagement: number
+  stands_out: 'Yes' | 'No' | 'Neutral'
+  price_reasonable: 'Yes' | 'No'
+  feedback: string
+}
+
 type AppUser = {
   id: number
   email: string
@@ -143,6 +168,16 @@ const EMPTY_ITEM_DRAFT: ItemDraft = {
   tracking: '',
 }
 
+const EMPTY_SURVEY_RESPONSE: SurveyResponseDraft = {
+  email: '',
+  attention_effectiveness: 5,
+  recommend_rollout: 'Yes',
+  retail_engagement: 5,
+  stands_out: 'Yes',
+  price_reasonable: 'Yes',
+  feedback: '',
+}
+
 function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname)
   const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '')
@@ -161,6 +196,7 @@ function App() {
   const [publicQuery, setPublicQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [publicItems, setPublicItems] = useState<TrackerItem[]>([])
+  const [surveyItems, setSurveyItems] = useState<SurveyItem[]>([])
   const [rowPageSize, setRowPageSize] = useState<RowPageSize>(20)
   const [currentTablePage, setCurrentTablePage] = useState(1)
   const [sortField, setSortField] = useState<EditableField>('date_or_buy')
@@ -173,17 +209,24 @@ function App() {
   const [refreshItemsToken, setRefreshItemsToken] = useState(0)
   const [loading, setLoading] = useState(true)
   const [publicLoading, setPublicLoading] = useState(false)
+  const [surveyLoading, setSurveyLoading] = useState(false)
   const [usersLoading, setUsersLoading] = useState(false)
   const [logsLoading, setLogsLoading] = useState(false)
   const [kanbanColumnsLoading, setKanbanColumnsLoading] = useState(false)
   const [statusesLoading, setStatusesLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
+  const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [publicError, setPublicError] = useState('')
+  const [surveyError, setSurveyError] = useState('')
   const [authError, setAuthError] = useState('')
   const [adminMessage, setAdminMessage] = useState('')
   const [kanbanMessage, setKanbanMessage] = useState('')
+  const [surveyMessage, setSurveyMessage] = useState('')
+  const [surveyQuery, setSurveyQuery] = useState('')
+  const [selectedSurveyItem, setSelectedSurveyItem] = useState<SurveyItem | null>(null)
+  const [surveyForm, setSurveyForm] = useState<SurveyResponseDraft>(EMPTY_SURVEY_RESPONSE)
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
   const [showNewUserPassword, setShowNewUserPassword] = useState(false)
   const [newUser, setNewUser] = useState({
@@ -224,6 +267,7 @@ function App() {
 
   const isPublicViewerPath = currentPath === '/viewer' || currentPath === '/viewer/kanban'
   const isPublicKanbanPath = currentPath === '/viewer/kanban'
+  const isPublicSurveyPath = currentPath === '/survey'
 
   useEffect(() => {
     function handlePopState() {
@@ -344,6 +388,36 @@ function App() {
     loadPublicItems()
     return () => controller.abort()
   }, [isPublicViewerPath, publicQuery])
+
+  useEffect(() => {
+    if (!isPublicSurveyPath) return
+
+    const controller = new AbortController()
+
+    async function loadSurveyItems() {
+      setSurveyLoading(true)
+      setSurveyError('')
+      const params = new URLSearchParams()
+      if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
+
+      try {
+        const response = await fetch(`${API_BASE}/public/survey-items?${params}`, {
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('Unable to load survey items.')
+        const data = await response.json()
+        setSurveyItems(data.items)
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') return
+        setSurveyError(err instanceof Error ? err.message : 'Unable to load survey items.')
+      } finally {
+        setSurveyLoading(false)
+      }
+    }
+
+    loadSurveyItems()
+    return () => controller.abort()
+  }, [isPublicSurveyPath, surveyQuery])
 
   const loadSheets = useCallback(async () => {
     const response = await apiFetch('/sheets')
@@ -1122,6 +1196,273 @@ function App() {
     )
   }
 
+  function openSurveyResponse(item: SurveyItem) {
+    setSelectedSurveyItem(item)
+    setSurveyForm(EMPTY_SURVEY_RESPONSE)
+    setSurveyMessage('')
+    setSurveyError('')
+  }
+
+  function closeSurveyResponse() {
+    setSelectedSurveyItem(null)
+    setSurveyForm(EMPTY_SURVEY_RESPONSE)
+  }
+
+  async function submitSurveyResponse(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!selectedSurveyItem) return
+
+    setIsSubmittingSurvey(true)
+    setSurveyError('')
+    setSurveyMessage('')
+    try {
+      const response = await fetch(`${API_BASE}/public/survey-responses`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          survey_item_id: selectedSurveyItem.id,
+          ...surveyForm,
+        }),
+      })
+      if (!response.ok) throw new Error('Unable to submit survey response.')
+      setSurveyMessage(`Thanks. Your response for ${selectedSurveyItem.item_name} was submitted.`)
+      closeSurveyResponse()
+    } catch (err) {
+      setSurveyError(err instanceof Error ? err.message : 'Unable to submit survey response.')
+    } finally {
+      setIsSubmittingSurvey(false)
+    }
+  }
+
+  function ratingOptions(
+    field: 'attention_effectiveness' | 'retail_engagement',
+    scaleLabel: string,
+  ) {
+    return (
+      <div className="survey-radio-stack">
+        {[1, 2, 3, 4, 5].map((rating) => (
+          <label key={rating}>
+            <input
+              checked={surveyForm[field] === rating}
+              name={field}
+              type="radio"
+              value={rating}
+              onChange={() => setSurveyForm((current) => ({ ...current, [field]: rating }))}
+            />
+            {rating}
+          </label>
+        ))}
+        <span>{scaleLabel}</span>
+      </div>
+    )
+  }
+
+  if (isPublicSurveyPath) {
+    return (
+      <main className="app-shell viewer-shell survey-shell">
+        <header className="brand-header">
+          <div className="brand-topline">
+            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+            <span>Public Survey</span>
+          </div>
+          <nav className="app-nav" aria-label="Survey navigation">
+            <button className="active" type="button" onClick={() => goToPath('/survey')}>
+              Survey
+            </button>
+            <button type="button" onClick={() => goToPath('/viewer')}>
+              Viewer
+            </button>
+            <button type="button" onClick={() => goToPath('/')}>
+              Sign In
+            </button>
+          </nav>
+        </header>
+
+        <section className="client-title-row viewer-title-row">
+          <div className="client-title-copy">
+            <div className="client-title-divider" />
+            <div>
+              <p className="eyebrow">SmartBuy Survey</p>
+              <h1>Product Interest Survey</h1>
+              <p className="subtitle">
+                Review potential items and submit feedback on what may generate customer interest.
+              </p>
+            </div>
+          </div>
+          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
+        </section>
+
+        <section className="viewer-toolbar">
+          <label>
+            Search
+            <input
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
+            />
+          </label>
+          <div className="viewer-toolbar-actions">
+            <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
+              Reset Search
+            </button>
+            <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
+          </div>
+        </section>
+
+        {surveyError && <div className="error">{surveyError}</div>}
+        {surveyMessage && <div className="success">{surveyMessage}</div>}
+
+        <section className="survey-grid" aria-label="Survey items">
+          {surveyItems.map((item) => (
+            <article key={item.id} className="survey-card">
+              <div className="survey-image">
+                {isImageReference(item.image_url) ? (
+                  <img src={item.image_url} alt="" />
+                ) : (
+                  <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+                )}
+              </div>
+              <div className="survey-card-copy">
+                <p className="viewer-card-topline">
+                  <span>{item.channel || 'No channel listed'}</span>
+                  <strong>{item.brand || 'No brand'}</strong>
+                </p>
+                <h2>{item.item_name}</h2>
+                <p>{item.item_description || 'No description provided yet.'}</p>
+                <dl>
+                  <div>
+                    <dt>UOM</dt>
+                    <dd>{item.uom || '-'}</dd>
+                  </div>
+                  <div>
+                    <dt>Price</dt>
+                    <dd>{item.price || '-'}</dd>
+                  </div>
+                </dl>
+              </div>
+              <button className="primary-action" type="button" onClick={() => openSurveyResponse(item)}>
+                Submit Review
+              </button>
+            </article>
+          ))}
+          {!surveyLoading && surveyItems.length === 0 && (
+            <div className="empty-state">No survey items found.</div>
+          )}
+        </section>
+
+        {selectedSurveyItem && (
+          <div className="modal-backdrop" role="presentation">
+            <form className="modal-card survey-response-card" onSubmit={submitSurveyResponse}>
+              <div>
+                <p className="eyebrow">Survey Response</p>
+                <h2>{selectedSurveyItem.item_name}</h2>
+                <p className="subtitle">
+                  {selectedSurveyItem.brand} {selectedSurveyItem.channel && `| ${selectedSurveyItem.channel}`}
+                </p>
+              </div>
+
+              <label className="survey-question">
+                Your email
+                <input
+                  required
+                  type="email"
+                  value={surveyForm.email}
+                  onChange={(event) =>
+                    setSurveyForm((current) => ({ ...current, email: event.target.value }))
+                  }
+                  placeholder="name@example.com"
+                />
+              </label>
+
+              <fieldset className="survey-question">
+                <legend>How effective is this item at attracting customer attention?</legend>
+                {ratingOptions('attention_effectiveness', 'Scale: 1 (Not at all) - 5 (Extremely effective)')}
+              </fieldset>
+
+              <fieldset className="survey-question">
+                <legend>Based on your experience, would you recommend rolling this item out widely?</legend>
+                <div className="survey-radio-stack">
+                  {(['Yes', 'No', 'Maybe'] as const).map((value) => (
+                    <label key={value}>
+                      <input
+                        checked={surveyForm.recommend_rollout === value}
+                        name="recommend_rollout"
+                        type="radio"
+                        value={value}
+                        onChange={() => setSurveyForm((current) => ({ ...current, recommend_rollout: value }))}
+                      />
+                      {value}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="survey-question">
+                <legend>Does this item drive noticeable engagement or interest at retail?</legend>
+                {ratingOptions('retail_engagement', 'Scale: 1 (None) - 5 (High engagement)')}
+              </fieldset>
+
+              <fieldset className="survey-question">
+                <legend>Does this item stand out compared to other displays or materials you see in-store in your market?</legend>
+                <div className="survey-radio-stack">
+                  {(['Yes', 'No', 'Neutral'] as const).map((value) => (
+                    <label key={value}>
+                      <input
+                        checked={surveyForm.stands_out === value}
+                        name="stands_out"
+                        type="radio"
+                        value={value}
+                        onChange={() => setSurveyForm((current) => ({ ...current, stands_out: value }))}
+                      />
+                      {value}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <fieldset className="survey-question">
+                <legend>Does the price seem reasonable?</legend>
+                <div className="survey-radio-stack">
+                  {(['Yes', 'No'] as const).map((value) => (
+                    <label key={value}>
+                      <input
+                        checked={surveyForm.price_reasonable === value}
+                        name="price_reasonable"
+                        type="radio"
+                        value={value}
+                        onChange={() => setSurveyForm((current) => ({ ...current, price_reasonable: value }))}
+                      />
+                      {value}
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <label className="survey-question">
+                What are your overall thoughts / feedback about this item?
+                <textarea
+                  value={surveyForm.feedback}
+                  onChange={(event) =>
+                    setSurveyForm((current) => ({ ...current, feedback: event.target.value }))
+                  }
+                />
+              </label>
+
+              <div className="modal-actions">
+                <button type="button" onClick={closeSurveyResponse}>
+                  Cancel
+                </button>
+                <button className="primary-action" type="submit" disabled={isSubmittingSurvey}>
+                  {isSubmittingSurvey ? 'Submitting...' : 'Submit'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+      </main>
+    )
+  }
+
   if (isPublicViewerPath) {
     return (
       <main className="app-shell viewer-shell">
@@ -1144,6 +1485,9 @@ function App() {
               onClick={() => goToPath('/viewer/kanban')}
             >
               Kanban Board
+            </button>
+            <button type="button" onClick={() => goToPath('/survey')}>
+              Survey
             </button>
             <button type="button" onClick={() => goToPath('/')}>
               Sign In
@@ -1331,6 +1675,9 @@ function App() {
           )}
           <button type="button" onClick={() => goToPath('/viewer')}>
             Viewer
+          </button>
+          <button type="button" onClick={() => goToPath('/survey')}>
+            Survey
           </button>
           <button type="button" onClick={handleLogout}>
             Log Out
