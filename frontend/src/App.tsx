@@ -1285,10 +1285,12 @@ function App() {
               </dl>
             </div>
             <div class="decision-box">
-              <strong>Decision</strong>
-              <label><span></span> Interested</label>
-              <label><span></span> Maybe</label>
-              <label><span></span> Pass</label>
+              <div class="decision-options">
+                <strong>Decision</strong>
+                <label><span></span> Interested</label>
+                <label><span></span> Maybe</label>
+                <label><span></span> Pass</label>
+              </div>
               <div class="notes">
                 <strong>Notes / Qty</strong>
                 <div></div>
@@ -1310,7 +1312,7 @@ function App() {
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              padding: 32px;
+              padding: 24px 32px;
               color: #111;
               font-family: Arial, Helvetica, sans-serif;
               background: #fff;
@@ -1350,13 +1352,13 @@ function App() {
             .buy-book-item {
               break-inside: avoid;
               display: grid;
-              grid-template-columns: 36px 120px minmax(0, 1fr) 190px;
-              gap: 16px;
+              grid-template-columns: 34px 128px minmax(0, 1fr);
+              gap: 14px;
               align-items: start;
               border: 1px solid #d9d9d9;
-              border-radius: 14px;
-              padding: 14px;
-              margin-bottom: 14px;
+              border-radius: 12px;
+              padding: 12px;
+              margin-bottom: 12px;
             }
             .item-number {
               width: 28px;
@@ -1369,7 +1371,7 @@ function App() {
               font-weight: 800;
             }
             .item-image {
-              min-height: 96px;
+              min-height: 104px;
               display: grid;
               place-items: center;
               border: 1px solid #d9d9d9;
@@ -1378,7 +1380,7 @@ function App() {
             }
             .item-image img {
               width: 100%;
-              height: 96px;
+              height: 104px;
               object-fit: contain;
             }
             .image-placeholder {
@@ -1402,11 +1404,13 @@ function App() {
             }
             h2 {
               margin: 0 0 8px;
-              font-size: 19px;
+              font-size: 18px;
+              line-height: 1.18;
             }
             .item-copy p:not(.meta) {
               margin: 0 0 12px;
-              line-height: 1.4;
+              line-height: 1.35;
+              font-size: 13px;
             }
             dl {
               display: grid;
@@ -1431,16 +1435,23 @@ function App() {
               font-weight: 800;
             }
             .decision-box {
+              grid-column: 2 / -1;
               display: grid;
-              gap: 9px;
-              border-left: 3px solid #FD4338;
-              padding-left: 12px;
+              grid-template-columns: 220px minmax(0, 1fr);
+              gap: 14px;
+              border-top: 2px solid #FD4338;
+              padding-top: 10px;
+            }
+            .decision-options {
+              display: grid;
+              gap: 8px;
+              align-content: start;
             }
             .decision-box label {
               display: flex;
               align-items: center;
               gap: 8px;
-              font-size: 13px;
+              font-size: 12px;
               font-weight: 700;
             }
             .decision-box label span {
@@ -1451,15 +1462,15 @@ function App() {
             }
             .notes {
               display: grid;
-              gap: 9px;
-              margin-top: 6px;
+              gap: 8px;
             }
             .notes div {
-              height: 18px;
+              height: 16px;
               border-bottom: 1px solid #999;
             }
             @media print {
-              body { padding: 20px; }
+              @page { margin: 0.45in; }
+              body { padding: 0; }
               .buy-book-item { page-break-inside: avoid; }
             }
           </style>
