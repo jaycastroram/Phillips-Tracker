@@ -205,6 +205,7 @@ function App() {
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdates>({})
   const [pendingDeletes, setPendingDeletes] = useState<number[]>([])
   const [isAddFormOpen, setIsAddFormOpen] = useState(false)
+  const [isSurveyFormOpen, setIsSurveyFormOpen] = useState(false)
   const [addForm, setAddForm] = useState<ItemDraft>(EMPTY_ITEM_DRAFT)
   const [refreshItemsToken, setRefreshItemsToken] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -225,7 +226,7 @@ function App() {
   const [kanbanMessage, setKanbanMessage] = useState('')
   const [surveyMessage, setSurveyMessage] = useState('')
   const [surveyQuery, setSurveyQuery] = useState('')
-  const [selectedSurveyItem, setSelectedSurveyItem] = useState<SurveyItem | null>(null)
+  const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
   const [surveyForm, setSurveyForm] = useState<SurveyResponseDraft>(EMPTY_SURVEY_RESPONSE)
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
   const [showNewUserPassword, setShowNewUserPassword] = useState(false)
@@ -928,6 +929,9 @@ function App() {
     sheetStatuses.forEach((statusRow) => statuses.add(statusRow.status))
     return [...statuses].sort((first, second) => first.localeCompare(second))
   }, [sheets, sheetStatuses])
+  const selectedSurveyItems = useMemo(() => {
+    return surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
+  }, [selectedSurveyItemIds, surveyItems])
   const pendingUpdateCount = Object.keys(pendingUpdates).length
   const pendingChangeCount = pendingCreates.length + pendingUpdateCount + pendingDeletes.length
   const hasPendingChanges = pendingChangeCount > 0
@@ -1197,35 +1201,305 @@ function App() {
   }
 
   function openSurveyResponse(item: SurveyItem) {
-    setSelectedSurveyItem(item)
+    setSelectedSurveyItemIds([item.id])
+    setIsSurveyFormOpen(true)
+    setSurveyForm(EMPTY_SURVEY_RESPONSE)
+    setSurveyMessage('')
+    setSurveyError('')
+  }
+
+  function openSelectedSurveyResponse() {
+    if (selectedSurveyItemIds.length === 0) return
+    setIsSurveyFormOpen(true)
     setSurveyForm(EMPTY_SURVEY_RESPONSE)
     setSurveyMessage('')
     setSurveyError('')
   }
 
   function closeSurveyResponse() {
-    setSelectedSurveyItem(null)
+    setIsSurveyFormOpen(false)
+    setSelectedSurveyItemIds([])
     setSurveyForm(EMPTY_SURVEY_RESPONSE)
+  }
+
+  function toggleSurveyItem(itemId: number) {
+    setSelectedSurveyItemIds((current) =>
+      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
+    )
+  }
+
+  function toggleAllSurveyItems() {
+    setSelectedSurveyItemIds((current) =>
+      current.length === surveyItems.length ? [] : surveyItems.map((item) => item.id),
+    )
+  }
+
+  function escapePrintValue(value: string) {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+  }
+
+  function printSurveyBuyBook() {
+    if (selectedSurveyItems.length === 0) return
+
+    const printWindow = window.open('', '_blank', 'noopener,noreferrer')
+    if (!printWindow) {
+      setSurveyError('Unable to open the print window. Please allow pop-ups for this site.')
+      return
+    }
+
+    const generatedDate = new Date().toLocaleDateString()
+    const itemMarkup = selectedSurveyItems
+      .map((item, index) => {
+        const imageMarkup = isImageReference(item.image_url)
+          ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
+          : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
+
+        return `
+          <article class="buy-book-item">
+            <div class="item-number">${index + 1}</div>
+            <div class="item-image">${imageMarkup}</div>
+            <div class="item-copy">
+              <p class="meta">${escapePrintValue(item.channel || 'No channel')} | ${escapePrintValue(item.brand || 'No brand')}</p>
+              <h2>${escapePrintValue(item.item_name)}</h2>
+              <p>${escapePrintValue(item.item_description || 'No description provided.')}</p>
+              <dl>
+                <div><dt>UOM</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
+                <div><dt>Price</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
+              </dl>
+            </div>
+            <div class="decision-box">
+              <strong>Decision</strong>
+              <label><span></span> Interested</label>
+              <label><span></span> Maybe</label>
+              <label><span></span> Pass</label>
+              <div class="notes">
+                <strong>Notes / Qty</strong>
+                <div></div>
+                <div></div>
+                <div></div>
+              </div>
+            </div>
+          </article>
+        `
+      })
+      .join('')
+
+    printWindow.document.write(`
+      <!doctype html>
+      <html>
+        <head>
+          <title>SmartBuy Survey Buy Book</title>
+          <style>
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              padding: 32px;
+              color: #111;
+              font-family: Arial, Helvetica, sans-serif;
+              background: #fff;
+            }
+            header {
+              display: flex;
+              align-items: center;
+              justify-content: space-between;
+              gap: 24px;
+              border-bottom: 3px solid #FD4338;
+              padding-bottom: 18px;
+              margin-bottom: 22px;
+            }
+            .brand {
+              display: flex;
+              align-items: center;
+              gap: 14px;
+            }
+            .brand img {
+              max-height: 42px;
+              max-width: 150px;
+              object-fit: contain;
+            }
+            h1 {
+              margin: 0;
+              font-size: 28px;
+              letter-spacing: -0.03em;
+            }
+            .subhead {
+              margin: 6px 0 0;
+              color: #565656;
+              font-size: 13px;
+              font-weight: 700;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            }
+            .buy-book-item {
+              break-inside: avoid;
+              display: grid;
+              grid-template-columns: 36px 120px minmax(0, 1fr) 190px;
+              gap: 16px;
+              align-items: start;
+              border: 1px solid #d9d9d9;
+              border-radius: 14px;
+              padding: 14px;
+              margin-bottom: 14px;
+            }
+            .item-number {
+              width: 28px;
+              height: 28px;
+              display: grid;
+              place-items: center;
+              border-radius: 999px;
+              background: #4B78FF;
+              color: #fff;
+              font-weight: 800;
+            }
+            .item-image {
+              min-height: 96px;
+              display: grid;
+              place-items: center;
+              border: 1px solid #d9d9d9;
+              border-radius: 10px;
+              background: #f7f7f7;
+            }
+            .item-image img {
+              width: 100%;
+              height: 96px;
+              object-fit: contain;
+            }
+            .image-placeholder {
+              width: 52px;
+              height: 52px;
+              display: grid;
+              place-items: center;
+              border-radius: 999px;
+              background: #fff;
+              color: #FD4338;
+              font-size: 18px;
+              font-weight: 800;
+            }
+            .meta {
+              margin: 0 0 6px;
+              color: #565656;
+              font-size: 11px;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            }
+            h2 {
+              margin: 0 0 8px;
+              font-size: 19px;
+            }
+            .item-copy p:not(.meta) {
+              margin: 0 0 12px;
+              line-height: 1.4;
+            }
+            dl {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 8px;
+              margin: 0;
+            }
+            dl div {
+              border-radius: 8px;
+              padding: 8px;
+              background: #f4f4f4;
+            }
+            dt {
+              color: #565656;
+              font-size: 10px;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            }
+            dd {
+              margin: 4px 0 0;
+              font-weight: 800;
+            }
+            .decision-box {
+              display: grid;
+              gap: 9px;
+              border-left: 3px solid #FD4338;
+              padding-left: 12px;
+            }
+            .decision-box label {
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              font-size: 13px;
+              font-weight: 700;
+            }
+            .decision-box label span {
+              width: 14px;
+              height: 14px;
+              border: 1px solid #111;
+              border-radius: 3px;
+            }
+            .notes {
+              display: grid;
+              gap: 9px;
+              margin-top: 6px;
+            }
+            .notes div {
+              height: 18px;
+              border-bottom: 1px solid #999;
+            }
+            @media print {
+              body { padding: 20px; }
+              .buy-book-item { page-break-inside: avoid; }
+            }
+          </style>
+        </head>
+        <body>
+          <header>
+            <div>
+              <p class="subhead">SmartBuy Survey</p>
+              <h1>Buy Book</h1>
+              <p class="subhead">${selectedSurveyItems.length} selected items | Generated ${generatedDate}</p>
+            </div>
+            <div class="brand">
+              <img src="${smartBuyLogo}" alt="SmartBuy" />
+              <img src="${phillipsLogo}" alt="Phillips" />
+            </div>
+          </header>
+          ${itemMarkup}
+          <script>
+            window.addEventListener('load', () => {
+              window.print();
+            });
+          </script>
+        </body>
+      </html>
+    `)
+    printWindow.document.close()
   }
 
   async function submitSurveyResponse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    if (!selectedSurveyItem) return
+    if (selectedSurveyItems.length === 0) return
 
     setIsSubmittingSurvey(true)
     setSurveyError('')
     setSurveyMessage('')
     try {
-      const response = await fetch(`${API_BASE}/public/survey-responses`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          survey_item_id: selectedSurveyItem.id,
-          ...surveyForm,
-        }),
-      })
-      if (!response.ok) throw new Error('Unable to submit survey response.')
-      setSurveyMessage(`Thanks. Your response for ${selectedSurveyItem.item_name} was submitted.`)
+      for (const item of selectedSurveyItems) {
+        const response = await fetch(`${API_BASE}/public/survey-responses`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            survey_item_id: item.id,
+            ...surveyForm,
+          }),
+        })
+        if (!response.ok) throw new Error('Unable to submit survey response.')
+      }
+      setSurveyMessage(
+        selectedSurveyItems.length === 1
+          ? `Thanks. Your response for ${selectedSurveyItems[0].item_name} was submitted.`
+          : `Thanks. Your response was submitted for ${selectedSurveyItems.length} items.`,
+      )
       closeSurveyResponse()
     } catch (err) {
       setSurveyError(err instanceof Error ? err.message : 'Unable to submit survey response.')
@@ -1305,6 +1579,32 @@ function App() {
             <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
               Reset Search
             </button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={toggleAllSurveyItems}
+              disabled={surveyItems.length === 0}
+            >
+              {selectedSurveyItemIds.length === surveyItems.length && surveyItems.length > 0
+                ? 'Clear Selection'
+                : 'Select All'}
+            </button>
+            <button
+              className="primary-action"
+              type="button"
+              onClick={openSelectedSurveyResponse}
+              disabled={selectedSurveyItemIds.length === 0}
+            >
+              Review Selected ({selectedSurveyItemIds.length})
+            </button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={printSurveyBuyBook}
+              disabled={selectedSurveyItemIds.length === 0}
+            >
+              Print Buy Book ({selectedSurveyItemIds.length})
+            </button>
             <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
           </div>
         </section>
@@ -1315,6 +1615,14 @@ function App() {
         <section className="survey-grid" aria-label="Survey items">
           {surveyItems.map((item) => (
             <article key={item.id} className="survey-card">
+              <label className="survey-select">
+                <input
+                  checked={selectedSurveyItemIds.includes(item.id)}
+                  type="checkbox"
+                  onChange={() => toggleSurveyItem(item.id)}
+                />
+                <span>Select</span>
+              </label>
               <div className="survey-image">
                 {isImageReference(item.image_url) ? (
                   <img src={item.image_url} alt="" />
@@ -1340,9 +1648,14 @@ function App() {
                   </div>
                 </dl>
               </div>
-              <button className="primary-action" type="button" onClick={() => openSurveyResponse(item)}>
-                Submit Review
-              </button>
+              <div className="survey-row-actions">
+                <button className="secondary-action" type="button" onClick={() => toggleSurveyItem(item.id)}>
+                  {selectedSurveyItemIds.includes(item.id) ? 'Selected' : 'Select'}
+                </button>
+                <button className="primary-action" type="button" onClick={() => openSurveyResponse(item)}>
+                  Review Item
+                </button>
+              </div>
             </article>
           ))}
           {!surveyLoading && surveyItems.length === 0 && (
@@ -1350,14 +1663,22 @@ function App() {
           )}
         </section>
 
-        {selectedSurveyItem && (
+        {isSurveyFormOpen && selectedSurveyItemIds.length > 0 && (
           <div className="modal-backdrop" role="presentation">
             <form className="modal-card survey-response-card" onSubmit={submitSurveyResponse}>
               <div>
                 <p className="eyebrow">Survey Response</p>
-                <h2>{selectedSurveyItem.item_name}</h2>
+                <h2>
+                  {selectedSurveyItems.length === 1
+                    ? selectedSurveyItems[0].item_name
+                    : `${selectedSurveyItems.length} Selected Items`}
+                </h2>
                 <p className="subtitle">
-                  {selectedSurveyItem.brand} {selectedSurveyItem.channel && `| ${selectedSurveyItem.channel}`}
+                  {selectedSurveyItems.length === 1
+                    ? `${selectedSurveyItems[0].brand}${
+                        selectedSurveyItems[0].channel ? ` | ${selectedSurveyItems[0].channel}` : ''
+                      }`
+                    : 'These answers will be saved for every selected item.'}
                 </p>
               </div>
 

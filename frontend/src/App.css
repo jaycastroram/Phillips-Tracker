@@ -1182,54 +1182,71 @@ td textarea {
 
 .survey-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .survey-card {
   display: grid;
+  grid-template-columns: auto 88px minmax(240px, 1fr) minmax(160px, 0.35fr) auto;
   gap: 14px;
-  align-content: start;
-  padding: 14px;
+  align-items: center;
+  padding: 12px 14px;
   border: 1px solid var(--brand-gridline);
-  border-radius: 20px;
+  border-radius: 16px;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 16px 44px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.survey-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--brand-dark-gray);
+  font-family: "Poppins", sans-serif;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.survey-select input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--brand-blue);
 }
 
 .survey-image {
-  min-height: 150px;
+  width: 88px;
+  min-height: 72px;
   display: grid;
   place-items: center;
   overflow: hidden;
   border: 1px solid var(--brand-gridline);
-  border-radius: 16px;
+  border-radius: 12px;
   background: var(--brand-soft);
 }
 
 .survey-image img {
   width: 100%;
-  height: 170px;
+  height: 72px;
   display: block;
   object-fit: contain;
 }
 
 .survey-image span {
-  width: 72px;
-  height: 72px;
+  width: 42px;
+  height: 42px;
   display: grid;
   place-items: center;
   border-radius: 999px;
   background: var(--brand-white);
   color: var(--brand-red);
   font-family: "Poppins", sans-serif;
-  font-size: 24px;
+  font-size: 16px;
   font-weight: 800;
 }
 
 .survey-card-copy {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .survey-card h2,
@@ -1237,6 +1254,10 @@ td textarea {
   margin: 0;
   color: var(--brand-black);
   font-family: "Poppins", sans-serif;
+}
+
+.survey-card h2 {
+  font-size: 1.05rem;
 }
 
 .survey-card p {
@@ -1247,7 +1268,7 @@ td textarea {
 
 .survey-card dl {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   margin: 0;
 }
@@ -1271,6 +1292,17 @@ td textarea {
   margin: 4px 0 0;
   color: var(--brand-black);
   font-weight: 800;
+}
+
+.survey-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.survey-row-actions button {
+  white-space: nowrap;
 }
 
 .survey-response-card {
@@ -1474,6 +1506,23 @@ td textarea {
 
   .survey-question {
     grid-template-columns: 1fr;
+  }
+
+  .survey-card {
+    grid-template-columns: auto 72px minmax(0, 1fr);
+  }
+
+  .survey-card dl,
+  .survey-row-actions {
+    grid-column: 1 / -1;
+  }
+
+  .survey-row-actions {
+    justify-content: flex-start;
+  }
+
+  .survey-image {
+    width: 72px;
   }
 
   .viewer-section-header {
