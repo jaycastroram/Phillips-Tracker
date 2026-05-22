@@ -1246,9 +1246,21 @@ function App() {
   function printSurveyBuyBook() {
     if (selectedSurveyItems.length === 0) return
 
-    const printWindow = window.open('', '_blank', 'noopener,noreferrer')
-    if (!printWindow) {
-      setSurveyError('Unable to open the print window. Please allow pop-ups for this site.')
+    const printFrame = document.createElement('iframe')
+    printFrame.title = 'SmartBuy Survey Buy Book'
+    printFrame.style.position = 'fixed'
+    printFrame.style.right = '0'
+    printFrame.style.bottom = '0'
+    printFrame.style.width = '0'
+    printFrame.style.height = '0'
+    printFrame.style.border = '0'
+    document.body.appendChild(printFrame)
+
+    const printFrameWindow = printFrame.contentWindow
+    const printDocument = printFrameWindow?.document
+    if (!printFrameWindow || !printDocument) {
+      printFrame.remove()
+      setSurveyError('Unable to prepare the print view.')
       return
     }
 
@@ -1289,7 +1301,7 @@ function App() {
       })
       .join('')
 
-    printWindow.document.write(`
+    const buyBookHtml = `
       <!doctype html>
       <html>
         <head>
@@ -1465,15 +1477,19 @@ function App() {
             </div>
           </header>
           ${itemMarkup}
-          <script>
-            window.addEventListener('load', () => {
-              window.print();
-            });
-          </script>
         </body>
       </html>
-    `)
-    printWindow.document.close()
+    `
+
+    printDocument.open()
+    printDocument.write(buyBookHtml)
+    printDocument.close()
+
+    window.setTimeout(() => {
+      printFrameWindow.focus()
+      printFrameWindow.print()
+      window.setTimeout(() => printFrame.remove(), 1000)
+    }, 250)
   }
 
   async function submitSurveyResponse(event: FormEvent<HTMLFormElement>) {
