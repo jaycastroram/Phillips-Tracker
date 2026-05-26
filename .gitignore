@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+.env
+backend/.env
 backend/data/tracker.db
 frontend/dist/
 node_modules/

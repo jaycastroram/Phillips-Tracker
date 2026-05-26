@@ -35,6 +35,23 @@ BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data" / "tracker.db"
 SEED_ITEMS_PATH = BASE_DIR / "data" / "seed_items.json"
 FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
+
+
+def load_local_env() -> None:
+    env_path = BASE_DIR / ".env"
+    if not env_path.exists():
+        return
+
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        os.environ.setdefault(key.strip().lstrip("\ufeff"), value.strip().strip('"').strip("'"))
+
+
+load_local_env()
+
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 IS_POSTGRES = DATABASE_URL.startswith(("postgres://", "postgresql://"))
 SESSION_DAYS = 7
@@ -1123,11 +1140,17 @@ async def upload_visual_reference(
     if len(contents) > MAX_UPLOAD_BYTES:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Image must be 8 MB or smaller")
 
-    result = cloudinary.uploader.upload(
-        io.BytesIO(contents),
-        folder="phillips-tracker/visual-references",
-        resource_type="image",
-    )
+    try:
+        result = cloudinary.uploader.upload(
+            io.BytesIO(contents),
+            folder="phillips-tracker/visual-references",
+            resource_type="image",
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Cloudinary upload failed. Check the Cloudinary cloud name, API key, and API secret.",
+        ) from exc
     return {
         "url": result["secure_url"],
         "public_id": result["public_id"],

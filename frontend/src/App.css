@@ -1000,13 +1000,73 @@ td textarea {
   font-weight: 700;
 }
 
-.viewer-toolbar input {
+.viewer-toolbar input,
+.viewer-toolbar select {
   min-height: 42px;
   border: 1px solid var(--brand-gridline);
   border-radius: 12px;
   padding: 0 12px;
   background: var(--brand-white);
   color: var(--brand-black);
+}
+
+.viewer-grid-card {
+  overflow: hidden;
+}
+
+.viewer-grid-table {
+  min-width: 1120px;
+}
+
+.viewer-grid-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f8f8f8;
+}
+
+.viewer-grid-table th,
+.viewer-grid-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--brand-gridline);
+  text-align: left;
+  vertical-align: top;
+}
+
+.viewer-status-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--brand-white);
+  font-family: "Poppins", sans-serif;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.viewer-status-chip.on-track {
+  background: var(--brand-blue);
+}
+
+.viewer-status-chip.not-on-track {
+  background: var(--brand-red);
+}
+
+.viewer-status-detail {
+  display: block;
+  margin-top: 6px;
+  color: var(--brand-dark-gray);
+  font-size: 0.8rem;
+}
+
+.viewer-grid-image {
+  width: 72px;
+  height: 54px;
+  display: block;
+  object-fit: contain;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 10px;
+  background: var(--brand-soft);
 }
 
 .viewer-toolbar-actions {
@@ -1187,7 +1247,7 @@ td textarea {
 
 .survey-card {
   display: grid;
-  grid-template-columns: auto 88px minmax(240px, 1fr) minmax(160px, 0.35fr) auto;
+  grid-template-columns: auto 88px minmax(240px, 1fr) minmax(280px, 0.8fr);
   gap: 14px;
   align-items: center;
   padding: 12px 14px;
@@ -1195,6 +1255,10 @@ td textarea {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.06);
+}
+
+.survey-card.buy-book-card {
+  grid-template-columns: auto 88px minmax(240px, 1fr);
 }
 
 .survey-select {
@@ -1303,6 +1367,54 @@ td textarea {
 
 .survey-row-actions button {
   white-space: nowrap;
+}
+
+.survey-inline-response {
+  display: grid;
+  grid-template-columns: minmax(130px, 0.55fr) minmax(160px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.survey-inline-response fieldset,
+.survey-inline-response label {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.survey-inline-response legend {
+  padding: 0;
+  color: var(--brand-ink);
+  font-weight: 700;
+}
+
+.survey-inline-response fieldset label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--brand-black);
+  font-weight: 600;
+}
+
+.survey-inline-response input[type="checkbox"] {
+  accent-color: var(--brand-blue);
+}
+
+.survey-inline-response textarea {
+  min-height: 76px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  resize: vertical;
 }
 
 .survey-response-card {
@@ -1512,9 +1624,13 @@ td textarea {
     grid-template-columns: auto 72px minmax(0, 1fr);
   }
 
-  .survey-card dl,
+  .survey-inline-response,
   .survey-row-actions {
     grid-column: 1 / -1;
+  }
+
+  .survey-inline-response {
+    grid-template-columns: 1fr;
   }
 
   .survey-row-actions {

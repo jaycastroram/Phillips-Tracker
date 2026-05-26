@@ -18,6 +18,7 @@ type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
 type RowPageSize = 10 | 20 | 30 | 'all'
 type SortDirection = 'asc' | 'desc'
 type ViewerStatus = 'on-track' | 'not-on-track'
+type SurveyInterest = '' | 'Interested' | 'Not Interested'
 
 type SheetMeta = {
   label: string
@@ -101,13 +102,8 @@ type SurveyItem = {
 }
 
 type SurveyResponseDraft = {
-  email: string
-  attention_effectiveness: number
-  recommend_rollout: 'Yes' | 'No' | 'Maybe'
-  retail_engagement: number
-  stands_out: 'Yes' | 'No' | 'Neutral'
-  price_reasonable: 'Yes' | 'No'
-  feedback: string
+  interest: SurveyInterest
+  notes: string
 }
 
 type AppUser = {
@@ -123,7 +119,6 @@ type AppUser = {
 const API_BASE = '/api'
 const AUTH_STORAGE_KEY = 'phillips-tracker-auth-token'
 const SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys', 'completed']
-const PUBLIC_SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys']
 const COLUMN_WIDTH_STORAGE_KEY = 'phillips-tracker-column-widths'
 const NOT_ON_TRACK_STATUSES = new Set([
   'Details Needed',
@@ -169,13 +164,8 @@ const EMPTY_ITEM_DRAFT: ItemDraft = {
 }
 
 const EMPTY_SURVEY_RESPONSE: SurveyResponseDraft = {
-  email: '',
-  attention_effectiveness: 5,
-  recommend_rollout: 'Yes',
-  retail_engagement: 5,
-  stands_out: 'Yes',
-  price_reasonable: 'Yes',
-  feedback: '',
+  interest: '',
+  notes: '',
 }
 
 function App() {
@@ -194,6 +184,7 @@ function App() {
   const [sheetStatuses, setSheetStatuses] = useState<SheetStatus[]>([])
   const [query, setQuery] = useState('')
   const [publicQuery, setPublicQuery] = useState('')
+  const [publicStatusFilter, setPublicStatusFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [publicItems, setPublicItems] = useState<TrackerItem[]>([])
   const [surveyItems, setSurveyItems] = useState<SurveyItem[]>([])
@@ -205,7 +196,6 @@ function App() {
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdates>({})
   const [pendingDeletes, setPendingDeletes] = useState<number[]>([])
   const [isAddFormOpen, setIsAddFormOpen] = useState(false)
-  const [isSurveyFormOpen, setIsSurveyFormOpen] = useState(false)
   const [addForm, setAddForm] = useState<ItemDraft>(EMPTY_ITEM_DRAFT)
   const [refreshItemsToken, setRefreshItemsToken] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -227,7 +217,7 @@ function App() {
   const [surveyMessage, setSurveyMessage] = useState('')
   const [surveyQuery, setSurveyQuery] = useState('')
   const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
-  const [surveyForm, setSurveyForm] = useState<SurveyResponseDraft>(EMPTY_SURVEY_RESPONSE)
+  const [surveyResponses, setSurveyResponses] = useState<Record<number, SurveyResponseDraft>>({})
   const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
   const [showNewUserPassword, setShowNewUserPassword] = useState(false)
   const [newUser, setNewUser] = useState({
@@ -269,6 +259,7 @@ function App() {
   const isPublicViewerPath = currentPath === '/viewer' || currentPath === '/viewer/kanban'
   const isPublicKanbanPath = currentPath === '/viewer/kanban'
   const isPublicSurveyPath = currentPath === '/survey'
+  const isPublicBuyBookPath = currentPath === '/buy-book'
 
   useEffect(() => {
     function handlePopState() {
@@ -391,7 +382,7 @@ function App() {
   }, [isPublicViewerPath, publicQuery])
 
   useEffect(() => {
-    if (!isPublicSurveyPath) return
+    if (!isPublicSurveyPath && !isPublicBuyBookPath) return
 
     const controller = new AbortController()
 
@@ -418,7 +409,7 @@ function App() {
 
     loadSurveyItems()
     return () => controller.abort()
-  }, [isPublicSurveyPath, surveyQuery])
+  }, [isPublicBuyBookPath, isPublicSurveyPath, surveyQuery])
 
   const loadSheets = useCallback(async () => {
     const response = await apiFetch('/sheets')
@@ -990,25 +981,16 @@ function App() {
     }, {})
   }, [items])
 
-  const publicCounts = useMemo(() => {
-    return publicItems.reduce(
-      (counts, item) => {
-        counts[getViewerStatus(item)] += 1
-        return counts
-      },
-      { 'on-track': 0, 'not-on-track': 0 } as Record<ViewerStatus, number>,
+  const publicStatusOptions = useMemo(() => {
+    return [...new Set(publicItems.map((item) => item.current_status).filter(Boolean))].sort((first, second) =>
+      first.localeCompare(second),
     )
   }, [publicItems])
-
-  const publicItemsBySheet = useMemo(() => {
-    return PUBLIC_SHEET_ORDER.reduce(
-      (groups, sheet) => {
-        groups[sheet] = publicItems.filter((item) => item.sheet === sheet)
-        return groups
-      },
-      {} as Record<SheetKey, TrackerItem[]>,
-    )
-  }, [publicItems])
+  const publicGridItems = useMemo(() => {
+    return publicStatusFilter
+      ? publicItems.filter((item) => item.current_status === publicStatusFilter)
+      : publicItems
+  }, [publicItems, publicStatusFilter])
 
   const visibleKanbanColumns = useMemo(() => {
     return [...kanbanColumns]
@@ -1118,6 +1100,10 @@ function App() {
     setCurrentPath(path)
   }
 
+  function openPublicPath(path: string) {
+    window.open(path, '_blank', 'noopener')
+  }
+
   function publicCard(item: TrackerItem) {
     return (
       <article key={item.id} className={`viewer-card ${getViewerStatus(item)}`}>
@@ -1200,26 +1186,18 @@ function App() {
     )
   }
 
-  function openSurveyResponse(item: SurveyItem) {
-    setSelectedSurveyItemIds([item.id])
-    setIsSurveyFormOpen(true)
-    setSurveyForm(EMPTY_SURVEY_RESPONSE)
-    setSurveyMessage('')
-    setSurveyError('')
+  function getSurveyResponse(itemId: number) {
+    return surveyResponses[itemId] ?? EMPTY_SURVEY_RESPONSE
   }
 
-  function openSelectedSurveyResponse() {
-    if (selectedSurveyItemIds.length === 0) return
-    setIsSurveyFormOpen(true)
-    setSurveyForm(EMPTY_SURVEY_RESPONSE)
-    setSurveyMessage('')
-    setSurveyError('')
-  }
-
-  function closeSurveyResponse() {
-    setIsSurveyFormOpen(false)
-    setSelectedSurveyItemIds([])
-    setSurveyForm(EMPTY_SURVEY_RESPONSE)
+  function updateSurveyResponse(itemId: number, updates: Partial<SurveyResponseDraft>) {
+    setSurveyResponses((current) => ({
+      ...current,
+      [itemId]: {
+        ...(current[itemId] ?? EMPTY_SURVEY_RESPONSE),
+        ...updates,
+      },
+    }))
   }
 
   function toggleSurveyItem(itemId: number) {
@@ -1232,6 +1210,20 @@ function App() {
     setSelectedSurveyItemIds((current) =>
       current.length === surveyItems.length ? [] : surveyItems.map((item) => item.id),
     )
+  }
+
+  function bulkUpdateSurveyInterest(interest: Exclude<SurveyInterest, ''>) {
+    if (selectedSurveyItemIds.length === 0) return
+    setSurveyResponses((current) => {
+      const next = { ...current }
+      selectedSurveyItemIds.forEach((itemId) => {
+        next[itemId] = {
+          ...(next[itemId] ?? EMPTY_SURVEY_RESPONSE),
+          interest,
+        }
+      })
+      return next
+    })
   }
 
   function escapePrintValue(value: string) {
@@ -1279,24 +1271,12 @@ function App() {
               <p class="meta">${escapePrintValue(item.channel || 'No channel')} | ${escapePrintValue(item.brand || 'No brand')}</p>
               <h2>${escapePrintValue(item.item_name)}</h2>
               <p>${escapePrintValue(item.item_description || 'No description provided.')}</p>
-              <dl>
-                <div><dt>UOM</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
-                <div><dt>Price</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
-              </dl>
             </div>
-            <div class="decision-box">
-              <div class="decision-options">
-                <strong>Decision</strong>
-                <label><span></span> Interested</label>
-                <label><span></span> Maybe</label>
-                <label><span></span> Pass</label>
-              </div>
-              <div class="notes">
-                <strong>Notes / Qty</strong>
-                <div></div>
-                <div></div>
-                <div></div>
-              </div>
+            <div class="notes">
+              <strong>Notes / Qty</strong>
+              <div></div>
+              <div></div>
+              <div></div>
             </div>
           </article>
         `
@@ -1312,7 +1292,7 @@ function App() {
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              padding: 24px 32px;
+              padding: 18px 26px;
               color: #111;
               font-family: Arial, Helvetica, sans-serif;
               background: #fff;
@@ -1321,30 +1301,30 @@ function App() {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 24px;
-              border-bottom: 3px solid #FD4338;
-              padding-bottom: 18px;
-              margin-bottom: 22px;
+              gap: 18px;
+              border-bottom: 2px solid #FD4338;
+              padding-bottom: 12px;
+              margin-bottom: 14px;
             }
             .brand {
               display: flex;
               align-items: center;
-              gap: 14px;
+              gap: 10px;
             }
             .brand img {
-              max-height: 42px;
-              max-width: 150px;
+              max-height: 34px;
+              max-width: 130px;
               object-fit: contain;
             }
             h1 {
               margin: 0;
-              font-size: 28px;
+              font-size: 24px;
               letter-spacing: -0.03em;
             }
             .subhead {
-              margin: 6px 0 0;
+              margin: 4px 0 0;
               color: #565656;
-              font-size: 13px;
+              font-size: 11px;
               font-weight: 700;
               text-transform: uppercase;
               letter-spacing: 0.08em;
@@ -1352,17 +1332,17 @@ function App() {
             .buy-book-item {
               break-inside: avoid;
               display: grid;
-              grid-template-columns: 34px 128px minmax(0, 1fr);
-              gap: 14px;
+              grid-template-columns: 28px 96px minmax(0, 1fr);
+              gap: 10px;
               align-items: start;
               border: 1px solid #d9d9d9;
-              border-radius: 12px;
-              padding: 12px;
-              margin-bottom: 12px;
+              border-radius: 10px;
+              padding: 9px;
+              margin-bottom: 8px;
             }
             .item-number {
-              width: 28px;
-              height: 28px;
+              width: 24px;
+              height: 24px;
               display: grid;
               place-items: center;
               border-radius: 999px;
@@ -1371,7 +1351,7 @@ function App() {
               font-weight: 800;
             }
             .item-image {
-              min-height: 104px;
+              min-height: 74px;
               display: grid;
               place-items: center;
               border: 1px solid #d9d9d9;
@@ -1380,96 +1360,74 @@ function App() {
             }
             .item-image img {
               width: 100%;
-              height: 104px;
+              height: 74px;
               object-fit: contain;
             }
             .image-placeholder {
-              width: 52px;
-              height: 52px;
+              width: 42px;
+              height: 42px;
               display: grid;
               place-items: center;
               border-radius: 999px;
               background: #fff;
               color: #FD4338;
-              font-size: 18px;
+              font-size: 16px;
               font-weight: 800;
             }
             .meta {
-              margin: 0 0 6px;
+              margin: 0 0 4px;
               color: #565656;
-              font-size: 11px;
+              font-size: 9px;
               font-weight: 800;
               text-transform: uppercase;
               letter-spacing: 0.08em;
             }
             h2 {
-              margin: 0 0 8px;
-              font-size: 18px;
-              line-height: 1.18;
+              margin: 0 0 5px;
+              font-size: 15px;
+              line-height: 1.12;
             }
             .item-copy p:not(.meta) {
-              margin: 0 0 12px;
-              line-height: 1.35;
-              font-size: 13px;
+              margin: 0 0 8px;
+              line-height: 1.25;
+              font-size: 11px;
             }
             dl {
               display: grid;
               grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 8px;
+              gap: 6px;
               margin: 0;
             }
             dl div {
               border-radius: 8px;
-              padding: 8px;
+              padding: 5px 6px;
               background: #f4f4f4;
             }
             dt {
               color: #565656;
-              font-size: 10px;
+              font-size: 8px;
               font-weight: 800;
               text-transform: uppercase;
               letter-spacing: 0.08em;
             }
             dd {
-              margin: 4px 0 0;
+              margin: 2px 0 0;
+              font-size: 12px;
               font-weight: 800;
             }
-            .decision-box {
-              grid-column: 2 / -1;
-              display: grid;
-              grid-template-columns: 220px minmax(0, 1fr);
-              gap: 14px;
-              border-top: 2px solid #FD4338;
-              padding-top: 10px;
-            }
-            .decision-options {
-              display: grid;
-              gap: 8px;
-              align-content: start;
-            }
-            .decision-box label {
-              display: flex;
-              align-items: center;
-              gap: 8px;
-              font-size: 12px;
-              font-weight: 700;
-            }
-            .decision-box label span {
-              width: 14px;
-              height: 14px;
-              border: 1px solid #111;
-              border-radius: 3px;
-            }
             .notes {
+              grid-column: 2 / -1;
+              border-top: 2px solid #FD4338;
+              padding-top: 7px;
               display: grid;
-              gap: 8px;
+              gap: 5px;
             }
             .notes div {
-              height: 16px;
+              height: 11px;
               border-bottom: 1px solid #999;
             }
             @media print {
-              @page { margin: 0.45in; }
+              @page { margin: 0.32in; }
               body { padding: 0; }
               .buy-book-item { page-break-inside: avoid; }
             }
@@ -1503,21 +1461,34 @@ function App() {
     }, 250)
   }
 
-  async function submitSurveyResponse(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  async function submitSurveyResponse() {
     if (selectedSurveyItems.length === 0) return
+
+    const missingInterest = selectedSurveyItems.filter((item) => !getSurveyResponse(item.id).interest)
+    if (missingInterest.length > 0) {
+      setSurveyError('Choose Interested or Not Interested for each selected item before submitting.')
+      return
+    }
 
     setIsSubmittingSurvey(true)
     setSurveyError('')
     setSurveyMessage('')
     try {
       for (const item of selectedSurveyItems) {
+        const responseDraft = getSurveyResponse(item.id)
+        const isInterested = responseDraft.interest === 'Interested'
         const response = await fetch(`${API_BASE}/public/survey-responses`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             survey_item_id: item.id,
-            ...surveyForm,
+            email: 'survey-response@smartbuy.local',
+            attention_effectiveness: isInterested ? 5 : 1,
+            recommend_rollout: isInterested ? 'Yes' : 'No',
+            retail_engagement: isInterested ? 5 : 1,
+            stands_out: isInterested ? 'Yes' : 'No',
+            price_reasonable: 'Yes',
+            feedback: responseDraft.notes,
           }),
         })
         if (!response.ok) throw new Error('Unable to submit survey response.')
@@ -1527,7 +1498,7 @@ function App() {
           ? `Thanks. Your response for ${selectedSurveyItems[0].item_name} was submitted.`
           : `Thanks. Your response was submitted for ${selectedSurveyItems.length} items.`,
       )
-      closeSurveyResponse()
+      setSelectedSurveyItemIds([])
     } catch (err) {
       setSurveyError(err instanceof Error ? err.message : 'Unable to submit survey response.')
     } finally {
@@ -1535,26 +1506,104 @@ function App() {
     }
   }
 
-  function ratingOptions(
-    field: 'attention_effectiveness' | 'retail_engagement',
-    scaleLabel: string,
-  ) {
+  if (isPublicBuyBookPath) {
     return (
-      <div className="survey-radio-stack">
-        {[1, 2, 3, 4, 5].map((rating) => (
-          <label key={rating}>
+      <main className="app-shell viewer-shell survey-shell">
+        <header className="brand-header">
+          <div className="brand-topline">
+            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+            <span>Buy Book</span>
+          </div>
+          <nav className="app-nav" aria-label="Buy book navigation">
+            <button type="button" onClick={() => openPublicPath('/survey')}>
+              Survey
+            </button>
+            <button className="active" type="button" onClick={() => goToPath('/buy-book')}>
+              Buy Book
+            </button>
+          </nav>
+        </header>
+
+        <section className="client-title-row viewer-title-row">
+          <div className="client-title-copy">
+            <div className="client-title-divider" />
+            <div>
+              <p className="eyebrow">SmartBuy Buy Book</p>
+              <h1>Buy Book</h1>
+              <p className="subtitle">
+                Select items and print a clean buy book for team review.
+              </p>
+            </div>
+          </div>
+          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
+        </section>
+
+        <section className="viewer-toolbar">
+          <label>
+            Search
             <input
-              checked={surveyForm[field] === rating}
-              name={field}
-              type="radio"
-              value={rating}
-              onChange={() => setSurveyForm((current) => ({ ...current, [field]: rating }))}
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
             />
-            {rating}
           </label>
-        ))}
-        <span>{scaleLabel}</span>
-      </div>
+          <div className="viewer-toolbar-actions">
+            <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
+              Reset Search
+            </button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={toggleAllSurveyItems}
+              disabled={surveyItems.length === 0}
+            >
+              {selectedSurveyItemIds.length === surveyItems.length && surveyItems.length > 0
+                ? 'Clear Selection'
+                : 'Select All'}
+            </button>
+            <button
+              className="primary-action"
+              type="button"
+              onClick={printSurveyBuyBook}
+              disabled={selectedSurveyItemIds.length === 0}
+            >
+              Print Buy Book ({selectedSurveyItemIds.length})
+            </button>
+            <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
+          </div>
+        </section>
+
+        {surveyError && <div className="error">{surveyError}</div>}
+
+        <section className="survey-grid" aria-label="Buy book items">
+          {surveyItems.map((item) => (
+            <article key={item.id} className="survey-card buy-book-card">
+              <label className="survey-select">
+                <input
+                  checked={selectedSurveyItemIds.includes(item.id)}
+                  type="checkbox"
+                  onChange={() => toggleSurveyItem(item.id)}
+                />
+                <span>Select</span>
+              </label>
+              <div className="survey-image">
+                {isImageReference(item.image_url) ? (
+                  <img src={item.image_url} alt="" />
+                ) : (
+                  <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+                )}
+              </div>
+              <div className="survey-card-copy">
+                <h2>{item.item_name}</h2>
+                <p>{item.item_description || 'No description provided yet.'}</p>
+              </div>
+            </article>
+          ))}
+          {!surveyLoading && surveyItems.length === 0 && (
+            <div className="empty-state">No buy book items found.</div>
+          )}
+        </section>
+      </main>
     )
   }
 
@@ -1570,11 +1619,8 @@ function App() {
             <button className="active" type="button" onClick={() => goToPath('/survey')}>
               Survey
             </button>
-            <button type="button" onClick={() => goToPath('/viewer')}>
-              Viewer
-            </button>
-            <button type="button" onClick={() => goToPath('/')}>
-              Sign In
+            <button type="button" onClick={() => openPublicPath('/buy-book')}>
+              Buy Book
             </button>
           </nav>
         </header>
@@ -1619,18 +1665,26 @@ function App() {
             <button
               className="primary-action"
               type="button"
-              onClick={openSelectedSurveyResponse}
+              onClick={submitSurveyResponse}
               disabled={selectedSurveyItemIds.length === 0}
             >
-              Review Selected ({selectedSurveyItemIds.length})
+              {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
             </button>
             <button
               className="secondary-action"
               type="button"
-              onClick={printSurveyBuyBook}
+              onClick={() => bulkUpdateSurveyInterest('Interested')}
               disabled={selectedSurveyItemIds.length === 0}
             >
-              Print Buy Book ({selectedSurveyItemIds.length})
+              Mark Interested
+            </button>
+            <button
+              className="secondary-action"
+              type="button"
+              onClick={() => bulkUpdateSurveyInterest('Not Interested')}
+              disabled={selectedSurveyItemIds.length === 0}
+            >
+              Mark Not Interested
             </button>
             <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
           </div>
@@ -1658,30 +1712,36 @@ function App() {
                 )}
               </div>
               <div className="survey-card-copy">
-                <p className="viewer-card-topline">
-                  <span>{item.channel || 'No channel listed'}</span>
-                  <strong>{item.brand || 'No brand'}</strong>
-                </p>
                 <h2>{item.item_name}</h2>
                 <p>{item.item_description || 'No description provided yet.'}</p>
-                <dl>
-                  <div>
-                    <dt>UOM</dt>
-                    <dd>{item.uom || '-'}</dd>
-                  </div>
-                  <div>
-                    <dt>Price</dt>
-                    <dd>{item.price || '-'}</dd>
-                  </div>
-                </dl>
               </div>
-              <div className="survey-row-actions">
-                <button className="secondary-action" type="button" onClick={() => toggleSurveyItem(item.id)}>
-                  {selectedSurveyItemIds.includes(item.id) ? 'Selected' : 'Select'}
-                </button>
-                <button className="primary-action" type="button" onClick={() => openSurveyResponse(item)}>
-                  Review Item
-                </button>
+              <div className="survey-inline-response">
+                <fieldset>
+                  <legend>Interest</legend>
+                  {(['Interested', 'Not Interested'] as const).map((interest) => (
+                    <label key={interest}>
+                      <input
+                        checked={getSurveyResponse(item.id).interest === interest}
+                        type="checkbox"
+                        value={interest}
+                        onChange={() =>
+                          updateSurveyResponse(item.id, {
+                            interest: getSurveyResponse(item.id).interest === interest ? '' : interest,
+                          })
+                        }
+                      />
+                      {interest}
+                    </label>
+                  ))}
+                </fieldset>
+                <label>
+                  Notes
+                  <textarea
+                    value={getSurveyResponse(item.id).notes}
+                    onChange={(event) => updateSurveyResponse(item.id, { notes: event.target.value })}
+                    placeholder="Optional notes"
+                  />
+                </label>
               </div>
             </article>
           ))}
@@ -1690,123 +1750,6 @@ function App() {
           )}
         </section>
 
-        {isSurveyFormOpen && selectedSurveyItemIds.length > 0 && (
-          <div className="modal-backdrop" role="presentation">
-            <form className="modal-card survey-response-card" onSubmit={submitSurveyResponse}>
-              <div>
-                <p className="eyebrow">Survey Response</p>
-                <h2>
-                  {selectedSurveyItems.length === 1
-                    ? selectedSurveyItems[0].item_name
-                    : `${selectedSurveyItems.length} Selected Items`}
-                </h2>
-                <p className="subtitle">
-                  {selectedSurveyItems.length === 1
-                    ? `${selectedSurveyItems[0].brand}${
-                        selectedSurveyItems[0].channel ? ` | ${selectedSurveyItems[0].channel}` : ''
-                      }`
-                    : 'These answers will be saved for every selected item.'}
-                </p>
-              </div>
-
-              <label className="survey-question">
-                Your email
-                <input
-                  required
-                  type="email"
-                  value={surveyForm.email}
-                  onChange={(event) =>
-                    setSurveyForm((current) => ({ ...current, email: event.target.value }))
-                  }
-                  placeholder="name@example.com"
-                />
-              </label>
-
-              <fieldset className="survey-question">
-                <legend>How effective is this item at attracting customer attention?</legend>
-                {ratingOptions('attention_effectiveness', 'Scale: 1 (Not at all) - 5 (Extremely effective)')}
-              </fieldset>
-
-              <fieldset className="survey-question">
-                <legend>Based on your experience, would you recommend rolling this item out widely?</legend>
-                <div className="survey-radio-stack">
-                  {(['Yes', 'No', 'Maybe'] as const).map((value) => (
-                    <label key={value}>
-                      <input
-                        checked={surveyForm.recommend_rollout === value}
-                        name="recommend_rollout"
-                        type="radio"
-                        value={value}
-                        onChange={() => setSurveyForm((current) => ({ ...current, recommend_rollout: value }))}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <fieldset className="survey-question">
-                <legend>Does this item drive noticeable engagement or interest at retail?</legend>
-                {ratingOptions('retail_engagement', 'Scale: 1 (None) - 5 (High engagement)')}
-              </fieldset>
-
-              <fieldset className="survey-question">
-                <legend>Does this item stand out compared to other displays or materials you see in-store in your market?</legend>
-                <div className="survey-radio-stack">
-                  {(['Yes', 'No', 'Neutral'] as const).map((value) => (
-                    <label key={value}>
-                      <input
-                        checked={surveyForm.stands_out === value}
-                        name="stands_out"
-                        type="radio"
-                        value={value}
-                        onChange={() => setSurveyForm((current) => ({ ...current, stands_out: value }))}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <fieldset className="survey-question">
-                <legend>Does the price seem reasonable?</legend>
-                <div className="survey-radio-stack">
-                  {(['Yes', 'No'] as const).map((value) => (
-                    <label key={value}>
-                      <input
-                        checked={surveyForm.price_reasonable === value}
-                        name="price_reasonable"
-                        type="radio"
-                        value={value}
-                        onChange={() => setSurveyForm((current) => ({ ...current, price_reasonable: value }))}
-                      />
-                      {value}
-                    </label>
-                  ))}
-                </div>
-              </fieldset>
-
-              <label className="survey-question">
-                What are your overall thoughts / feedback about this item?
-                <textarea
-                  value={surveyForm.feedback}
-                  onChange={(event) =>
-                    setSurveyForm((current) => ({ ...current, feedback: event.target.value }))
-                  }
-                />
-              </label>
-
-              <div className="modal-actions">
-                <button type="button" onClick={closeSurveyResponse}>
-                  Cancel
-                </button>
-                <button className="primary-action" type="submit" disabled={isSubmittingSurvey}>
-                  {isSubmittingSurvey ? 'Submitting...' : 'Submit'}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
       </main>
     )
   }
@@ -1825,7 +1768,7 @@ function App() {
               type="button"
               onClick={() => goToPath('/viewer')}
             >
-              Viewer Summary
+              Grid View
             </button>
             <button
               className={isPublicKanbanPath ? 'active' : ''}
@@ -1833,12 +1776,6 @@ function App() {
               onClick={() => goToPath('/viewer/kanban')}
             >
               Kanban Board
-            </button>
-            <button type="button" onClick={() => goToPath('/survey')}>
-              Survey
-            </button>
-            <button type="button" onClick={() => goToPath('/')}>
-              Sign In
             </button>
           </nav>
         </header>
@@ -1848,7 +1785,7 @@ function App() {
             <div className="client-title-divider" />
             <div>
               <p className="eyebrow">Order Interest Viewer</p>
-              <h1>{isPublicKanbanPath ? 'Viewer Kanban' : 'Viewer Dashboard'}</h1>
+              <h1>{isPublicKanbanPath ? 'Viewer Kanban' : 'Viewer Grid'}</h1>
               <p className="subtitle">
                 Ad Hoc and Buy period items summarized for public review.
               </p>
@@ -1866,30 +1803,42 @@ function App() {
               placeholder="Brand, program, item, notes, tracking..."
             />
           </label>
+          {!isPublicKanbanPath && (
+            <label>
+              Status
+              <select
+                value={publicStatusFilter}
+                onChange={(event) => setPublicStatusFilter(event.target.value)}
+              >
+                <option value="">All statuses</option>
+                {publicStatusOptions.map((statusLabel) => (
+                  <option key={statusLabel} value={statusLabel}>
+                    {statusLabel}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <div className="viewer-toolbar-actions">
             <button
               className="secondary-action"
               type="button"
-              onClick={() => setPublicQuery('')}
+              onClick={() => {
+                setPublicQuery('')
+                setPublicStatusFilter('')
+              }}
             >
-              Reset Search
+              Reset Filters
             </button>
-            <span>{publicLoading ? 'Loading...' : `${publicItems.length.toLocaleString()} items`}</span>
+            <span>
+              {publicLoading
+                ? 'Loading...'
+                : `${(isPublicKanbanPath ? publicItems : publicGridItems).length.toLocaleString()} items`}
+            </span>
           </div>
         </section>
 
         {publicError && <div className="error">{publicError}</div>}
-
-        <section className="viewer-summary" aria-label="Viewer status summary">
-          <article className="on-track">
-            <span>On Track</span>
-            <strong>{publicCounts['on-track']}</strong>
-          </article>
-          <article className="not-on-track">
-            <span>Not On Track</span>
-            <strong>{publicCounts['not-on-track']}</strong>
-          </article>
-        </section>
 
         {isPublicKanbanPath ? (
           <section className="kanban-board" aria-label="Viewer kanban board">
@@ -1909,30 +1858,55 @@ function App() {
             ))}
           </section>
         ) : (
-          <section className="viewer-sections" aria-label="Viewer item sections">
-            {PUBLIC_SHEET_ORDER.map((sheet) => (
-              <section key={sheet} className="viewer-section">
-                <div className="viewer-section-header">
-                  <div>
-                    <p className="eyebrow">{publicSheetLabel(sheet)}</p>
-                    <h2>
-                      {sheet === 'ad-hoc'
-                        ? 'Outside Buy Period Requests'
-                        : 'Buy Period Requests'}
-                    </h2>
-                  </div>
-                  <button type="button" onClick={() => goToPath('/viewer/kanban')}>
-                    Open Kanban Board
-                  </button>
-                </div>
-                <div className="viewer-card-grid">
-                  {(publicItemsBySheet[sheet] ?? []).map((item) => publicCard(item))}
-                  {!publicLoading && (publicItemsBySheet[sheet] ?? []).length === 0 && (
-                    <div className="empty-state">No viewer items found for this section.</div>
-                  )}
-                </div>
-              </section>
-            ))}
+          <section className="table-card viewer-grid-card" aria-label="Viewer grid">
+            <div className="table-scroll">
+              <table className="viewer-grid-table">
+                <thead>
+                  <tr>
+                    <th>Sheet</th>
+                    <th>Status</th>
+                    <th>Visual Reference</th>
+                    <th>Brand</th>
+                    <th>Program Name</th>
+                    <th>Item Name</th>
+                    <th>MRL Order #</th>
+                    <th>Estimated Ship Date</th>
+                    <th>Estimated IHD</th>
+                    <th>Tracking</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {publicGridItems.map((item) => (
+                    <tr key={item.id}>
+                      <td>{publicSheetLabel(item.sheet)}</td>
+                      <td>
+                        <span className={`viewer-status-chip ${getViewerStatus(item)}`}>
+                          {getViewerStatus(item) === 'on-track' ? 'On Track' : 'Not On Track'}
+                        </span>
+                        <span className="viewer-status-detail">{item.current_status || 'No Status'}</span>
+                      </td>
+                      <td>
+                        {isImageReference(item.visual_reference) ? (
+                          <img className="viewer-grid-image" src={item.visual_reference} alt="" />
+                        ) : (
+                          item.visual_reference || '-'
+                        )}
+                      </td>
+                      <td>{item.brand || '-'}</td>
+                      <td>{item.program_name || '-'}</td>
+                      <td>{item.item_name || '-'}</td>
+                      <td>{item.mrl_order_number || '-'}</td>
+                      <td>{item.estimated_ship_date || '-'}</td>
+                      <td>{item.estimated_ihd || '-'}</td>
+                      <td>{item.tracking || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {!publicLoading && publicGridItems.length === 0 && (
+              <div className="empty-state">No viewer items match these filters.</div>
+            )}
           </section>
         )}
       </main>
@@ -2021,11 +1995,14 @@ function App() {
               </button>
             </>
           )}
-          <button type="button" onClick={() => goToPath('/viewer')}>
+          <button type="button" onClick={() => openPublicPath('/viewer')}>
             Viewer
           </button>
-          <button type="button" onClick={() => goToPath('/survey')}>
+          <button type="button" onClick={() => openPublicPath('/survey')}>
             Survey
+          </button>
+          <button type="button" onClick={() => openPublicPath('/buy-book')}>
+            Buy Book
           </button>
           <button type="button" onClick={handleLogout}>
             Log Out
@@ -2501,7 +2478,7 @@ function App() {
             <button className="primary-action" type="button" onClick={openAddForm}>
               Add
             </button>
-            <button className="secondary-action" type="button" onClick={() => goToPath('/viewer/kanban')}>
+            <button className="secondary-action" type="button" onClick={() => openPublicPath('/viewer/kanban')}>
               Viewer Kanban
             </button>
             <button
