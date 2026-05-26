@@ -1023,6 +1023,12 @@ td textarea {
   top: 0;
   z-index: 1;
   background: #f8f8f8;
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .viewer-grid-table th,

@@ -1514,14 +1514,6 @@ function App() {
             <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
             <span>Buy Book</span>
           </div>
-          <nav className="app-nav" aria-label="Buy book navigation">
-            <button type="button" onClick={() => openPublicPath('/survey')}>
-              Survey
-            </button>
-            <button className="active" type="button" onClick={() => goToPath('/buy-book')}>
-              Buy Book
-            </button>
-          </nav>
         </header>
 
         <section className="client-title-row viewer-title-row">
@@ -1615,14 +1607,6 @@ function App() {
             <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
             <span>Public Survey</span>
           </div>
-          <nav className="app-nav" aria-label="Survey navigation">
-            <button className="active" type="button" onClick={() => goToPath('/survey')}>
-              Survey
-            </button>
-            <button type="button" onClick={() => openPublicPath('/buy-book')}>
-              Buy Book
-            </button>
-          </nav>
         </header>
 
         <section className="client-title-row viewer-title-row">
