@@ -233,7 +233,6 @@ export function BuyBookPage({
         <div className="client-title-copy">
           <div className="client-title-divider" />
           <div>
-            <p className="eyebrow">SmartBuy Buy Book</p>
             <h1>Buy Book</h1>
             <p className="subtitle">Select items and print a clean buy book for team review.</p>
           </div>
@@ -349,7 +348,6 @@ export function SurveyPage({
         <div className="client-title-copy">
           <div className="client-title-divider" />
           <div>
-            <p className="eyebrow">Pre-Buy Survey</p>
             <h1>Product Interest Survey</h1>
             <p className="subtitle">
               Make your voice count and review Buy In item candidates. This is your opportunity to influence what gets purchased and stocked.

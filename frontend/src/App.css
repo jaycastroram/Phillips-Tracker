@@ -987,6 +987,10 @@ td textarea {
   color: var(--brand-red);
 }
 
+.survey-shell .client-title-row h1 {
+  color: var(--brand-red);
+}
+
 .viewer-title-row {
   padding-bottom: 0;
 }
