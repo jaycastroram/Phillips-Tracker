@@ -973,6 +973,20 @@ td textarea {
   gap: 22px;
 }
 
+.survey-shell {
+  background: #f9f9f9;
+  background-image: none;
+}
+
+.survey-shell .brand-header {
+  background: #f9f9f9;
+  box-shadow: none;
+}
+
+.survey-shell .eyebrow {
+  color: var(--brand-red);
+}
+
 .viewer-title-row {
   padding-bottom: 0;
 }
@@ -1084,6 +1098,17 @@ td textarea {
   font-family: "Poppins", sans-serif;
   font-size: 13px;
   font-weight: 700;
+}
+
+.survey-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.viewer-toolbar-actions .survey-filter-grid label {
+  min-width: 0;
+  font-size: 12px;
 }
 
 .viewer-summary {

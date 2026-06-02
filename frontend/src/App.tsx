@@ -8,165 +8,41 @@ import {
 } from 'react'
 import phillipsLogo from './assets/3184_Phillips Store Logo.png'
 import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
+import {
+  API_BASE,
+  AUTH_STORAGE_KEY,
+  BASE_COLUMNS,
+  COLUMN_WIDTH_STORAGE_KEY,
+  DEFAULT_COLUMN_WIDTHS,
+  EMPTY_ITEM_DRAFT,
+  EMPTY_SURVEY_RESPONSE,
+  SHEET_ORDER,
+} from './constants'
+import { BuyBookPage, SurveyPage, ViewerPage } from './publicPages'
+import type {
+  AdminSettingsTab,
+  AppUser,
+  AuditLog,
+  ColumnKey,
+  EditableField,
+  ItemDraft,
+  KanbanColumn,
+  Page,
+  PendingUpdates,
+  Role,
+  RowPageSize,
+  SheetKey,
+  SheetMeta,
+  SheetStatus,
+  SortDirection,
+  StatusTargetSheet,
+  SurveyInterest,
+  SurveyItem,
+  SurveyResponseDraft,
+  TrackerItem,
+} from './types'
+import { escapePrintValue, isImageReference } from './utils'
 import './App.css'
-
-type SheetKey = 'ad-hoc' | 'buys' | 'completed'
-type StatusTargetSheet = SheetKey | 'all'
-type Role = 'admin' | 'editor'
-type Page = 'tracker' | 'admin-users' | 'system-log'
-type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
-type RowPageSize = 10 | 20 | 30 | 'all'
-type SortDirection = 'asc' | 'desc'
-type ViewerStatus = 'on-track' | 'not-on-track'
-type SurveyInterest = '' | 'Interested' | 'Not Interested'
-
-type SheetMeta = {
-  label: string
-  dateLabel: string
-  statuses: string[]
-}
-
-type TrackerItem = {
-  id: number
-  sheet: SheetKey
-  source_row?: number
-  date_or_buy: string
-  current_status: string
-  visual_reference: string
-  brand: string
-  program_name: string
-  item_name: string
-  qty: string
-  important_notes: string
-  mrl_order_number: string
-  estimated_ship_date: string
-  estimated_ihd: string
-  tracking: string
-  extra?: Record<string, string>
-  updated_at: string
-}
-
-type EditableField = Exclude<
-  keyof TrackerItem,
-  'id' | 'sheet' | 'source_row' | 'extra' | 'updated_at'
->
-
-type ColumnKey = EditableField | 'actions'
-type ItemDraft = Record<EditableField, string>
-type PendingUpdates = Record<number, Partial<ItemDraft>>
-
-type AuditLog = {
-  id: number
-  user_id: number | null
-  user_email: string
-  action: string
-  sheet: string | null
-  item_id: number | null
-  before: Record<string, unknown> | null
-  after: Record<string, unknown> | null
-  created_at: string
-}
-
-type KanbanColumn = {
-  id: number
-  title: string
-  statuses: string[]
-  sort_order: number
-  is_visible: boolean
-  created_at: string
-  updated_at: string
-}
-
-type SheetStatus = {
-  id: number
-  sheet: SheetKey
-  status: string
-  sort_order: number
-  created_at: string
-  updated_at: string
-}
-
-type SurveyItem = {
-  id: number
-  item_name: string
-  brand: string
-  channel: string
-  item_description: string
-  uom: string
-  price: string
-  image_url: string
-  sort_order: number
-  is_active: boolean
-  created_at: string
-  updated_at: string
-}
-
-type SurveyResponseDraft = {
-  interest: SurveyInterest
-  notes: string
-}
-
-type AppUser = {
-  id: number
-  email: string
-  name: string
-  role: Role
-  is_active: boolean
-  created_at: string
-  updated_at: string
-}
-
-const API_BASE = '/api'
-const AUTH_STORAGE_KEY = 'phillips-tracker-auth-token'
-const SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys', 'completed']
-const COLUMN_WIDTH_STORAGE_KEY = 'phillips-tracker-column-widths'
-const NOT_ON_TRACK_STATUSES = new Set([
-  'Details Needed',
-  'Quoting',
-  'Pending Feedback',
-  'ON HOLD',
-  'Canceled',
-])
-
-const BASE_COLUMNS: { field: EditableField; label: string; width: number; className?: string }[] = [
-  { field: 'date_or_buy', label: 'Date/Buy', width: 140 },
-  { field: 'current_status', label: 'Current Status', width: 190 },
-  { field: 'visual_reference', label: 'Visual Reference', width: 170 },
-  { field: 'brand', label: 'Brand', width: 150 },
-  { field: 'program_name', label: 'Program Name', width: 300, className: 'wide' },
-  { field: 'item_name', label: 'Item Name', width: 300, className: 'wide' },
-  { field: 'qty', label: 'Qty', width: 110 },
-  { field: 'important_notes', label: 'Important Notes', width: 360, className: 'notes' },
-  { field: 'mrl_order_number', label: 'MRL Order #', width: 150 },
-  { field: 'estimated_ship_date', label: 'Estimated Ship Date', width: 190 },
-  { field: 'estimated_ihd', label: 'Estimated IHD', width: 170 },
-  { field: 'tracking', label: 'Tracking', width: 340, className: 'notes' },
-]
-
-const DEFAULT_COLUMN_WIDTHS: Record<ColumnKey, number> = {
-  ...Object.fromEntries(BASE_COLUMNS.map((column) => [column.field, column.width])),
-  actions: 110,
-} as Record<ColumnKey, number>
-
-const EMPTY_ITEM_DRAFT: ItemDraft = {
-  date_or_buy: '',
-  current_status: '',
-  visual_reference: '',
-  brand: '',
-  program_name: '',
-  item_name: '',
-  qty: '',
-  important_notes: '',
-  mrl_order_number: '',
-  estimated_ship_date: '',
-  estimated_ihd: '',
-  tracking: '',
-}
-
-const EMPTY_SURVEY_RESPONSE: SurveyResponseDraft = {
-  interest: '',
-  notes: '',
-}
 
 function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname)
@@ -1067,34 +943,6 @@ function App() {
     setCurrentTablePage(1)
   }
 
-  function isImageReference(value: string) {
-    if (!value.trim()) return false
-
-    try {
-      const url = new URL(value)
-      return (
-        url.hostname.includes('res.cloudinary.com') ||
-        /\.(avif|gif|jpe?g|png|webp)$/i.test(url.pathname)
-      )
-    } catch {
-      return false
-    }
-  }
-
-  function getViewerStatus(item: TrackerItem): ViewerStatus {
-    return NOT_ON_TRACK_STATUSES.has(item.current_status) ? 'not-on-track' : 'on-track'
-  }
-
-  function viewerStatusLabel(status: ViewerStatus) {
-    return status === 'on-track' ? 'On Track' : 'Not On Track'
-  }
-
-  function publicSheetLabel(sheet: SheetKey) {
-    if (sheet === 'ad-hoc') return 'Ad Hoc'
-    if (sheet === 'buys') return 'Buys'
-    return 'Completed'
-  }
-
   function goToPath(path: string) {
     window.history.pushState({}, '', path)
     setCurrentPath(path)
@@ -1102,37 +950,6 @@ function App() {
 
   function openPublicPath(path: string) {
     window.open(path, '_blank', 'noopener')
-  }
-
-  function publicCard(item: TrackerItem) {
-    return (
-      <article key={item.id} className={`viewer-card ${getViewerStatus(item)}`}>
-        <div className="viewer-card-topline">
-          <span>{publicSheetLabel(item.sheet)}</span>
-          <strong>{viewerStatusLabel(getViewerStatus(item))}</strong>
-        </div>
-        {isImageReference(item.visual_reference) && (
-          <a className="viewer-card-image" href={item.visual_reference} target="_blank" rel="noreferrer">
-            <img src={item.visual_reference} alt="" />
-          </a>
-        )}
-        <h3>{item.item_name || 'Untitled Item'}</h3>
-        <p className="viewer-card-meta">
-          {[item.brand, item.program_name].filter(Boolean).join(' | ') || 'No brand/program listed'}
-        </p>
-        <dl>
-          <div>
-            <dt>Qty</dt>
-            <dd>{item.qty || '-'}</dd>
-          </div>
-          <div>
-            <dt>Status</dt>
-            <dd>{item.current_status || 'No Status'}</dd>
-          </div>
-        </dl>
-        {item.important_notes && <p className="viewer-notes">{item.important_notes}</p>}
-      </article>
-    )
   }
 
   function auditLogSummary(log: AuditLog) {
@@ -1206,12 +1023,6 @@ function App() {
     )
   }
 
-  function toggleAllSurveyItems() {
-    setSelectedSurveyItemIds((current) =>
-      current.length === surveyItems.length ? [] : surveyItems.map((item) => item.id),
-    )
-  }
-
   function bulkUpdateSurveyInterest(interest: Exclude<SurveyInterest, ''>) {
     if (selectedSurveyItemIds.length === 0) return
     setSurveyResponses((current) => {
@@ -1224,15 +1035,6 @@ function App() {
       })
       return next
     })
-  }
-
-  function escapePrintValue(value: string) {
-    return value
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
   }
 
   function printSurveyBuyBook() {
@@ -1265,18 +1067,26 @@ function App() {
 
         return `
           <article class="buy-book-item">
-            <div class="item-number">${index + 1}</div>
             <div class="item-image">${imageMarkup}</div>
             <div class="item-copy">
-              <p class="meta">${escapePrintValue(item.channel || 'No channel')} | ${escapePrintValue(item.brand || 'No brand')}</p>
-              <h2>${escapePrintValue(item.item_name)}</h2>
-              <p>${escapePrintValue(item.item_description || 'No description provided.')}</p>
-            </div>
-            <div class="notes">
-              <strong>Notes / Qty</strong>
-              <div></div>
-              <div></div>
-              <div></div>
+              <dl>
+                <div>
+                  <dt>Name:</dt>
+                  <dd>${escapePrintValue(item.item_name || `Item ${index + 1}`)}</dd>
+                </div>
+                <div>
+                  <dt>Description:</dt>
+                  <dd>${escapePrintValue(item.item_description || 'No description provided.')}</dd>
+                </div>
+                <div>
+                  <dt>Unit of Measure:</dt>
+                  <dd>${escapePrintValue(item.uom || '-')}</dd>
+                </div>
+                <div>
+                  <dt>Price:</dt>
+                  <dd>${escapePrintValue(item.price || '-')}</dd>
+                </div>
+              </dl>
             </div>
           </article>
         `
@@ -1292,7 +1102,7 @@ function App() {
             * { box-sizing: border-box; }
             body {
               margin: 0;
-              padding: 18px 26px;
+              padding: 30px 42px;
               color: #111;
               font-family: Arial, Helvetica, sans-serif;
               background: #fff;
@@ -1301,10 +1111,10 @@ function App() {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 18px;
-              border-bottom: 2px solid #FD4338;
-              padding-bottom: 12px;
-              margin-bottom: 14px;
+              gap: 24px;
+              border-bottom: 2px solid #111;
+              padding-bottom: 8px;
+              margin-bottom: 26px;
             }
             .brand {
               display: flex;
@@ -1312,14 +1122,14 @@ function App() {
               gap: 10px;
             }
             .brand img {
-              max-height: 34px;
-              max-width: 130px;
+              max-height: 36px;
+              max-width: 160px;
               object-fit: contain;
             }
             h1 {
               margin: 0;
-              font-size: 24px;
-              letter-spacing: -0.03em;
+              font-size: 28px;
+              letter-spacing: -0.02em;
             }
             .subhead {
               margin: 4px 0 0;
@@ -1329,105 +1139,74 @@ function App() {
               text-transform: uppercase;
               letter-spacing: 0.08em;
             }
+            .buy-book-grid {
+              display: grid;
+              grid-template-columns: repeat(2, minmax(0, 1fr));
+              gap: 34px 44px;
+              align-items: start;
+            }
             .buy-book-item {
               break-inside: avoid;
               display: grid;
-              grid-template-columns: 28px 96px minmax(0, 1fr);
-              gap: 10px;
+              grid-template-columns: 116px minmax(0, 1fr);
+              gap: 16px;
               align-items: start;
-              border: 1px solid #d9d9d9;
-              border-radius: 10px;
-              padding: 9px;
-              margin-bottom: 8px;
-            }
-            .item-number {
-              width: 24px;
-              height: 24px;
-              display: grid;
-              place-items: center;
-              border-radius: 999px;
-              background: #4B78FF;
-              color: #fff;
-              font-weight: 800;
+              min-height: 126px;
             }
             .item-image {
-              min-height: 74px;
+              min-height: 104px;
               display: grid;
               place-items: center;
-              border: 1px solid #d9d9d9;
-              border-radius: 10px;
-              background: #f7f7f7;
+              background: #fff;
             }
             .item-image img {
               width: 100%;
-              height: 74px;
+              height: 104px;
               object-fit: contain;
             }
             .image-placeholder {
-              width: 42px;
-              height: 42px;
+              width: 70px;
+              height: 70px;
               display: grid;
               place-items: center;
               border-radius: 999px;
-              background: #fff;
+              background: #f4f4f4;
               color: #FD4338;
-              font-size: 16px;
+              font-size: 20px;
               font-weight: 800;
-            }
-            .meta {
-              margin: 0 0 4px;
-              color: #565656;
-              font-size: 9px;
-              font-weight: 800;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
-            }
-            h2 {
-              margin: 0 0 5px;
-              font-size: 15px;
-              line-height: 1.12;
-            }
-            .item-copy p:not(.meta) {
-              margin: 0 0 8px;
-              line-height: 1.25;
-              font-size: 11px;
             }
             dl {
-              display: grid;
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 6px;
               margin: 0;
-            }
-            dl div {
-              border-radius: 8px;
-              padding: 5px 6px;
-              background: #f4f4f4;
+              display: grid;
+              gap: 3px;
             }
             dt {
-              color: #565656;
-              font-size: 8px;
+              display: inline;
+              margin-right: 4px;
+              color: #111;
+              font-size: 11px;
               font-weight: 800;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
             }
             dd {
-              margin: 2px 0 0;
-              font-size: 12px;
-              font-weight: 800;
+              display: inline;
+              margin: 0;
+              font-size: 11px;
+              line-height: 1.25;
             }
-            .notes {
-              grid-column: 2 / -1;
-              border-top: 2px solid #FD4338;
-              padding-top: 7px;
-              display: grid;
-              gap: 5px;
+            dl div {
+              display: block;
             }
-            .notes div {
-              height: 11px;
-              border-bottom: 1px solid #999;
+            footer {
+              position: fixed;
+              right: 0;
+              bottom: 0;
+              left: 0;
+              color: #777;
+              font-size: 9px;
+              text-align: center;
             }
             @media print {
-              @page { margin: 0.32in; }
+              @page { size: landscape; margin: 0.35in; }
               body { padding: 0; }
               .buy-book-item { page-break-inside: avoid; }
             }
@@ -1436,8 +1215,7 @@ function App() {
         <body>
           <header>
             <div>
-              <p class="subhead">SmartBuy Survey</p>
-              <h1>Buy Book</h1>
+              <h1>Buy Deck</h1>
               <p class="subhead">${selectedSurveyItems.length} selected items | Generated ${generatedDate}</p>
             </div>
             <div class="brand">
@@ -1445,7 +1223,8 @@ function App() {
               <img src="${phillipsLogo}" alt="Phillips" />
             </div>
           </header>
-          ${itemMarkup}
+          <main class="buy-book-grid">${itemMarkup}</main>
+          <footer>This Buy Book was created in SmartBuy&trade;</footer>
         </body>
       </html>
     `
@@ -1482,7 +1261,7 @@ function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             survey_item_id: item.id,
-            email: 'survey-response@smartbuy.local',
+            email: 'survey-response@example.com',
             attention_effectiveness: isInterested ? 5 : 1,
             recommend_rollout: isInterested ? 'Yes' : 'No',
             retail_engagement: isInterested ? 5 : 1,
@@ -1508,392 +1287,55 @@ function App() {
 
   if (isPublicBuyBookPath) {
     return (
-      <main className="app-shell viewer-shell survey-shell">
-        <header className="brand-header">
-          <div className="brand-topline">
-            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-            <span>Buy Book</span>
-          </div>
-        </header>
-
-        <section className="client-title-row viewer-title-row">
-          <div className="client-title-copy">
-            <div className="client-title-divider" />
-            <div>
-              <p className="eyebrow">SmartBuy Buy Book</p>
-              <h1>Buy Book</h1>
-              <p className="subtitle">
-                Select items and print a clean buy book for team review.
-              </p>
-            </div>
-          </div>
-          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
-        </section>
-
-        <section className="viewer-toolbar">
-          <label>
-            Search
-            <input
-              value={surveyQuery}
-              onChange={(event) => setSurveyQuery(event.target.value)}
-              placeholder="Item, brand, channel, description..."
-            />
-          </label>
-          <div className="viewer-toolbar-actions">
-            <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
-              Reset Search
-            </button>
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={toggleAllSurveyItems}
-              disabled={surveyItems.length === 0}
-            >
-              {selectedSurveyItemIds.length === surveyItems.length && surveyItems.length > 0
-                ? 'Clear Selection'
-                : 'Select All'}
-            </button>
-            <button
-              className="primary-action"
-              type="button"
-              onClick={printSurveyBuyBook}
-              disabled={selectedSurveyItemIds.length === 0}
-            >
-              Print Buy Book ({selectedSurveyItemIds.length})
-            </button>
-            <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
-          </div>
-        </section>
-
-        {surveyError && <div className="error">{surveyError}</div>}
-
-        <section className="survey-grid" aria-label="Buy book items">
-          {surveyItems.map((item) => (
-            <article key={item.id} className="survey-card buy-book-card">
-              <label className="survey-select">
-                <input
-                  checked={selectedSurveyItemIds.includes(item.id)}
-                  type="checkbox"
-                  onChange={() => toggleSurveyItem(item.id)}
-                />
-                <span>Select</span>
-              </label>
-              <div className="survey-image">
-                {isImageReference(item.image_url) ? (
-                  <img src={item.image_url} alt="" />
-                ) : (
-                  <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
-                )}
-              </div>
-              <div className="survey-card-copy">
-                <h2>{item.item_name}</h2>
-                <p>{item.item_description || 'No description provided yet.'}</p>
-              </div>
-            </article>
-          ))}
-          {!surveyLoading && surveyItems.length === 0 && (
-            <div className="empty-state">No buy book items found.</div>
-          )}
-        </section>
-      </main>
+      <BuyBookPage
+        surveyItems={surveyItems}
+        surveyLoading={surveyLoading}
+        surveyError={surveyError}
+        surveyQuery={surveyQuery}
+        selectedSurveyItemIds={selectedSurveyItemIds}
+        setSurveyQuery={setSurveyQuery}
+        toggleSurveyItem={toggleSurveyItem}
+        printSurveyBuyBook={printSurveyBuyBook}
+      />
     )
   }
 
   if (isPublicSurveyPath) {
     return (
-      <main className="app-shell viewer-shell survey-shell">
-        <header className="brand-header">
-          <div className="brand-topline">
-            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-            <span>Public Survey</span>
-          </div>
-        </header>
-
-        <section className="client-title-row viewer-title-row">
-          <div className="client-title-copy">
-            <div className="client-title-divider" />
-            <div>
-              <p className="eyebrow">SmartBuy Survey</p>
-              <h1>Product Interest Survey</h1>
-              <p className="subtitle">
-                Review potential items and submit feedback on what may generate customer interest.
-              </p>
-            </div>
-          </div>
-          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
-        </section>
-
-        <section className="viewer-toolbar">
-          <label>
-            Search
-            <input
-              value={surveyQuery}
-              onChange={(event) => setSurveyQuery(event.target.value)}
-              placeholder="Item, brand, channel, description..."
-            />
-          </label>
-          <div className="viewer-toolbar-actions">
-            <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
-              Reset Search
-            </button>
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={toggleAllSurveyItems}
-              disabled={surveyItems.length === 0}
-            >
-              {selectedSurveyItemIds.length === surveyItems.length && surveyItems.length > 0
-                ? 'Clear Selection'
-                : 'Select All'}
-            </button>
-            <button
-              className="primary-action"
-              type="button"
-              onClick={submitSurveyResponse}
-              disabled={selectedSurveyItemIds.length === 0}
-            >
-              {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
-            </button>
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={() => bulkUpdateSurveyInterest('Interested')}
-              disabled={selectedSurveyItemIds.length === 0}
-            >
-              Mark Interested
-            </button>
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={() => bulkUpdateSurveyInterest('Not Interested')}
-              disabled={selectedSurveyItemIds.length === 0}
-            >
-              Mark Not Interested
-            </button>
-            <span>{surveyLoading ? 'Loading...' : `${surveyItems.length.toLocaleString()} items`}</span>
-          </div>
-        </section>
-
-        {surveyError && <div className="error">{surveyError}</div>}
-        {surveyMessage && <div className="success">{surveyMessage}</div>}
-
-        <section className="survey-grid" aria-label="Survey items">
-          {surveyItems.map((item) => (
-            <article key={item.id} className="survey-card">
-              <label className="survey-select">
-                <input
-                  checked={selectedSurveyItemIds.includes(item.id)}
-                  type="checkbox"
-                  onChange={() => toggleSurveyItem(item.id)}
-                />
-                <span>Select</span>
-              </label>
-              <div className="survey-image">
-                {isImageReference(item.image_url) ? (
-                  <img src={item.image_url} alt="" />
-                ) : (
-                  <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
-                )}
-              </div>
-              <div className="survey-card-copy">
-                <h2>{item.item_name}</h2>
-                <p>{item.item_description || 'No description provided yet.'}</p>
-              </div>
-              <div className="survey-inline-response">
-                <fieldset>
-                  <legend>Interest</legend>
-                  {(['Interested', 'Not Interested'] as const).map((interest) => (
-                    <label key={interest}>
-                      <input
-                        checked={getSurveyResponse(item.id).interest === interest}
-                        type="checkbox"
-                        value={interest}
-                        onChange={() =>
-                          updateSurveyResponse(item.id, {
-                            interest: getSurveyResponse(item.id).interest === interest ? '' : interest,
-                          })
-                        }
-                      />
-                      {interest}
-                    </label>
-                  ))}
-                </fieldset>
-                <label>
-                  Notes
-                  <textarea
-                    value={getSurveyResponse(item.id).notes}
-                    onChange={(event) => updateSurveyResponse(item.id, { notes: event.target.value })}
-                    placeholder="Optional notes"
-                  />
-                </label>
-              </div>
-            </article>
-          ))}
-          {!surveyLoading && surveyItems.length === 0 && (
-            <div className="empty-state">No survey items found.</div>
-          )}
-        </section>
-
-      </main>
+      <SurveyPage
+        surveyItems={surveyItems}
+        surveyLoading={surveyLoading}
+        surveyError={surveyError}
+        surveyMessage={surveyMessage}
+        surveyQuery={surveyQuery}
+        selectedSurveyItemIds={selectedSurveyItemIds}
+        isSubmittingSurvey={isSubmittingSurvey}
+        setSurveyQuery={setSurveyQuery}
+        toggleSurveyItem={toggleSurveyItem}
+        submitSurveyResponse={submitSurveyResponse}
+        bulkUpdateSurveyInterest={bulkUpdateSurveyInterest}
+        getSurveyResponse={getSurveyResponse}
+        updateSurveyResponse={updateSurveyResponse}
+      />
     )
   }
 
   if (isPublicViewerPath) {
     return (
-      <main className="app-shell viewer-shell">
-        <header className="brand-header">
-          <div className="brand-topline">
-            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-            <span>Public Viewer</span>
-          </div>
-          <nav className="app-nav" aria-label="Viewer navigation">
-            <button
-              className={!isPublicKanbanPath ? 'active' : ''}
-              type="button"
-              onClick={() => goToPath('/viewer')}
-            >
-              Grid View
-            </button>
-            <button
-              className={isPublicKanbanPath ? 'active' : ''}
-              type="button"
-              onClick={() => goToPath('/viewer/kanban')}
-            >
-              Kanban Board
-            </button>
-          </nav>
-        </header>
-
-        <section className="client-title-row viewer-title-row">
-          <div className="client-title-copy">
-            <div className="client-title-divider" />
-            <div>
-              <p className="eyebrow">Order Interest Viewer</p>
-              <h1>{isPublicKanbanPath ? 'Viewer Kanban' : 'Viewer Grid'}</h1>
-              <p className="subtitle">
-                Ad Hoc and Buy period items summarized for public review.
-              </p>
-            </div>
-          </div>
-          <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
-        </section>
-
-        <section className="viewer-toolbar">
-          <label>
-            Search
-            <input
-              value={publicQuery}
-              onChange={(event) => setPublicQuery(event.target.value)}
-              placeholder="Brand, program, item, notes, tracking..."
-            />
-          </label>
-          {!isPublicKanbanPath && (
-            <label>
-              Status
-              <select
-                value={publicStatusFilter}
-                onChange={(event) => setPublicStatusFilter(event.target.value)}
-              >
-                <option value="">All statuses</option>
-                {publicStatusOptions.map((statusLabel) => (
-                  <option key={statusLabel} value={statusLabel}>
-                    {statusLabel}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          <div className="viewer-toolbar-actions">
-            <button
-              className="secondary-action"
-              type="button"
-              onClick={() => {
-                setPublicQuery('')
-                setPublicStatusFilter('')
-              }}
-            >
-              Reset Filters
-            </button>
-            <span>
-              {publicLoading
-                ? 'Loading...'
-                : `${(isPublicKanbanPath ? publicItems : publicGridItems).length.toLocaleString()} items`}
-            </span>
-          </div>
-        </section>
-
-        {publicError && <div className="error">{publicError}</div>}
-
-        {isPublicKanbanPath ? (
-          <section className="kanban-board" aria-label="Viewer kanban board">
-            {publicKanbanColumns.map(({ column, items }) => (
-              <div key={column.id} className="kanban-column">
-                <div className="kanban-column-header">
-                  <h2>{column.title}</h2>
-                  <span>{items.length}</span>
-                </div>
-                <div className="kanban-column-cards">
-                  {items.map((item) => publicCard(item))}
-                  {!publicLoading && items.length === 0 && (
-                    <div className="empty-state">No items in this lane.</div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </section>
-        ) : (
-          <section className="table-card viewer-grid-card" aria-label="Viewer grid">
-            <div className="table-scroll">
-              <table className="viewer-grid-table">
-                <thead>
-                  <tr>
-                    <th>Sheet</th>
-                    <th>Status</th>
-                    <th>Visual Reference</th>
-                    <th>Brand</th>
-                    <th>Program Name</th>
-                    <th>Item Name</th>
-                    <th>MRL Order #</th>
-                    <th>Estimated Ship Date</th>
-                    <th>Estimated IHD</th>
-                    <th>Tracking</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {publicGridItems.map((item) => (
-                    <tr key={item.id}>
-                      <td>{publicSheetLabel(item.sheet)}</td>
-                      <td>
-                        <span className={`viewer-status-chip ${getViewerStatus(item)}`}>
-                          {getViewerStatus(item) === 'on-track' ? 'On Track' : 'Not On Track'}
-                        </span>
-                        <span className="viewer-status-detail">{item.current_status || 'No Status'}</span>
-                      </td>
-                      <td>
-                        {isImageReference(item.visual_reference) ? (
-                          <img className="viewer-grid-image" src={item.visual_reference} alt="" />
-                        ) : (
-                          item.visual_reference || '-'
-                        )}
-                      </td>
-                      <td>{item.brand || '-'}</td>
-                      <td>{item.program_name || '-'}</td>
-                      <td>{item.item_name || '-'}</td>
-                      <td>{item.mrl_order_number || '-'}</td>
-                      <td>{item.estimated_ship_date || '-'}</td>
-                      <td>{item.estimated_ihd || '-'}</td>
-                      <td>{item.tracking || '-'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            {!publicLoading && publicGridItems.length === 0 && (
-              <div className="empty-state">No viewer items match these filters.</div>
-            )}
-          </section>
-        )}
-      </main>
+      <ViewerPage
+        isPublicKanbanPath={isPublicKanbanPath}
+        publicQuery={publicQuery}
+        publicStatusFilter={publicStatusFilter}
+        publicStatusOptions={publicStatusOptions}
+        publicLoading={publicLoading}
+        publicError={publicError}
+        publicItems={publicItems}
+        publicGridItems={publicGridItems}
+        publicKanbanColumns={publicKanbanColumns}
+        setPublicQuery={setPublicQuery}
+        setPublicStatusFilter={setPublicStatusFilter}
+        goToPath={goToPath}
+      />
     )
   }
 
