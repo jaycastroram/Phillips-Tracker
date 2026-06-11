@@ -991,6 +991,34 @@ td textarea {
   color: var(--brand-red);
 }
 
+.public-brand-art {
+  margin-inline: -32px;
+  padding: 14px 32px 4px;
+  background: #f9f9f9;
+}
+
+.public-brand-art img {
+  width: 100%;
+  max-height: 92px;
+  display: block;
+  object-fit: contain;
+}
+
+.public-page-footer {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-top: auto;
+  padding-top: 28px;
+}
+
+.public-page-footer img {
+  max-width: min(190px, 34vw);
+  max-height: 78px;
+  object-fit: contain;
+}
+
 .viewer-title-row {
   padding-bottom: 0;
 }

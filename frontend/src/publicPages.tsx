@@ -15,6 +15,12 @@ import {
   viewerStatusLabel,
 } from './utils'
 
+const PUBLIC_HEADER_LOGO = '/SmartBuy Analytics -Buy Book Logo (1).png'
+const MRL_LOGO_URL =
+  'https://4119972-sb3.app.netsuite.com/core/media/media.nl?id=572741&c=4119972_SB3&h=OS3XIzw1DV8O7jsRJka2EAdoeYoit8KRvaVkv-a-x39sSZ3v'
+const SMARTBUY_FOOTER_LOGO_URL =
+  'https://4119972-sb3.app.netsuite.com/core/media/media.nl?id=572742&c=4119972_SB3&h=YtouokHC6yjmLt0bBvKcv82laKXmvQ8_lNsktH29D32Hu1bc'
+
 type PublicKanbanColumn = {
   column: KanbanColumn
   items: TrackerItem[]
@@ -90,6 +96,23 @@ function PublicCard({ item }: { item: TrackerItem }) {
       </dl>
       {item.important_notes && <p className="viewer-notes">{item.important_notes}</p>}
     </article>
+  )
+}
+
+function PublicBrandHeader() {
+  return (
+    <header className="public-brand-art">
+      <img src={PUBLIC_HEADER_LOGO} alt="Tito's and SmartBuy" />
+    </header>
+  )
+}
+
+function PublicFooter() {
+  return (
+    <footer className="public-page-footer" aria-label="Partner logos">
+      <img src={MRL_LOGO_URL} alt="MRL" />
+      <img src={SMARTBUY_FOOTER_LOGO_URL} alt="SmartBuy" />
+    </footer>
   )
 }
 
@@ -222,12 +245,7 @@ export function BuyBookPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <header className="brand-header">
-        <div className="brand-topline">
-          <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-          <span>Buy Book</span>
-        </div>
-      </header>
+      <PublicBrandHeader />
 
       <section className="client-title-row viewer-title-row">
         <div className="client-title-copy">
@@ -237,7 +255,6 @@ export function BuyBookPage({
             <p className="subtitle">Select items and print a clean buy book for team review.</p>
           </div>
         </div>
-        <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
       </section>
 
       <section className="viewer-toolbar">
@@ -304,6 +321,7 @@ export function BuyBookPage({
           <div className="empty-state">No buy book items found.</div>
         )}
       </section>
+      <PublicFooter />
     </main>
   )
 }
@@ -337,12 +355,7 @@ export function SurveyPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <header className="brand-header">
-        <div className="brand-topline">
-          <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-          <span>Public Survey</span>
-        </div>
-      </header>
+      <PublicBrandHeader />
 
       <section className="client-title-row viewer-title-row">
         <div className="client-title-copy">
@@ -354,7 +367,6 @@ export function SurveyPage({
             </p>
           </div>
         </div>
-        <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
       </section>
 
       <section className="viewer-toolbar">
@@ -467,6 +479,7 @@ export function SurveyPage({
           <div className="empty-state">No survey items found.</div>
         )}
       </section>
+      <PublicFooter />
     </main>
   )
 }
