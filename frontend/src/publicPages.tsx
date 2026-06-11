@@ -1,6 +1,5 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import phillipsLogo from './assets/3184_Phillips Store Logo.png'
-import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
 import type {
   KanbanColumn,
   SurveyInterest,
@@ -15,7 +14,9 @@ import {
   viewerStatusLabel,
 } from './utils'
 
-const PUBLIC_HEADER_LOGO = '/SmartBuy Analytics -Buy Book Logo (1).png'
+const BUY_BOOK_HEADER_LOGO = '/SmartBuy Analytics -Buy Book Logo (1).png'
+const PRE_BUY_SURVEY_HEADER_LOGO = '/SmartBuy Analytics - Pre Buy Survey Logo.png'
+const STATUS_TRACKER_HEADER_LOGO = '/SmartBuy Analytics - Status Tracker Logo.png'
 const MRL_LOGO_URL =
   'https://4119972-sb3.app.netsuite.com/core/media/media.nl?id=572741&c=4119972_SB3&h=OS3XIzw1DV8O7jsRJka2EAdoeYoit8KRvaVkv-a-x39sSZ3v'
 const SMARTBUY_FOOTER_LOGO_URL =
@@ -99,10 +100,10 @@ function PublicCard({ item }: { item: TrackerItem }) {
   )
 }
 
-function PublicBrandHeader() {
+function PublicBrandHeader({ src }: { src: string }) {
   return (
     <header className="public-brand-art">
-      <img src={PUBLIC_HEADER_LOGO} alt="Tito's and SmartBuy" />
+      <img src={src} alt="Tito's and SmartBuy" />
     </header>
   )
 }
@@ -245,7 +246,7 @@ export function BuyBookPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <PublicBrandHeader />
+      <PublicBrandHeader src={BUY_BOOK_HEADER_LOGO} />
 
       <section className="client-title-row viewer-title-row">
         <div className="client-title-copy">
@@ -355,7 +356,7 @@ export function SurveyPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <PublicBrandHeader />
+      <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
 
       <section className="client-title-row viewer-title-row">
         <div className="client-title-copy">
@@ -500,11 +501,9 @@ export function ViewerPage({
 }: ViewerPageProps) {
   return (
     <main className="app-shell viewer-shell">
-      <header className="brand-header">
-        <div className="brand-topline">
-          <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
-          <span>Public Viewer</span>
-        </div>
+      <PublicBrandHeader src={STATUS_TRACKER_HEADER_LOGO} />
+
+      <header className="brand-header viewer-tab-header">
         <nav className="app-nav" aria-label="Viewer navigation">
           <button
             className={!isPublicKanbanPath ? 'active' : ''}
