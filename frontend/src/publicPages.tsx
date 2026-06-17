@@ -257,7 +257,14 @@ export function BuyBookPage({
           <SurveyFilterControls {...surveyFilters} />
         </div>
         <div className="viewer-toolbar-actions buy-book-toolbar-actions">
-          <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => {
+              setSurveyQuery('')
+              surveyFilters.resetFilters()
+            }}
+          >
             Reset Search
           </button>
           <button
@@ -301,6 +308,7 @@ export function BuyBookPage({
               )}
             </div>
             <div className="survey-card-copy">
+              <span className="survey-column-heading">Item Name</span>
               <h2>{item.item_name}</h2>
               <p>{item.item_description || 'No description provided yet.'}</p>
             </div>
@@ -359,7 +367,14 @@ export function SurveyPage({
           <SurveyFilterControls {...surveyFilters} />
         </div>
         <div className="viewer-toolbar-actions survey-toolbar-actions">
-          <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => {
+              setSurveyQuery('')
+              surveyFilters.resetFilters()
+            }}
+          >
             Reset Search
           </button>
           <button

@@ -1593,6 +1593,16 @@ td textarea {
 .survey-card-copy {
   display: grid;
   gap: 6px;
+  align-self: stretch;
+  align-content: start;
+}
+
+.survey-column-heading {
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.15;
 }
 
 .survey-card h2,
@@ -1656,6 +1666,7 @@ td textarea {
   grid-template-columns: minmax(150px, 0.55fr) minmax(180px, 1fr);
   gap: 12px;
   align-items: start;
+  align-self: stretch;
 }
 
 .survey-inline-response h3 {
@@ -1681,7 +1692,9 @@ td textarea {
 }
 
 .survey-inline-response fieldset {
-  padding-top: 6px;
+  align-self: stretch;
+  align-content: center;
+  padding-top: 0;
 }
 
 .survey-inline-response fieldset label {

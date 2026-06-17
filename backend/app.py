@@ -15,6 +15,8 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Respon
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from openpyxl import Workbook
+from openpyxl.styles import Font
 from pydantic import BaseModel, EmailStr, Field
 
 try:
@@ -1841,6 +1843,77 @@ def list_audit_logs(user: sqlite3.Row = Depends(require_admin)) -> dict:
             """,
         ).fetchall()
     return {"logs": [audit_log_to_public(row) for row in rows]}
+
+
+@app.get("/api/admin/survey-responses/export")
+def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Response:
+    del user
+    with connect() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT
+                survey_responses.created_at,
+                survey_items.item_name,
+                survey_items.brand,
+                survey_items.channel,
+                survey_items.uom,
+                survey_items.price,
+                survey_responses.email,
+                survey_responses.recommend_rollout,
+                survey_responses.feedback
+            FROM survey_responses
+            JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
+            ORDER BY survey_responses.created_at DESC, survey_responses.id DESC
+            """,
+        ).fetchall()
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Survey Responses"
+    headers = [
+        "Submitted At",
+        "Item Name",
+        "Brand",
+        "Channel",
+        "UOM",
+        "Price",
+        "Email",
+        "Interest",
+        "Notes",
+    ]
+    worksheet.append(headers)
+    for cell in worksheet[1]:
+        cell.font = Font(bold=True)
+
+    for row in rows:
+        worksheet.append(
+            [
+                row["created_at"],
+                row["item_name"],
+                row["brand"],
+                row["channel"],
+                row["uom"],
+                row["price"],
+                row["email"],
+                "Interested" if row["recommend_rollout"] == "Yes" else "Not Interested",
+                row["feedback"],
+            ]
+        )
+
+    for column_cells in worksheet.columns:
+        max_length = max(len(str(cell.value or "")) for cell in column_cells)
+        worksheet.column_dimensions[column_cells[0].column_letter].width = min(max(max_length + 2, 12), 55)
+
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    filename = f"survey-responses-{utc_now().date().isoformat()}.xlsx"
+    return Response(
+        content=output.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/api/admin/users", status_code=status.HTTP_201_CREATED)

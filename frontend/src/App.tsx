@@ -202,6 +202,24 @@ function App() {
     acceptLogin(data.token, data.user)
   }
 
+  async function downloadSurveyResponses() {
+    const response = await apiFetch('/admin/survey-responses/export')
+    if (!response.ok) {
+      setError('Unable to download survey responses.')
+      return
+    }
+
+    const blob = await response.blob()
+    const downloadUrl = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = downloadUrl
+    link.download = `survey-responses-${new Date().toISOString().slice(0, 10)}.xlsx`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.URL.revokeObjectURL(downloadUrl)
+  }
+
   useEffect(() => {
     if (!token) {
       return
@@ -1408,6 +1426,9 @@ function App() {
                   onClick={() => setPage('system-log')}
                 >
                   System Log
+                </button>
+                <button type="button" onClick={downloadSurveyResponses}>
+                  Download Survey Responses
                 </button>
               </>
             )}
