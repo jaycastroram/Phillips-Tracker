@@ -244,20 +244,22 @@ export function BuyBookPage({
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader src={BUY_BOOK_HEADER_LOGO} />
 
-      <section className="viewer-toolbar">
-        <label>
-          Search
-          <input
-            value={surveyQuery}
-            onChange={(event) => setSurveyQuery(event.target.value)}
-            placeholder="Item, brand, channel, description..."
-          />
-        </label>
-        <div className="viewer-toolbar-actions">
+      <section className="viewer-toolbar buy-book-toolbar">
+        <div className="buy-book-filter-group">
+          <label>
+            Search
+            <input
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
+            />
+          </label>
+          <SurveyFilterControls {...surveyFilters} />
+        </div>
+        <div className="viewer-toolbar-actions buy-book-toolbar-actions">
           <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
             Reset Search
           </button>
-          <SurveyFilterControls {...surveyFilters} />
           <button
             className="secondary-action"
             type="button"
@@ -344,20 +346,22 @@ export function SurveyPage({
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
 
-      <section className="viewer-toolbar">
-        <label>
-          Search
-          <input
-            value={surveyQuery}
-            onChange={(event) => setSurveyQuery(event.target.value)}
-            placeholder="Item, brand, channel, description..."
-          />
-        </label>
-        <div className="viewer-toolbar-actions">
+      <section className="viewer-toolbar survey-toolbar">
+        <div className="buy-book-filter-group">
+          <label>
+            Search
+            <input
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
+            />
+          </label>
+          <SurveyFilterControls {...surveyFilters} />
+        </div>
+        <div className="viewer-toolbar-actions survey-toolbar-actions">
           <button className="secondary-action" type="button" onClick={() => setSurveyQuery('')}>
             Reset Search
           </button>
-          <SurveyFilterControls {...surveyFilters} />
           <button
             className="secondary-action"
             type="button"
@@ -365,14 +369,6 @@ export function SurveyPage({
             disabled={surveyFilters.filteredItems.length === 0}
           >
             {allVisibleSelected ? 'Clear Selection' : 'Select All'}
-          </button>
-          <button
-            className="primary-action"
-            type="button"
-            onClick={submitSurveyResponse}
-            disabled={selectedSurveyItemIds.length === 0}
-          >
-            {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
           </button>
           <button
             className="secondary-action"
@@ -389,6 +385,14 @@ export function SurveyPage({
             disabled={selectedSurveyItemIds.length === 0}
           >
             Mark Not Interested
+          </button>
+          <button
+            className="primary-action"
+            type="button"
+            onClick={submitSurveyResponse}
+            disabled={selectedSurveyItemIds.length === 0}
+          >
+            {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
           </button>
           <span>{surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}</span>
         </div>

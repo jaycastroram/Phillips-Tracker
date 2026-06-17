@@ -1,6 +1,6 @@
 .app-shell {
   min-height: 100vh;
-  padding: 0 32px 32px;
+  padding: 0 clamp(16px, 3vw, 32px) 32px;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -645,18 +645,20 @@ td.actions input[type="checkbox"] {
 }
 
 .status-summary {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(clamp(118px, 13vw, 170px), 1fr));
+  gap: clamp(8px, 1vw, 12px);
   padding-bottom: 4px;
 }
 
 .status-summary button {
-  min-width: 150px;
+  min-width: 0;
+  min-height: clamp(58px, 6vw, 74px);
   display: grid;
   gap: 6px;
   justify-items: center;
-  padding: 14px 18px;
+  align-content: center;
+  padding: clamp(10px, 1.2vw, 14px) clamp(12px, 1.4vw, 18px);
   border-color: var(--brand-light-gray);
   background: var(--brand-light-gray);
   color: var(--brand-black);
@@ -665,14 +667,14 @@ td.actions input[type="checkbox"] {
 
 .status-summary strong {
   order: 2;
-  font-size: 24px;
+  font-size: clamp(20px, 2vw, 28px);
   line-height: 1;
 }
 
 .status-summary span {
   order: 1;
   color: var(--brand-black);
-  font-size: 12px;
+  font-size: clamp(10px, 0.9vw, 12px);
   line-height: 1.15;
 }
 
@@ -1075,16 +1077,17 @@ td textarea {
 }
 
 .public-brand-art {
-  margin-inline: -32px;
-  padding: 14px 0 4px;
+  margin-inline: calc(-1 * clamp(16px, 3vw, 32px));
+  padding: clamp(8px, 1.2vw, 14px) 0 4px;
   background: #f9f9f9;
 }
 
 .public-brand-art img {
   width: 100%;
-  max-height: 92px;
+  height: clamp(72px, 8vw, 132px);
   display: block;
   object-fit: contain;
+  object-position: center;
 }
 
 .public-page-footer {
@@ -1235,7 +1238,7 @@ td textarea {
 
 .public-viewer-shell .viewer-toolbar {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr) minmax(240px, 1fr) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) max-content;
   align-items: end;
 }
 
@@ -1287,6 +1290,66 @@ td textarea {
   align-items: center;
 }
 
+.buy-book-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.survey-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+
+.buy-book-filter-group {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.buy-book-filter-group > label {
+  min-width: min(360px, 100%);
+}
+
+.buy-book-toolbar-actions {
+  margin-left: clamp(24px, 6vw, 96px);
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.buy-book-toolbar-actions button {
+  min-width: 118px;
+  white-space: nowrap;
+}
+
+.survey-toolbar-actions {
+  margin-left: clamp(24px, 4vw, 72px);
+  display: flex;
+  align-items: end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: nowrap;
+}
+
+.survey-toolbar-actions button {
+  min-width: 118px;
+  white-space: nowrap;
+}
+
+.survey-toolbar-actions .primary-action {
+  min-width: 170px;
+  order: 1;
+}
+
+.survey-toolbar-actions > span {
+  order: 2;
+}
+
 .survey-filter-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, 1fr));
@@ -1301,14 +1364,14 @@ td textarea {
 
 .viewer-summary {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(clamp(160px, 24vw, 260px), 1fr));
+  gap: clamp(10px, 1.4vw, 16px);
 }
 
 .viewer-summary article {
   display: grid;
   gap: 8px;
-  padding: 18px;
+  padding: clamp(14px, 1.6vw, 20px);
   border: 1px solid var(--brand-gridline);
   border-radius: 20px;
   background: var(--brand-white);
@@ -1617,6 +1680,10 @@ td textarea {
   font-weight: 700;
 }
 
+.survey-inline-response fieldset {
+  padding-top: 6px;
+}
+
 .survey-inline-response fieldset label {
   display: flex;
   align-items: center;
@@ -1706,19 +1773,19 @@ td textarea {
 
 .kanban-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(clamp(170px, 15vw, 240px), 1fr));
+  gap: clamp(10px, 1.2vw, 14px);
   align-items: start;
   padding-bottom: 8px;
 }
 
 .kanban-column {
   min-width: 0;
-  min-height: 420px;
+  min-height: clamp(320px, 46vh, 520px);
   display: grid;
   align-content: start;
   gap: 10px;
-  padding: 12px;
+  padding: clamp(10px, 1.1vw, 14px);
   border: 1px solid var(--brand-gridline);
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.86);
@@ -1782,9 +1849,47 @@ td textarea {
   padding: 6px;
 }
 
+@media (max-width: 980px) {
+  .public-viewer-shell .viewer-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .public-viewer-shell .viewer-toolbar-actions {
+    justify-self: end;
+  }
+
+  .buy-book-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .survey-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .buy-book-toolbar-actions {
+    margin-left: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .survey-toolbar-actions {
+    margin-left: 0;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
 @media (max-width: 720px) {
   .app-shell {
     padding: 0 18px 18px;
+  }
+
+  .public-brand-art {
+    margin-inline: -18px;
+  }
+
+  .public-brand-art img {
+    height: clamp(58px, 18vw, 96px);
   }
 
   .brand-header {
@@ -1814,6 +1919,25 @@ td textarea {
     align-items: stretch;
   }
 
+  .viewer-toolbar {
+    padding: 12px;
+  }
+
+  .public-viewer-shell .viewer-toolbar-actions {
+    width: 100%;
+    justify-self: stretch;
+    justify-items: stretch;
+  }
+
+  .viewer-view-toggle,
+  .public-viewer-shell .viewer-toolbar-actions > .secondary-action {
+    width: 100%;
+  }
+
+  .public-viewer-shell .viewer-toolbar-actions > span {
+    justify-content: center;
+  }
+
   .row-count {
     margin-left: 0;
   }
@@ -1840,6 +1964,10 @@ td textarea {
   .viewer-summary,
   .kanban-board {
     grid-template-columns: 1fr;
+  }
+
+  .status-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .survey-question {

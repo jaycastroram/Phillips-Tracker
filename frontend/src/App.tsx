@@ -1057,7 +1057,6 @@ function App() {
       return
     }
 
-    const generatedDate = new Date().toLocaleDateString()
     const itemMarkup = selectedSurveyItems
       .map((item, index) => {
         const imageMarkup = isImageReference(item.image_url)
@@ -1120,10 +1119,7 @@ function App() {
               margin-bottom: 8px;
             }
             .print-title-row {
-              display: flex;
-              align-items: end;
-              justify-content: space-between;
-              gap: 24px;
+              display: none;
             }
             h1 {
               margin: 0;
@@ -1214,12 +1210,6 @@ function App() {
         <body>
           <header>
             <img class="print-banner" src="/SmartBuy Analytics -Buy Book Logo (1).png" alt="SmartBuy Buy Book" />
-            <div class="print-title-row">
-              <div>
-              <h1>Buy Deck</h1>
-              <p class="subhead">${selectedSurveyItems.length} selected items | Generated ${generatedDate}</p>
-              </div>
-            </div>
           </header>
           <main class="buy-book-grid">${itemMarkup}</main>
           <footer>This Buy Book was created in SmartBuy&trade;</footer>
