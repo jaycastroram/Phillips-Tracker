@@ -203,21 +203,27 @@ function App() {
   }
 
   async function downloadSurveyResponses() {
-    const response = await apiFetch('/admin/survey-responses/export')
-    if (!response.ok) {
-      setError('Unable to download survey responses.')
-      return
-    }
+    try {
+      const response = await apiFetch('/admin/survey-responses/export')
+      if (!response.ok) {
+        const message = await response.text()
+        setError(message || 'Unable to download survey responses.')
+        return
+      }
 
-    const blob = await response.blob()
-    const downloadUrl = window.URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = downloadUrl
-    link.download = `survey-responses-${new Date().toISOString().slice(0, 10)}.xlsx`
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.URL.revokeObjectURL(downloadUrl)
+      const blob = await response.blob()
+      const downloadUrl = window.URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = downloadUrl
+      link.download = `survey-responses-${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(downloadUrl)
+      setError('')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to download survey responses.')
+    }
   }
 
   useEffect(() => {
