@@ -1854,16 +1854,16 @@ def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Respo
             """
             SELECT
                 survey_responses.created_at,
-                survey_items.item_name,
-                survey_items.brand,
-                survey_items.channel,
-                survey_items.uom,
-                survey_items.price,
+                COALESCE(survey_items.item_name, '') AS item_name,
+                COALESCE(survey_items.brand, '') AS brand,
+                COALESCE(survey_items.channel, '') AS channel,
+                COALESCE(survey_items.uom, '') AS uom,
+                COALESCE(survey_items.price, '') AS price,
                 survey_responses.email,
                 survey_responses.recommend_rollout,
                 survey_responses.feedback
             FROM survey_responses
-            JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
+            LEFT JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
             ORDER BY survey_responses.created_at DESC, survey_responses.id DESC
             """,
         ).fetchall()
@@ -1889,7 +1889,7 @@ def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Respo
     for row in rows:
         worksheet.append(
             [
-                row["created_at"],
+                str(row["created_at"] or ""),
                 row["item_name"],
                 row["brand"],
                 row["channel"],
