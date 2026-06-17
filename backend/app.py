@@ -676,6 +676,34 @@ def seed_tracker_items_if_empty(conn: Any) -> None:
         )
 
 
+def sync_seeded_tracker_item_catalog(conn: Any) -> None:
+    if not SEED_ITEMS_PATH.exists():
+        return
+
+    seed_items = json.loads(SEED_ITEMS_PATH.read_text(encoding="utf-8"))
+    for item in seed_items:
+        source_row = item.get("source_row")
+        if source_row is None:
+            continue
+
+        execute(
+            conn,
+            """
+            UPDATE tracker_items
+            SET visual_reference = ?, brand = ?, program_name = ?, item_name = ?
+            WHERE sheet = ? AND source_row = ?
+            """,
+            (
+                item.get("visual_reference", ""),
+                item.get("brand", ""),
+                item.get("program_name", ""),
+                item.get("item_name", ""),
+                item.get("sheet", "ad-hoc"),
+                source_row,
+            ),
+        )
+
+
 def seed_kanban_columns_if_empty(conn: Any) -> None:
     row_count = execute(conn, "SELECT COUNT(*) AS row_count FROM kanban_columns").fetchone()
     if row_count["row_count"] > 0:
@@ -1062,6 +1090,7 @@ def init_db() -> None:
                 (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD)),
             )
         seed_tracker_items_if_empty(conn)
+        sync_seeded_tracker_item_catalog(conn)
         seed_kanban_columns_if_empty(conn)
         seed_sheet_statuses_if_empty(conn)
         sync_default_survey_items(conn)

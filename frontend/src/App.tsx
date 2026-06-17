@@ -6,7 +6,6 @@ import {
   type FormEvent,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import phillipsLogo from './assets/3184_Phillips Store Logo.png'
 import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
 import {
   API_BASE,
@@ -1108,23 +1107,23 @@ function App() {
               background: #fff;
             }
             header {
-              display: flex;
-              align-items: center;
-              justify-content: space-between;
-              gap: 24px;
               border-bottom: 2px solid #111;
-              padding-bottom: 8px;
+              padding-bottom: 10px;
               margin-bottom: 26px;
             }
-            .brand {
-              display: flex;
-              align-items: center;
-              gap: 10px;
-            }
-            .brand img {
-              max-height: 36px;
-              max-width: 160px;
+            .print-banner {
+              width: 100%;
+              max-height: 74px;
               object-fit: contain;
+              object-position: center;
+              display: block;
+              margin-bottom: 8px;
+            }
+            .print-title-row {
+              display: flex;
+              align-items: end;
+              justify-content: space-between;
+              gap: 24px;
             }
             h1 {
               margin: 0;
@@ -1214,13 +1213,12 @@ function App() {
         </head>
         <body>
           <header>
-            <div>
+            <img class="print-banner" src="/SmartBuy Analytics -Buy Book Logo (1).png" alt="SmartBuy Buy Book" />
+            <div class="print-title-row">
+              <div>
               <h1>Buy Deck</h1>
               <p class="subhead">${selectedSurveyItems.length} selected items | Generated ${generatedDate}</p>
-            </div>
-            <div class="brand">
-              <img src="${smartBuyLogo}" alt="SmartBuy" />
-              <img src="${phillipsLogo}" alt="Phillips" />
+              </div>
             </div>
           </header>
           <main class="buy-book-grid">${itemMarkup}</main>
@@ -1395,65 +1393,75 @@ function App() {
           <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
           <span>Analytics On Demand</span>
         </div>
-        <nav className="app-nav" aria-label="Primary navigation">
-          <button
-            className={page === 'tracker' ? 'active' : ''}
-            type="button"
-            onClick={() => setPage('tracker')}
-          >
-            Tracker
-          </button>
-          {isAdmin && (
-            <>
-              <button
-                className={page === 'admin-users' ? 'active' : ''}
-                type="button"
-                onClick={() => setPage('admin-users')}
-              >
-                Admin Settings
-              </button>
-              <button
-                className={page === 'system-log' ? 'active' : ''}
-                type="button"
-                onClick={() => setPage('system-log')}
-              >
-                System Log
-              </button>
-            </>
-          )}
-          <button type="button" onClick={() => openPublicPath('/viewer')}>
-            Viewer
-          </button>
-          <button type="button" onClick={() => openPublicPath('/survey')}>
-            Survey
-          </button>
-          <button type="button" onClick={() => openPublicPath('/buy-book')}>
-            Buy Book
-          </button>
-          <button type="button" onClick={handleLogout}>
-            Log Out
-          </button>
-        </nav>
+        <details className="nav-menu">
+          <summary>Menu</summary>
+          <nav className="app-nav" aria-label="Primary navigation">
+            <button
+              className={page === 'tracker' ? 'active' : ''}
+              type="button"
+              onClick={() => setPage('tracker')}
+            >
+              Tracker
+            </button>
+            {isAdmin && (
+              <>
+                <button
+                  className={page === 'admin-users' ? 'active' : ''}
+                  type="button"
+                  onClick={() => setPage('admin-users')}
+                >
+                  Admin Settings
+                </button>
+                <button
+                  className={page === 'system-log' ? 'active' : ''}
+                  type="button"
+                  onClick={() => setPage('system-log')}
+                >
+                  System Log
+                </button>
+              </>
+            )}
+            <button type="button" onClick={() => openPublicPath('/viewer')}>
+              Viewer
+            </button>
+            <button type="button" onClick={() => openPublicPath('/survey')}>
+              Survey
+            </button>
+            <button type="button" onClick={() => openPublicPath('/buy-book')}>
+              Buy Book
+            </button>
+            <button type="button" onClick={handleLogout}>
+              Log Out
+            </button>
+          </nav>
+        </details>
       </header>
 
       <section className="client-title-row">
-        <div className="client-title-copy">
-          <div className="client-title-divider" />
-          <div>
-            <p className="eyebrow">Project Tracker</p>
-            <h1>
-              {page === 'admin-users'
-                ? 'Admin Settings'
-                : page === 'system-log'
-                  ? 'System Log'
-                  : 'Tracker Dashboard'}
-            </h1>
-            <p className="subtitle">
-              Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).
-            </p>
-          </div>
+        <img
+          className="tracker-brand-banner"
+          src="/SmartBuy Analytics - Status Tracker Logo.png"
+          alt="Tito's, LALO, and SmartBuy Status Tracker"
+        />
+        <div className="tracker-page-title">
+          <p className="eyebrow">
+            {page === 'admin-users'
+              ? 'Admin Settings'
+              : page === 'system-log'
+                ? 'System Log'
+                : 'Project Tracker'}
+          </p>
+          <h1>
+            {page === 'admin-users'
+              ? 'Admin Settings'
+              : page === 'system-log'
+                ? 'System Log'
+                : 'Tracker Dashboard'}
+          </h1>
+          <p className="subtitle">
+            Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).
+          </p>
         </div>
-        <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
       </section>
 
       {page === 'admin-users' ? (

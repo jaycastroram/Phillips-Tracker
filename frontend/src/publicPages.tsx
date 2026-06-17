@@ -1,5 +1,4 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
-import phillipsLogo from './assets/3184_Phillips Store Logo.png'
 import type {
   KanbanColumn,
   SurveyInterest,
@@ -19,8 +18,6 @@ const PRE_BUY_SURVEY_HEADER_LOGO = '/SmartBuy Analytics - Pre Buy Survey Logo.pn
 const STATUS_TRACKER_HEADER_LOGO = '/SmartBuy Analytics - Status Tracker Logo.png'
 const MRL_LOGO_URL =
   'https://4119972-sb3.app.netsuite.com/core/media/media.nl?id=572741&c=4119972_SB3&h=OS3XIzw1DV8O7jsRJka2EAdoeYoit8KRvaVkv-a-x39sSZ3v'
-const SMARTBUY_FOOTER_LOGO_URL =
-  'https://4119972-sb3.app.netsuite.com/core/media/media.nl?id=572742&c=4119972_SB3&h=YtouokHC6yjmLt0bBvKcv82laKXmvQ8_lNsktH29D32Hu1bc'
 
 type PublicKanbanColumn = {
   column: KanbanColumn
@@ -112,7 +109,6 @@ function PublicFooter() {
   return (
     <footer className="public-page-footer" aria-label="Partner logos">
       <img src={MRL_LOGO_URL} alt="MRL" />
-      <img src={SMARTBUY_FOOTER_LOGO_URL} alt="SmartBuy" />
     </footer>
   )
 }
@@ -248,16 +244,6 @@ export function BuyBookPage({
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader src={BUY_BOOK_HEADER_LOGO} />
 
-      <section className="client-title-row viewer-title-row">
-        <div className="client-title-copy">
-          <div className="client-title-divider" />
-          <div>
-            <h1>Buy Book</h1>
-            <p className="subtitle">Select items and print a clean buy book for team review.</p>
-          </div>
-        </div>
-      </section>
-
       <section className="viewer-toolbar">
         <label>
           Search
@@ -358,18 +344,6 @@ export function SurveyPage({
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
 
-      <section className="client-title-row viewer-title-row">
-        <div className="client-title-copy">
-          <div className="client-title-divider" />
-          <div>
-            <h1>Product Interest Survey</h1>
-            <p className="subtitle">
-              Make your voice count and review Buy In item candidates. This is your opportunity to influence what gets purchased and stocked.
-            </p>
-          </div>
-        </div>
-      </section>
-
       <section className="viewer-toolbar">
         <label>
           Search
@@ -446,8 +420,8 @@ export function SurveyPage({
               <p>{item.item_description || 'No description provided yet.'}</p>
             </div>
             <div className="survey-inline-response">
+              <h3>Response</h3>
               <fieldset>
-                <legend>Interest</legend>
                 {(['Interested', 'Not Interested'] as const).map((interest) => (
                   <label key={interest}>
                     <input
@@ -465,8 +439,7 @@ export function SurveyPage({
                   </label>
                 ))}
               </fieldset>
-              <label>
-                Feedback
+              <label className="survey-feedback-field">
                 <textarea
                   value={getSurveyResponse(item.id).notes}
                   onChange={(event) => updateSurveyResponse(item.id, { notes: event.target.value })}
@@ -500,39 +473,8 @@ export function ViewerPage({
   goToPath,
 }: ViewerPageProps) {
   return (
-    <main className="app-shell viewer-shell">
+    <main className="app-shell viewer-shell public-viewer-shell">
       <PublicBrandHeader src={STATUS_TRACKER_HEADER_LOGO} />
-
-      <header className="brand-header viewer-tab-header">
-        <nav className="app-nav" aria-label="Viewer navigation">
-          <button
-            className={!isPublicKanbanPath ? 'active' : ''}
-            type="button"
-            onClick={() => goToPath('/viewer')}
-          >
-            Grid View
-          </button>
-          <button
-            className={isPublicKanbanPath ? 'active' : ''}
-            type="button"
-            onClick={() => goToPath('/viewer/kanban')}
-          >
-            Kanban Board
-          </button>
-        </nav>
-      </header>
-
-      <section className="client-title-row viewer-title-row">
-        <div className="client-title-copy">
-          <div className="client-title-divider" />
-          <div>
-            <p className="eyebrow">Order Interest Viewer</p>
-            <h1>{isPublicKanbanPath ? 'Viewer Kanban' : 'Viewer Grid'}</h1>
-            <p className="subtitle">Ad Hoc and Buy period items summarized for public review.</p>
-          </div>
-        </div>
-        <img className="phillips-logo" src={phillipsLogo} alt="Phillips Distilling Co" />
-      </section>
 
       <section className="viewer-toolbar">
         <label>
@@ -560,6 +502,22 @@ export function ViewerPage({
           </label>
         )}
         <div className="viewer-toolbar-actions">
+          <div className="viewer-view-toggle" aria-label="Viewer display mode">
+            <button
+              className={!isPublicKanbanPath ? 'active' : ''}
+              type="button"
+              onClick={() => goToPath('/viewer')}
+            >
+              Grid
+            </button>
+            <button
+              className={isPublicKanbanPath ? 'active' : ''}
+              type="button"
+              onClick={() => goToPath('/viewer/kanban')}
+            >
+              Kanban
+            </button>
+          </div>
           <button
             className="secondary-action"
             type="button"
@@ -651,6 +609,7 @@ export function ViewerPage({
           )}
         </section>
       )}
+      <PublicFooter />
     </main>
   )
 }
