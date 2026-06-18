@@ -1056,7 +1056,17 @@ td textarea {
 
 .viewer-shell {
   gap: 22px;
-  padding-inline: clamp(24px, 6vw, 96px);
+  padding-inline: 0;
+}
+
+.viewer-shell > :not(.public-brand-art) {
+  width: min(100% - 48px, 1680px);
+  margin-inline: auto;
+}
+
+.public-viewer-shell {
+  background: #f9f9f9;
+  background-image: none;
 }
 
 .survey-shell {
@@ -1078,7 +1088,8 @@ td textarea {
 }
 
 .public-brand-art {
-  margin-inline: 0;
+  width: min(100% - 48px, 1680px);
+  margin-inline: auto;
   padding: 14px 0 4px;
   background: #f9f9f9;
 }
@@ -1872,6 +1883,12 @@ td textarea {
   padding: 6px;
 }
 
+@media (min-width: 1440px) {
+  .public-brand-art img {
+    transform: translateX(-24px);
+  }
+}
+
 @media (max-width: 980px) {
   .public-viewer-shell .viewer-toolbar {
     grid-template-columns: 1fr;
@@ -1908,7 +1925,17 @@ td textarea {
   }
 
   .viewer-shell {
-    padding-inline: 18px;
+    padding-inline: 0;
+  }
+
+  .viewer-shell > :not(.public-brand-art) {
+    width: calc(100% - 36px);
+    margin-inline: auto;
+  }
+
+  .public-brand-art {
+    width: calc(100% - 36px);
+    margin-inline: auto;
   }
 
   .brand-header {
