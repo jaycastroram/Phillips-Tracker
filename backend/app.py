@@ -239,7 +239,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom cream denim romper featuring a Tito's logo sleeve imprint",
         "uom": "1/EA",
         "price": "$36.56",
-        "image_url": "https://phillips.pdccatalog.com/images/3185_35838_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10004_1.png",
         "sort_order": 4
     },
     {
@@ -251,7 +251,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom wood doghouse display with a functional chalkboard roof, Tito's branded graphics, and a built-in center divider",
         "uom": "1/EA",
         "price": "$210.82",
-        "image_url": "https://demo.mrlsmartbuy.com/images/3185_35838-BlueGraphics_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10005_1.png",
         "sort_order": 5
     },
     {
@@ -263,7 +263,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom garnish caddy with Tito's branding, removable food-safe garnish trays, a clear lid, and copper accent detailing.",
         "uom": "1/EA",
         "price": "$41.72",
-        "image_url": "https://phillips.pdccatalog.com/images/3185_38404_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10006_1.png",
         "sort_order": 6
     },
     {
@@ -275,7 +275,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Wood napkin caddy featuring Tito's branding, copper accent detailing, and a protective clear-coated finish for bar and tabletop use.",
         "uom": "1/EA",
         "price": "$19.59",
-        "image_url": "https://cincoro.sb.myfsionline.com/images/4006_10001_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10007_1.png",
         "sort_order": 7
     },
     {
@@ -287,7 +287,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom orange swimsuit featuring Tito's branded graphics and a white belt.",
         "uom": "1/EA",
         "price": "$29.76",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10002_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10008_1.png",
         "sort_order": 8
     },
     {
@@ -299,7 +299,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Folded Sales Book featuring imprint on all pages. Updated Lalo 2026 legal line.",
         "uom": "25/PK",
         "price": "$19.75",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10003_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_53553_1.jpg?fcts=20260519085204",
         "sort_order": 9
     },
     {
@@ -311,7 +311,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom Lalo branded hat with 3D embroidery. Includes tear away white labels.",
         "uom": "1/EA",
         "price": "$6.59",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10004_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60045_1.png?fcts=20260519084157",
         "sort_order": 10
     },
     {
@@ -323,7 +323,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "PVC Rail mats with molded LALO Bottle nubs, 2026 Updated Art",
         "uom": "1/EA",
         "price": "$6.02",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10005_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60047-RAIL_3_1.png?fcts=20260519111137",
         "sort_order": 11
     },
     {
@@ -335,7 +335,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "PVC Square mats with molded LALO Bottle nubs, 2026 Updated Art",
         "uom": "1/EA",
         "price": "$10.55",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10006_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60047-SQUARE_1.png?fcts=20260519081711",
         "sort_order": 12
     },
     {
@@ -347,7 +347,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Custom Lalo bottle pins",
         "uom": "1/EA",
         "price": "$0.94",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10007_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60221_1.png?fcts=20260519084911",
         "sort_order": 13
     },
     {
@@ -359,7 +359,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Holiday gift box display featuring a Lalo Tequila bottle and finished with a metallic ribbon.",
         "uom": "1/EA",
         "price": "$469.60",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10008_1.png",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60664_1.jpg?fcts=20260518104631",
         "sort_order": 14
     },
     {
@@ -371,7 +371,7 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Shelf talker featuring CMYK printing on one side and scored. Includes double sided tape on the back of each unit, positioned at the top center.",
         "uom": "25/PK",
         "price": "$7.17",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_53553_1.jpg?fcts=20260519085204",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_61123_1.jpg",
         "sort_order": 15
     },
     {
@@ -383,8 +383,44 @@ DEFAULT_SURVEY_ITEMS = [
         "item_description": "Lalo bottle silhouette chalkboard made from MDF",
         "uom": "1/EA",
         "price": "$141.80",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60045_1.png?fcts=20260519084157",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_61291_1.jpg",
         "sort_order": 16
+    },
+    {
+        "item_name": "LALO 5-Case Display (Lifestyle Graphics)",
+        "brand": "LALO",
+        "channel": "On Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Material: 18-gauge metal rack with styrene graphics \nSize: 72 H x 13.5 W x 7.75 D \nColor: Metallic Gold \nHolds: x5 Cases of 750ml Bottles (6 bottles per shelf + full case on floor)\nPackout: 1 display per carton with assembly instructions\nUnit of Measure: 1 = 1 Display",
+        "uom": "",
+        "price": "$265.58",
+        "image_url": "https://phillips.pdccatalog.com/images/3185_35838_1.png",
+        "sort_order": 17
+    },
+    {
+        "item_name": "LALO 5 Case (4 Shelf) Metal Rack",
+        "brand": "LALO",
+        "channel": "On Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Size: Approx: 72H x 13.5W x 7.75D\n Material: Powder Coated Metal, Graphics: Styrene \n Details: Powder coated tubular metal construction featuring floor glides and graphic panels. Packed 1 unit per carton. \n Includes: Fully Assembled Display, Header Printed 2 Sides, 2 Side Panels as Shown\n Packout: 1 per carton\n Unit of Measure: 1=1",
+        "uom": "",
+        "price": "$395.68",
+        "image_url": "https://demo.mrlsmartbuy.com/images/3185_35838-BlueGraphics_1.png",
+        "sort_order": 18
+    },
+    {
+        "item_name": "LALO Wow Display",
+        "brand": "LALO",
+        "channel": "On Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Size: 64\"W x 12\"D x 60\"H\nMaterial: 200# MW1S B Flute\nDetails: LALO Corrugate Wow Display\nIncludes: \nPackout: 1/ctn\nUnit of Measure: Each",
+        "uom": "",
+        "price": "$361.45",
+        "image_url": "https://phillips.pdccatalog.com/images/3185_38404_1.png",
+        "sort_order": 19
     }
 ]
 
