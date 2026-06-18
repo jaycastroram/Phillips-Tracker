@@ -1056,6 +1056,7 @@ td textarea {
 
 .viewer-shell {
   gap: 22px;
+  padding-inline: clamp(24px, 6vw, 96px);
 }
 
 .survey-shell {
@@ -1077,14 +1078,14 @@ td textarea {
 }
 
 .public-brand-art {
-  margin-inline: calc(-1 * clamp(16px, 3vw, 32px));
-  padding: clamp(8px, 1.2vw, 14px) 0 4px;
+  margin-inline: 0;
+  padding: 14px 0 4px;
   background: #f9f9f9;
 }
 
 .public-brand-art img {
   width: 100%;
-  height: clamp(72px, 8vw, 132px);
+  max-height: 92px;
   display: block;
   object-fit: contain;
   object-position: center;
@@ -1663,15 +1664,17 @@ td textarea {
 
 .survey-inline-response {
   display: grid;
-  grid-template-columns: minmax(150px, 0.55fr) minmax(180px, 1fr);
+  grid-template-columns: minmax(72px, 0.32fr) minmax(180px, 1fr);
   gap: 12px;
   align-items: start;
   align-self: stretch;
 }
 
 .survey-inline-response h3 {
-  grid-column: 1 / -1;
-  margin: 0;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  margin: 0 0 0 24px;
   color: var(--brand-black);
   font-family: "Poppins", sans-serif;
   font-size: 1rem;
@@ -1692,9 +1695,14 @@ td textarea {
 }
 
 .survey-inline-response fieldset {
+  grid-column: 1;
+  grid-row: 2;
   align-self: stretch;
   align-content: center;
+  justify-self: start;
+  margin-left: 24px;
   padding-top: 0;
+  width: max-content;
 }
 
 .survey-inline-response fieldset label {
@@ -1706,6 +1714,8 @@ td textarea {
 }
 
 .survey-feedback-field {
+  grid-column: 2;
+  grid-row: 2;
   align-self: stretch;
 }
 
@@ -1897,12 +1907,8 @@ td textarea {
     padding: 0 18px 18px;
   }
 
-  .public-brand-art {
-    margin-inline: -18px;
-  }
-
-  .public-brand-art img {
-    height: clamp(58px, 18vw, 96px);
+  .viewer-shell {
+    padding-inline: 18px;
   }
 
   .brand-header {
