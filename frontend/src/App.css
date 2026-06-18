@@ -1060,7 +1060,7 @@ td textarea {
 }
 
 .viewer-shell > :not(.public-brand-art) {
-  width: min(100% - 48px, 1680px);
+  width: min(100% - 72px, 1680px);
   margin-inline: auto;
 }
 
@@ -1929,7 +1929,7 @@ td textarea {
   }
 
   .viewer-shell > :not(.public-brand-art) {
-    width: calc(100% - 36px);
+    width: calc(100% - 44px);
     margin-inline: auto;
   }
 
