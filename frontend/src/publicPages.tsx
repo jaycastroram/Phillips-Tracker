@@ -80,7 +80,8 @@ function PublicCard({ item }: { item: TrackerItem }) {
       )}
       <h3>{item.item_name || 'Untitled Item'}</h3>
       <p className="viewer-card-meta">
-        {[item.brand, item.program_name].filter(Boolean).join(' | ') || 'No brand/program listed'}
+        {[item.brand, item.program_name, item.extra?.product_type].filter(Boolean).join(' | ') ||
+          'No brand/program listed'}
       </p>
       <dl>
         <div>
@@ -114,6 +115,8 @@ function PublicFooter() {
 }
 
 function getSurveyProductType(item: SurveyItem) {
+  if (item.product_type) return item.product_type
+
   const label = `${item.item_name} ${item.item_description}`.toLowerCase()
   if (label.includes('pennant')) return 'Pennants'
   if (label.includes('frame')) return 'A-Frames'
@@ -587,6 +590,7 @@ export function ViewerPage({
                   <th>Visual Reference</th>
                   <th>Brand</th>
                   <th>Program Name</th>
+                  <th>Product Type</th>
                   <th>Item Name</th>
                   <th>MRL Order #</th>
                   <th>Estimated Ship Date</th>
@@ -613,6 +617,7 @@ export function ViewerPage({
                     </td>
                     <td>{item.brand || '-'}</td>
                     <td>{item.program_name || '-'}</td>
+                    <td>{item.extra?.product_type || '-'}</td>
                     <td>{item.item_name || '-'}</td>
                     <td>{item.mrl_order_number || '-'}</td>
                     <td>{item.estimated_ship_date || '-'}</td>

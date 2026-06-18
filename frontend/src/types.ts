@@ -79,6 +79,8 @@ export type SurveyItem = {
   item_name: string
   brand: string
   channel: string
+  product_type: string
+  key_program: string
   item_description: string
   uom: string
   price: string

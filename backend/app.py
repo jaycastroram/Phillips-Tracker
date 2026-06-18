@@ -195,194 +195,196 @@ DEFAULT_KANBAN_COLUMNS = [
 ]
 DEFAULT_SURVEY_ITEMS = [
     {
-        "item_name": "LALO 5-Case Display (Lifestyle Graphics)",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Material: 18-gauge metal rack with styrene graphics \nSize: 72\" H x 13.5\" W x 7.75\" D \nColor: Metallic Gold \nHolds: x5 Cases of 750ml Bottles (6 bottles per shelf + full case on floor)\nPackout: 1 display per carton with assembly instructions\nUnit of Measure: 1 = 1 Display",
+        "item_name": "Tito's Bar Mat",
+        "brand": "Tito's",
+        "channel": "On Premise",
+        "product_type": "Barware",
+        "key_program": "Evergreen",
+        "item_description": "Custom 16\" x 16\" black PVC service bar mat featuring custom molded oval nibs and Tito's branding.",
         "uom": "1/EA",
-        "price": "$265.58",
-        "image_url": "https://phillips.pdccatalog.com/images/3185_35838_1.png",
+        "price": "$7.45",
+        "image_url": "https://cincoro.sb.myfsionline.com/images/4006_10001_1.png",
         "sort_order": 1
     },
     {
-        "item_name": "LALO 5 Case (4 Shelf) Metal Rack",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Size: Approx: 72\"H x 13.5\"W x 7.75\"D\n- Material: Powder Coated Metal, Graphics: Styrene \n- Details: Powder coated tubular metal construction featuring floor glides and graphic panels. Packed 1 unit per carton. \n- Includes: Fully Assembled Display, Header Printed 2 Sides, 2 Side Panels as Shown\n- Packout: 1 per carton\n- Unit of Measure: 1=1",
-        "uom": "1/EA",
-        "price": "$395.68",
-        "image_url": "https://demo.mrlsmartbuy.com/images/3185_35838-BlueGraphics_1.png",
-        "sort_order": 2
-    },
-    {
-        "item_name": "LALO Wow Display",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Size: 64\"W x 12\"D x 60\"H\nMaterial: 200# MW1S B Flute\nDetails: LALO Corrugate Wow Display\nIncludes: \nPackout: 1/ctn\nUnit of Measure: Each",
-        "uom": "1/EA",
-        "price": "$361.45",
-        "image_url": "https://phillips.pdccatalog.com/images/3185_38404_1.png",
-        "sort_order": 3
-    },
-    {
-        "item_name": "Tito's Square Mat - 2026",
+        "item_name": "Tito's Round Bottle Presenter",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Size: 14\"W x 10\"H x 0.5\"D\nMaterial: PVC\nDetails: PVC Square mats with molded Tito's Bottle nubs, 2026 Updated Art\nIncludes: 1 Square Mat",
+        "channel": "On Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Illuminated metal bottle presenter featuring laser-cut Tito's branding, integrated LED lighting, and illuminated side panels. Designed to fit 750ml, 1L, and 1.75L Tito's bottles",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://cincoro.sb.myfsionline.com/images/4006_10001_1.png",
-        "sort_order": 4
-    },
-    {
-        "item_name": "Tito's Bottle Presenter",
-        "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Bottle Presenter",
-        "uom": "1/EA",
-        "price": "",
+        "price": "$332.04",
         "image_url": "https://demo.mrlsmartbuy.com/images/4006_10002_1.png",
-        "sort_order": 5
+        "sort_order": 2
     },
     {
         "item_name": "Tito's Crop Top",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Crop Top",
+        "channel": "Off Premise",
+        "product_type": "Wearables",
+        "key_program": "Evergreen",
+        "item_description": "Black athletic tank made from a nylon-spandex performance blend, featuring a Tito's logo chest imprint.",
         "uom": "1/EA",
-        "price": "",
+        "price": "$19.75",
         "image_url": "https://demo.mrlsmartbuy.com/images/4006_10003_1.png",
-        "sort_order": 6
+        "sort_order": 3
     },
     {
-        "item_name": "Tito's Denim Romper",
+        "item_name": "Tito's Short Denim Romper",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Denim Romper",
+        "channel": "Off Premise",
+        "product_type": "Wearables",
+        "key_program": "Evergreen",
+        "item_description": "Custom cream denim romper featuring a Tito's logo sleeve imprint",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10004_1.png",
-        "sort_order": 7
+        "price": "$36.56",
+        "image_url": "https://phillips.pdccatalog.com/images/3185_35838_1.png",
+        "sort_order": 4
     },
     {
         "item_name": "Tito's Doghouse Display",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Doghouse Display",
+        "channel": "Off Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Custom wood doghouse display with a functional chalkboard roof, Tito's branded graphics, and a built-in center divider",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10005_1.png",
-        "sort_order": 8
+        "price": "$210.82",
+        "image_url": "https://demo.mrlsmartbuy.com/images/3185_35838-BlueGraphics_1.png",
+        "sort_order": 5
     },
     {
-        "item_name": "Tito's Garnish Caddy",
+        "item_name": "Tito's Acrylic Top Garnish Caddy",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Garnish Caddy",
+        "channel": "On Premise",
+        "product_type": "Barware",
+        "key_program": "Evergreen",
+        "item_description": "Custom garnish caddy with Tito's branding, removable food-safe garnish trays, a clear lid, and copper accent detailing.",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10006_1.png",
-        "sort_order": 9
+        "price": "$41.72",
+        "image_url": "https://phillips.pdccatalog.com/images/3185_38404_1.png",
+        "sort_order": 6
     },
     {
         "item_name": "Tito's Napkin Caddy",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Napkin Caddy",
+        "channel": "On Premise",
+        "product_type": "Barware",
+        "key_program": "Evergreen",
+        "item_description": "Wood napkin caddy featuring Tito's branding, copper accent detailing, and a protective clear-coated finish for bar and tabletop use.",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10007_1.png",
-        "sort_order": 10
+        "price": "$19.59",
+        "image_url": "https://cincoro.sb.myfsionline.com/images/4006_10001_1.png",
+        "sort_order": 7
     },
     {
         "item_name": "Tito's Swimsuit",
         "brand": "Tito's",
-        "channel": "Pre-Buy",
-        "item_description": "Tito's Swimsuit",
+        "channel": "Off Premise",
+        "product_type": "Wearables",
+        "key_program": "Evergreen",
+        "item_description": "Custom orange swimsuit featuring Tito's branded graphics and a white belt.",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10008_1.png",
-        "sort_order": 11
+        "price": "$29.76",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10002_1.png",
+        "sort_order": 8
     },
     {
-        "item_name": "LALO Sales Booklet - 25/PK",
+        "item_name": "LALO Sales Booklet",
         "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "LALO Sales Booklet 2025 - 25/PK\nSize: 3.625\"W x 5.4375\"H\nMaterial: 130# Smooth Cover\nDetails: Book folded Sales Book featuring imprint on all pages.\nPackout: 25 units per pack",
+        "channel": "Off Premise",
+        "product_type": "Print",
+        "key_program": "Evergreen",
+        "item_description": "Folded Sales Book featuring imprint on all pages. Updated Lalo 2026 legal line.",
         "uom": "25/PK",
-        "price": "$45.23",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_53553_1.jpg?fcts=20260519085204",
-        "sort_order": 12
+        "price": "$19.75",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10003_1.png",
+        "sort_order": 9
     },
     {
         "item_name": "LALO Hat",
         "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "3 - 2026\nSize: One Size - Adult \nMaterial: 100 gsm polyester composite mesh\nDetails: Custom Lalo branded hat with 3D embroidery. Includes tear away white labels.\nIncludes: 1 unit",
+        "channel": "Giveaways",
+        "product_type": "Wearables",
+        "key_program": "Sweeps",
+        "item_description": "Custom Lalo branded hat with 3D embroidery. Includes tear away white labels.",
         "uom": "1/EA",
-        "price": "$14.89",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60045_1.png?fcts=20260519084157",
+        "price": "$6.59",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10004_1.png",
+        "sort_order": 10
+    },
+    {
+        "item_name": "LALO Rail Mat",
+        "brand": "LALO",
+        "channel": "On Premise",
+        "product_type": "Barware",
+        "key_program": "Evergreen",
+        "item_description": "PVC Rail mats with molded LALO Bottle nubs, 2026 Updated Art",
+        "uom": "1/EA",
+        "price": "$6.02",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10005_1.png",
+        "sort_order": 11
+    },
+    {
+        "item_name": "LALO Bar Mat",
+        "brand": "LALO",
+        "channel": "On Premise",
+        "product_type": "Barware",
+        "key_program": "Evergreen",
+        "item_description": "PVC Square mats with molded LALO Bottle nubs, 2026 Updated Art",
+        "uom": "1/EA",
+        "price": "$10.55",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10006_1.png",
+        "sort_order": 12
+    },
+    {
+        "item_name": "LALO Bottle Pin",
+        "brand": "LALO",
+        "channel": "Giveaways",
+        "product_type": "Promo Items",
+        "key_program": "Sweeps",
+        "item_description": "Custom Lalo bottle pins",
+        "uom": "1/EA",
+        "price": "$0.94",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10007_1.png",
         "sort_order": 13
     },
     {
-        "item_name": "LALO Rail Mat - 2026",
+        "item_name": "LALO TW&M OND Gift Box Display",
         "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Updated Art\nSize: 23.75\"W x 0.5\"D x 3.5\"H\nMaterial: PVC\nDetails: PVC Rail mats with molded LALO Bottle nubs, 2026 Updated Art\nincludes: 1 Rail Mat",
+        "channel": "Off Premise",
+        "product_type": "Displays",
+        "key_program": "Holiday",
+        "item_description": "Holiday gift box display featuring a Lalo Tequila bottle and finished with a metallic ribbon.",
         "uom": "1/EA",
-        "price": "$11.99",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60047-RAIL_3_1.png?fcts=20260519111137",
+        "price": "$469.60",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_10008_1.png",
         "sort_order": 14
     },
     {
-        "item_name": "LALO Square Mat - 2026",
+        "item_name": "LALO Shelf Talker - 25/PK",
         "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Updated Art\nSize: 14\"W x 10\"H x 0.5\"D\nMaterial: PVC\nDetails: PVC Square mats with molded LALO Bottle nubs, 2026 Updated Art\nIncludes: 1 Square Mat",
-        "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60047-SQUARE_1.png?fcts=20260519081711",
-        "sort_order": 15
-    },
-    {
-        "item_name": "LALO Bottle Pin - 2026",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Size: 1.375\" x 0.57\"\nMaterial: Hard Enamel\nDetails: Custom Lalo bottle pins\nIncludes: 1 unit",
-        "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60221_1.png?fcts=20260519084911",
-        "sort_order": 16
-    },
-    {
-        "item_name": "LALO TW&M OND 25 - GIFT BOX DISPLAY",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Size: 19\"W x 14\"D x 72\"H\nMaterial: 200# Kemi B-Flute Corrugate\nDetails: Holiday gift box display featuring a Lalo Tequila bottle and finished with a metallic ribbon.\nIncludes: 1 unit per carton",
-        "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60664_1.jpg?fcts=20260518104631",
-        "sort_order": 17
-    },
-    {
-        "item_name": "LALO Shelf Talker - 25/PK - 2026",
-        "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "Size:4.25\"W x 5.25\"H\nMaterial: 120# Gloss Cover\nDetails: Shelf talker featuring CMYK printing on one side and scored. Includes double sided tape on the back of each unit, positioned at the top center.\nIncludes: 25 pieces per pack",
+        "channel": "Off Premise",
+        "product_type": "Print",
+        "key_program": "Evergreen",
+        "item_description": "Shelf talker featuring CMYK printing on one side and scored. Includes double sided tape on the back of each unit, positioned at the top center.",
         "uom": "25/PK",
-        "price": "$14.43",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_61123_1.jpg",
-        "sort_order": 18
+        "price": "$7.17",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_53553_1.jpg?fcts=20260519085204",
+        "sort_order": 15
     },
     {
         "item_name": "LALO A Frame Chalkboard Sign",
         "brand": "LALO",
-        "channel": "Pre-Buy",
-        "item_description": "This item ships via Freight Truck Only\nAllow approximately 1 week before order will ship (plus additional transit time, depending on delivery location)\nSize: 20\"W x 16.5\"D x 42\"H\nMaterial: Powder coated tube grames with white melamine MDF laminated chalkboard\nDetails: Lalo bottle silhouette chalkboard made from MDF\nIncludes: 1 unit",
+        "channel": "Off Premise",
+        "product_type": "Displays",
+        "key_program": "Evergreen",
+        "item_description": "Lalo bottle silhouette chalkboard made from MDF",
         "uom": "1/EA",
-        "price": "",
-        "image_url": "https://demo.mrlsmartbuy.com/images/4006_61291_1.jpg",
-        "sort_order": 19
+        "price": "$141.80",
+        "image_url": "https://demo.mrlsmartbuy.com/images/4006_60045_1.png?fcts=20260519084157",
+        "sort_order": 16
     }
 ]
 
@@ -508,6 +510,16 @@ def execute(conn: Any, query: str, params: tuple | list = ()) -> Any:
     return conn.execute(db_sql(query), tuple(params))
 
 
+def ensure_column(conn: Any, table_name: str, column_name: str, column_definition: str) -> None:
+    if IS_POSTGRES:
+        execute(conn, f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_definition}")
+        return
+
+    existing_columns = execute(conn, f"PRAGMA table_info({table_name})").fetchall()
+    if column_name not in {column["name"] for column in existing_columns}:
+        execute(conn, f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")
+
+
 def hash_password(password: str, salt: str | None = None) -> str:
     salt = salt or secrets.token_hex(16)
     digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
@@ -581,6 +593,8 @@ def survey_item_to_public(row: sqlite3.Row) -> dict:
         "item_name": row["item_name"],
         "brand": row["brand"],
         "channel": row["channel"],
+        "product_type": row["product_type"],
+        "key_program": row["key_program"],
         "item_description": row["item_description"],
         "uom": row["uom"],
         "price": row["price"],
@@ -692,7 +706,7 @@ def sync_seeded_tracker_item_catalog(conn: Any) -> None:
             conn,
             """
             UPDATE tracker_items
-            SET visual_reference = ?, brand = ?, program_name = ?, item_name = ?
+            SET visual_reference = ?, brand = ?, program_name = ?, item_name = ?, extra_json = ?
             WHERE sheet = ? AND source_row = ?
             """,
             (
@@ -700,6 +714,7 @@ def sync_seeded_tracker_item_catalog(conn: Any) -> None:
                 item.get("brand", ""),
                 item.get("program_name", ""),
                 item.get("item_name", ""),
+                item.get("extra_json", "{}"),
                 item.get("sheet", "ad-hoc"),
                 source_row,
             ),
@@ -759,6 +774,8 @@ def sync_default_survey_items(conn: Any) -> None:
             item["item_name"],
             item["brand"],
             item["channel"],
+            item["product_type"],
+            item["key_program"],
             item["item_description"],
             item["uom"],
             item["price"],
@@ -771,10 +788,10 @@ def sync_default_survey_items(conn: Any) -> None:
                 conn,
                 """
                 INSERT INTO survey_items (
-                    item_name, brand, channel, item_description, uom, price,
-                    image_url, sort_order, is_active
+                    item_name, brand, channel, product_type, key_program,
+                    item_description, uom, price, image_url, sort_order, is_active
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -783,8 +800,8 @@ def sync_default_survey_items(conn: Any) -> None:
                 conn,
                 """
                 UPDATE survey_items
-                SET item_name = ?, brand = ?, channel = ?, item_description = ?,
-                    uom = ?, price = ?, image_url = ?, sort_order = ?, is_active = ?
+                SET item_name = ?, brand = ?, channel = ?, product_type = ?, key_program = ?,
+                    item_description = ?, uom = ?, price = ?, image_url = ?, sort_order = ?, is_active = ?
                 WHERE id = ?
                 """,
                 (*values, existing_item["id"]),
@@ -920,6 +937,8 @@ def init_db() -> None:
                     item_name TEXT NOT NULL,
                     brand TEXT NOT NULL DEFAULT '',
                     channel TEXT NOT NULL DEFAULT '',
+                    product_type TEXT NOT NULL DEFAULT '',
+                    key_program TEXT NOT NULL DEFAULT '',
                     item_description TEXT NOT NULL DEFAULT '',
                     uom TEXT NOT NULL DEFAULT '',
                     price TEXT NOT NULL DEFAULT '',
@@ -1047,6 +1066,8 @@ def init_db() -> None:
                     item_name TEXT NOT NULL,
                     brand TEXT NOT NULL DEFAULT '',
                     channel TEXT NOT NULL DEFAULT '',
+                    product_type TEXT NOT NULL DEFAULT '',
+                    key_program TEXT NOT NULL DEFAULT '',
                     item_description TEXT NOT NULL DEFAULT '',
                     uom TEXT NOT NULL DEFAULT '',
                     price TEXT NOT NULL DEFAULT '',
@@ -1077,6 +1098,8 @@ def init_db() -> None:
             )
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
+        ensure_column(conn, "survey_items", "product_type", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "survey_items", "key_program", "TEXT NOT NULL DEFAULT ''")
         existing_admin = execute(
             conn,
             "SELECT id FROM users WHERE lower(email) = lower(?)",
@@ -1209,10 +1232,11 @@ def list_public_items(q: str = "") -> dict:
             "("
             "lower(brand) LIKE ? OR lower(program_name) LIKE ? OR "
             "lower(item_name) LIKE ? OR lower(important_notes) LIKE ? OR "
-            "lower(mrl_order_number) LIKE ? OR lower(tracking) LIKE ?"
+            "lower(mrl_order_number) LIKE ? OR lower(tracking) LIKE ? OR "
+            "lower(extra_json) LIKE ?"
             ")"
         )
-        args.extend([like] * 6)
+        args.extend([like] * 7)
 
     with connect() as conn:
         rows = execute(
@@ -1251,10 +1275,10 @@ def list_public_survey_items(q: str = "") -> dict:
         clauses.append(
             "("
             "lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ? OR "
-            "lower(item_description) LIKE ?"
+            "lower(product_type) LIKE ? OR lower(key_program) LIKE ? OR lower(item_description) LIKE ?"
             ")"
         )
-        args.extend([like] * 4)
+        args.extend([like] * 6)
 
     with connect() as conn:
         rows = execute(
@@ -1857,6 +1881,8 @@ def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Respo
                 COALESCE(survey_items.item_name, '') AS item_name,
                 COALESCE(survey_items.brand, '') AS brand,
                 COALESCE(survey_items.channel, '') AS channel,
+                COALESCE(survey_items.product_type, '') AS product_type,
+                COALESCE(survey_items.key_program, '') AS key_program,
                 COALESCE(survey_items.uom, '') AS uom,
                 COALESCE(survey_items.price, '') AS price,
                 survey_responses.email,
@@ -1876,6 +1902,8 @@ def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Respo
         "Item Name",
         "Brand",
         "Channel",
+        "Product Type",
+        "Key Program",
         "UOM",
         "Price",
         "Email",
@@ -1893,6 +1921,8 @@ def export_survey_responses(user: sqlite3.Row = Depends(require_admin)) -> Respo
                 row["item_name"],
                 row["brand"],
                 row["channel"],
+                row["product_type"],
+                row["key_program"],
                 row["uom"],
                 row["price"],
                 row["email"],
