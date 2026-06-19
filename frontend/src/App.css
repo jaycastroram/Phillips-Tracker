@@ -943,23 +943,25 @@ td textarea {
   max-height: 88vh;
   display: grid;
   place-items: center;
-  border-radius: 20px;
-  padding: 44px 18px 18px;
-  background: var(--brand-white);
+  border-radius: 16px;
+  padding: 0;
+  background: transparent;
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
 }
 
 .image-lightbox-card img {
   max-width: 100%;
-  max-height: calc(88vh - 72px);
+  max-height: 88vh;
   display: block;
   object-fit: contain;
+  border-radius: 16px;
+  background: var(--brand-white);
 }
 
 .image-lightbox-close {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: -44px;
+  right: 0;
   border: 1px solid var(--brand-gridline);
   border-radius: 999px;
   padding: 8px 14px;
@@ -1107,7 +1109,7 @@ td textarea {
   padding-inline: 0;
 }
 
-.viewer-shell > :not(.public-brand-art) {
+.viewer-shell > :not(.public-brand-art):not(.image-lightbox-backdrop) {
   width: min(100% - 72px, 1680px);
   margin-inline: auto;
 }
@@ -1984,7 +1986,7 @@ td textarea {
     padding-inline: 0;
   }
 
-  .viewer-shell > :not(.public-brand-art) {
+  .viewer-shell > :not(.public-brand-art):not(.image-lightbox-backdrop) {
     width: calc(100% - 44px);
     margin-inline: auto;
   }
