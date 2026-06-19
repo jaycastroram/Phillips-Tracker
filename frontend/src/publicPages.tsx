@@ -66,7 +66,34 @@ type ViewerPageProps = {
   goToPath: (path: string) => void
 }
 
-function PublicCard({ item }: { item: TrackerItem }) {
+function ImageLightbox({
+  imageUrl,
+  title,
+  onClose,
+}: {
+  imageUrl: string
+  title: string
+  onClose: () => void
+}) {
+  return (
+    <div className="image-lightbox-backdrop" role="presentation" onClick={onClose}>
+      <div className="image-lightbox-card" role="dialog" aria-modal="true" aria-label={title}>
+        <button className="image-lightbox-close" type="button" onClick={onClose}>
+          Close
+        </button>
+        <img src={imageUrl} alt={title} onClick={(event) => event.stopPropagation()} />
+      </div>
+    </div>
+  )
+}
+
+function PublicCard({
+  item,
+  onImageClick,
+}: {
+  item: TrackerItem
+  onImageClick: (imageUrl: string, title: string) => void
+}) {
   return (
     <article key={item.id} className={`viewer-card ${getViewerStatus(item)}`}>
       <div className="viewer-card-topline">
@@ -74,9 +101,13 @@ function PublicCard({ item }: { item: TrackerItem }) {
         <strong>{viewerStatusLabel(getViewerStatus(item))}</strong>
       </div>
       {isImageReference(item.visual_reference) && (
-        <a className="viewer-card-image" href={item.visual_reference} target="_blank" rel="noreferrer">
+        <button
+          className="viewer-card-image image-preview-trigger"
+          type="button"
+          onClick={() => onImageClick(item.visual_reference, item.item_name || 'Visual reference')}
+        >
           <img src={item.visual_reference} alt="" />
-        </a>
+        </button>
       )}
       <h3>{item.item_name || 'Untitled Item'}</h3>
       <p className="viewer-card-meta">
@@ -232,6 +263,7 @@ export function BuyBookPage({
   printSurveyBuyBook,
 }: BuyBookPageProps) {
   const surveyFilters = useSurveyFilters(surveyItems)
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const allVisibleSelected =
     surveyFilters.filteredItems.length > 0 &&
     surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
@@ -303,13 +335,19 @@ export function BuyBookPage({
               />
               <span>Select</span>
             </label>
-            <div className="survey-image">
+            <button
+              className="survey-image image-preview-trigger"
+              type="button"
+              onClick={() => {
+                if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
+              }}
+            >
               {isImageReference(item.image_url) ? (
                 <img src={item.image_url} alt="" />
               ) : (
                 <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
               )}
-            </div>
+            </button>
             <div className="survey-card-copy">
               <span className="survey-column-heading">Item Name</span>
               <h2>{item.item_name}</h2>
@@ -322,6 +360,13 @@ export function BuyBookPage({
         )}
       </section>
       <PublicFooter />
+      {previewImage && (
+        <ImageLightbox
+          imageUrl={previewImage.url}
+          title={previewImage.title}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
     </main>
   )
 }
@@ -342,6 +387,7 @@ export function SurveyPage({
   updateSurveyResponse,
 }: SurveyPageProps) {
   const surveyFilters = useSurveyFilters(surveyItems)
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const allVisibleSelected =
     surveyFilters.filteredItems.length > 0 &&
     surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
@@ -430,13 +476,19 @@ export function SurveyPage({
               />
               <span>Select</span>
             </label>
-            <div className="survey-image">
+            <button
+              className="survey-image image-preview-trigger"
+              type="button"
+              onClick={() => {
+                if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
+              }}
+            >
               {isImageReference(item.image_url) ? (
                 <img src={item.image_url} alt="" />
               ) : (
                 <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
               )}
-            </div>
+            </button>
             <div className="survey-card-copy">
               <h2>{item.item_name}</h2>
               <p>{item.item_description || 'No description provided yet.'}</p>
@@ -476,6 +528,13 @@ export function SurveyPage({
         )}
       </section>
       <PublicFooter />
+      {previewImage && (
+        <ImageLightbox
+          imageUrl={previewImage.url}
+          title={previewImage.title}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
     </main>
   )
 }
@@ -494,6 +553,8 @@ export function ViewerPage({
   setPublicStatusFilter,
   goToPath,
 }: ViewerPageProps) {
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+
   return (
     <main className="app-shell viewer-shell public-viewer-shell">
       <PublicBrandHeader src={STATUS_TRACKER_HEADER_LOGO} />
@@ -570,7 +631,11 @@ export function ViewerPage({
               </div>
               <div className="kanban-column-cards">
                 {items.map((item) => (
-                  <PublicCard key={item.id} item={item} />
+                  <PublicCard
+                    key={item.id}
+                    item={item}
+                    onImageClick={(url, title) => setPreviewImage({ url, title })}
+                  />
                 ))}
                 {!publicLoading && items.length === 0 && (
                   <div className="empty-state">No items in this lane.</div>
@@ -610,7 +675,18 @@ export function ViewerPage({
                     </td>
                     <td>
                       {isImageReference(item.visual_reference) ? (
-                        <img className="viewer-grid-image" src={item.visual_reference} alt="" />
+                        <button
+                          className="viewer-grid-image-trigger image-preview-trigger"
+                          type="button"
+                          onClick={() =>
+                            setPreviewImage({
+                              url: item.visual_reference,
+                              title: item.item_name || 'Visual reference',
+                            })
+                          }
+                        >
+                          <img className="viewer-grid-image" src={item.visual_reference} alt="" />
+                        </button>
                       ) : (
                         item.visual_reference || '-'
                       )}
@@ -634,6 +710,13 @@ export function ViewerPage({
         </section>
       )}
       <PublicFooter />
+      {previewImage && (
+        <ImageLightbox
+          imageUrl={previewImage.url}
+          title={previewImage.title}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
     </main>
   )
 }

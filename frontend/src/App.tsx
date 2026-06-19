@@ -83,6 +83,7 @@ function App() {
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const [error, setError] = useState('')
   const [publicError, setPublicError] = useState('')
   const [surveyError, setSurveyError] = useState('')
@@ -2050,14 +2051,18 @@ function App() {
                       ) : column.field === 'visual_reference' ? (
                         <div className="visual-reference-field">
                           {isImageReference(addForm.visual_reference) && (
-                            <a
+                            <button
                               className="visual-reference-preview"
-                              href={addForm.visual_reference}
-                              target="_blank"
-                              rel="noreferrer"
+                              type="button"
+                              onClick={() =>
+                                setPreviewImage({
+                                  url: addForm.visual_reference,
+                                  title: addForm.item_name || 'Visual reference',
+                                })
+                              }
                             >
                               <img src={addForm.visual_reference} alt="Visual reference preview" />
-                            </a>
+                            </button>
                           )}
                           <input
                             value={addForm.visual_reference}
@@ -2251,14 +2256,18 @@ function App() {
                           ) : column.field === 'visual_reference' ? (
                             <div className="visual-reference-field">
                               {isImageReference(value) && (
-                                <a
+                                <button
                                   className="visual-reference-preview"
-                                  href={value}
-                                  target="_blank"
-                                  rel="noreferrer"
+                                  type="button"
+                                  onClick={() =>
+                                    setPreviewImage({
+                                      url: value,
+                                      title: item.item_name || 'Visual reference',
+                                    })
+                                  }
                                 >
                                   <img src={value} alt="Visual reference preview" />
-                                </a>
+                                </button>
                               )}
                               <input
                                 value={value}
@@ -2371,6 +2380,20 @@ function App() {
         )}
           </section>
         </>
+      )}
+      {previewImage && (
+        <div className="image-lightbox-backdrop" role="presentation" onClick={() => setPreviewImage(null)}>
+          <div className="image-lightbox-card" role="dialog" aria-modal="true" aria-label={previewImage.title}>
+            <button className="image-lightbox-close" type="button" onClick={() => setPreviewImage(null)}>
+              Close
+            </button>
+            <img
+              src={previewImage.url}
+              alt={previewImage.title}
+              onClick={(event) => event.stopPropagation()}
+            />
+          </div>
+        </div>
       )}
     </main>
   )

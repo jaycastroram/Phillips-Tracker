@@ -907,10 +907,12 @@ td textarea {
 }
 
 .visual-reference-preview {
+  width: 100%;
   display: block;
   overflow: hidden;
   border: 1px solid var(--brand-gridline);
   border-radius: 12px;
+  padding: 0;
   background: var(--brand-soft);
 }
 
@@ -919,6 +921,52 @@ td textarea {
   height: 120px;
   display: block;
   object-fit: contain;
+}
+
+.image-preview-trigger {
+  cursor: zoom-in;
+}
+
+.image-lightbox-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.image-lightbox-card {
+  position: relative;
+  max-width: min(980px, 92vw);
+  max-height: 88vh;
+  display: grid;
+  place-items: center;
+  border-radius: 20px;
+  padding: 44px 18px 18px;
+  background: var(--brand-white);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.35);
+}
+
+.image-lightbox-card img {
+  max-width: 100%;
+  max-height: calc(88vh - 72px);
+  display: block;
+  object-fit: contain;
+}
+
+.image-lightbox-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: var(--brand-white);
+  color: var(--brand-black);
+  font-family: "Poppins", sans-serif;
+  font-weight: 800;
 }
 
 .visual-reference-actions {
@@ -1217,6 +1265,12 @@ td textarea {
   border: 1px solid var(--brand-gridline);
   border-radius: 10px;
   background: var(--brand-soft);
+}
+
+.viewer-grid-image-trigger {
+  border: 0;
+  padding: 0;
+  background: transparent;
 }
 
 .viewer-toolbar-actions {
@@ -1524,6 +1578,7 @@ td textarea {
   overflow: hidden;
   border: 1px solid var(--brand-gridline);
   border-radius: 14px;
+  padding: 0;
   background: var(--brand-soft);
 }
 
@@ -1579,6 +1634,7 @@ td textarea {
   overflow: hidden;
   border: 1px solid var(--brand-gridline);
   border-radius: 12px;
+  padding: 0;
   background: var(--brand-soft);
 }
 
