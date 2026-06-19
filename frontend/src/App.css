@@ -1105,12 +1105,13 @@ td textarea {
 }
 
 .viewer-shell {
+  --public-content-gutter: clamp(24px, 4vw, 72px);
   gap: 22px;
   padding-inline: 0;
 }
 
 .viewer-shell > :not(.public-brand-art):not(.image-lightbox-backdrop) {
-  width: min(100% - 72px, 1680px);
+  width: min(calc(100vw - (var(--public-content-gutter) * 2)), 1680px);
   margin-inline: auto;
 }
 
@@ -1983,11 +1984,12 @@ td textarea {
   }
 
   .viewer-shell {
+    --public-content-gutter: 22px;
     padding-inline: 0;
   }
 
   .viewer-shell > :not(.public-brand-art):not(.image-lightbox-backdrop) {
-    width: calc(100% - 44px);
+    width: calc(100vw - (var(--public-content-gutter) * 2));
     margin-inline: auto;
   }
 
