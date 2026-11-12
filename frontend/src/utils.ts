@@ -1,5 +1,52 @@
-import { NOT_ON_TRACK_STATUSES } from './constants'
+import { DEFAULT_COMPANY_SLUG, NOT_ON_TRACK_STATUSES } from './constants'
 import type { SheetKey, TrackerItem, ViewerStatus } from './types'
+
+export type PublicCompanyPage = 'viewer' | 'survey' | 'buy-book'
+export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey' | '/buy-book'
+
+export type PublicRoute = {
+  companySlug: string
+  page: PublicCompanyPage | null
+  isKanban: boolean
+  usesCompanyPrefix: boolean
+}
+
+export function parsePublicRoute(pathname: string): PublicRoute {
+  const [first = '', second = '', third = ''] = pathname.split('/').filter(Boolean)
+
+  if (first === 'viewer' || first === 'survey' || first === 'buy-book') {
+    return {
+      companySlug: DEFAULT_COMPANY_SLUG,
+      page: first,
+      isKanban: first === 'viewer' && second === 'kanban',
+      usesCompanyPrefix: false,
+    }
+  }
+
+  if (second === 'viewer' || second === 'survey' || second === 'buy-book') {
+    return {
+      companySlug: first.toLowerCase(),
+      page: second,
+      isKanban: second === 'viewer' && third === 'kanban',
+      usesCompanyPrefix: true,
+    }
+  }
+
+  return {
+    companySlug: DEFAULT_COMPANY_SLUG,
+    page: null,
+    isKanban: false,
+    usesCompanyPrefix: false,
+  }
+}
+
+export function publicPagePath(route: PublicRoute, page: PublicPagePath) {
+  return route.usesCompanyPrefix ? `/${route.companySlug}${page}` : page
+}
+
+export function companyPublicApiPath(companySlug: string, resource: string) {
+  return `/public/${encodeURIComponent(companySlug)}/${resource}`
+}
 
 export function isImageReference(value: string) {
   if (!value.trim()) return false

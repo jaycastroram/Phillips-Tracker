@@ -1,8 +1,9 @@
 export type SheetKey = 'ad-hoc' | 'buys' | 'completed'
 export type StatusTargetSheet = SheetKey | 'all'
 export type Role = 'admin' | 'editor'
-export type Page = 'tracker' | 'admin-users' | 'system-log'
+export type Page = 'tracker' | 'admin-users' | 'system-log' | 'surveys'
 export type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
+export type SurveyFilterField = 'brand' | 'channel' | 'product_type' | 'key_program'
 export type RowPageSize = 10 | 20 | 30 | 'all'
 export type SortDirection = 'asc' | 'desc'
 export type ViewerStatus = 'on-track' | 'not-on-track'
@@ -87,6 +88,30 @@ export type SurveyItem = {
   image_url: string
   sort_order: number
   is_active: boolean
+  in_survey: boolean
+  in_buy_book: boolean
+  survey_sort_order: number
+  response_width: number
+  page_break_before: boolean
+  created_at: string
+  updated_at: string
+  period_item_id?: number | null
+  catalog_item_id?: number
+  image_display_size?: 'small' | 'medium' | 'large' | 'full'
+  image_fit?: 'contain' | 'cover'
+}
+
+export type SurveyPeriodStatus = 'draft' | 'open' | 'closed'
+
+export type SurveyPeriod = {
+  id: number
+  company_id: number
+  name: string
+  status: SurveyPeriodStatus
+  opens_at: string | null
+  closes_at: string | null
+  filter_fields: SurveyFilterField[]
+  item_count?: number
   created_at: string
   updated_at: string
 }

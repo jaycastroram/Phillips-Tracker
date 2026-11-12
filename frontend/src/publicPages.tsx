@@ -1,11 +1,13 @@
-import { useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
 import type {
   KanbanColumn,
+  SurveyFilterField,
   SurveyInterest,
   SurveyItem,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
+import { DEFAULT_SURVEY_FILTER_FIELDS } from './constants'
 import {
   getViewerStatus,
   isImageReference,
@@ -37,13 +39,18 @@ type BuyBookPageProps = {
 
 type SurveyPageProps = {
   surveyItems: SurveyItem[]
+  surveyFilterFields: SurveyFilterField[]
   surveyLoading: boolean
   surveyError: string
   surveyMessage: string
   surveyQuery: string
   selectedSurveyItemIds: number[]
   isSubmittingSurvey: boolean
+  surveyEmail: string
+  setSurveyEmail: (email: string) => void
   setSurveyQuery: Dispatch<SetStateAction<string>>
+  surveyOpen?: boolean
+  surveyClosedMessage?: string
   toggleSurveyItem: (itemId: number) => void
   submitSurveyResponse: () => void
   bulkUpdateSurveyInterest: (interest: Exclude<SurveyInterest, ''>) => void
@@ -53,6 +60,8 @@ type SurveyPageProps = {
 
 type ViewerPageProps = {
   isPublicKanbanPath: boolean
+  gridPath: string
+  kanbanPath: string
   publicQuery: string
   publicStatusFilter: string
   publicStatusOptions: string[]
@@ -163,10 +172,11 @@ function uniqueOptions(values: string[]) {
   )
 }
 
-function useSurveyFilters(items: SurveyItem[]) {
+function useSurveyFilters(items: SurveyItem[], enabledFields: SurveyFilterField[]) {
   const [brandFilter, setBrandFilter] = useState('')
   const [channelFilter, setChannelFilter] = useState('')
   const [productTypeFilter, setProductTypeFilter] = useState('')
+  const [keyProgramFilter, setKeyProgramFilter] = useState('')
 
   const brandOptions = useMemo(() => uniqueOptions(items.map((item) => item.brand)), [items])
   const channelOptions = useMemo(() => uniqueOptions(items.map((item) => item.channel)), [items])
@@ -174,32 +184,61 @@ function useSurveyFilters(items: SurveyItem[]) {
     () => uniqueOptions(items.map((item) => getSurveyProductType(item))),
     [items],
   )
+  const keyProgramOptions = useMemo(() => uniqueOptions(items.map((item) => item.key_program)), [items])
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
-      if (brandFilter && item.brand !== brandFilter) return false
-      if (channelFilter && item.channel !== channelFilter) return false
-      if (productTypeFilter && getSurveyProductType(item) !== productTypeFilter) return false
+      if (enabledFields.includes('brand') && brandFilter && item.brand !== brandFilter) return false
+      if (enabledFields.includes('channel') && channelFilter && item.channel !== channelFilter) return false
+      if (
+        enabledFields.includes('product_type') &&
+        productTypeFilter &&
+        getSurveyProductType(item) !== productTypeFilter
+      ) {
+        return false
+      }
+      if (enabledFields.includes('key_program') && keyProgramFilter && item.key_program !== keyProgramFilter) {
+        return false
+      }
       return true
     })
-  }, [brandFilter, channelFilter, items, productTypeFilter])
+  }, [brandFilter, channelFilter, enabledFields, items, keyProgramFilter, productTypeFilter])
 
   return {
     brandFilter,
     brandOptions,
     channelFilter,
     channelOptions,
+    enabledFields,
     filteredItems,
+    keyProgramFilter,
+    keyProgramOptions,
     productTypeFilter,
     productTypeOptions,
     resetFilters: () => {
       setBrandFilter('')
       setChannelFilter('')
       setProductTypeFilter('')
+      setKeyProgramFilter('')
     },
     setBrandFilter,
     setChannelFilter,
+    setKeyProgramFilter,
     setProductTypeFilter,
   }
+}
+
+function groupSurveyPages(items: SurveyItem[]) {
+  const pages: SurveyItem[][] = []
+  let current: SurveyItem[] = []
+  items.forEach((item, index) => {
+    if (item.page_break_before && index > 0 && current.length > 0) {
+      pages.push(current)
+      current = []
+    }
+    current.push(item)
+  })
+  if (current.length > 0 || pages.length === 0) pages.push(current)
+  return pages
 }
 
 function SurveyFilterControls({
@@ -207,47 +246,70 @@ function SurveyFilterControls({
   brandOptions,
   channelFilter,
   channelOptions,
+  enabledFields,
+  keyProgramFilter,
+  keyProgramOptions,
   productTypeFilter,
   productTypeOptions,
   setBrandFilter,
   setChannelFilter,
+  setKeyProgramFilter,
   setProductTypeFilter,
 }: ReturnType<typeof useSurveyFilters>) {
   return (
     <div className="survey-filter-grid">
-      <label>
-        Brand
-        <select value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}>
-          <option value="">All brands</option>
-          {brandOptions.map((brand) => (
-            <option key={brand} value={brand}>
-              {brand}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Channel
-        <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
-          <option value="">All channels</option>
-          {channelOptions.map((channel) => (
-            <option key={channel} value={channel}>
-              {channel}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label>
-        Product Type
-        <select value={productTypeFilter} onChange={(event) => setProductTypeFilter(event.target.value)}>
-          <option value="">All product types</option>
-          {productTypeOptions.map((productType) => (
-            <option key={productType} value={productType}>
-              {productType}
-            </option>
-          ))}
-        </select>
-      </label>
+      {enabledFields.includes('brand') && (
+        <label>
+          Brand
+          <select value={brandFilter} onChange={(event) => setBrandFilter(event.target.value)}>
+            <option value="">All brands</option>
+            {brandOptions.map((brand) => (
+              <option key={brand} value={brand}>
+                {brand}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {enabledFields.includes('channel') && (
+        <label>
+          Channel
+          <select value={channelFilter} onChange={(event) => setChannelFilter(event.target.value)}>
+            <option value="">All channels</option>
+            {channelOptions.map((channel) => (
+              <option key={channel} value={channel}>
+                {channel}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {enabledFields.includes('product_type') && (
+        <label>
+          Product Type
+          <select value={productTypeFilter} onChange={(event) => setProductTypeFilter(event.target.value)}>
+            <option value="">All product types</option>
+            {productTypeOptions.map((productType) => (
+              <option key={productType} value={productType}>
+                {productType}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {enabledFields.includes('key_program') && (
+        <label>
+          Key Program
+          <select value={keyProgramFilter} onChange={(event) => setKeyProgramFilter(event.target.value)}>
+            <option value="">All key programs</option>
+            {keyProgramOptions.map((keyProgram) => (
+              <option key={keyProgram} value={keyProgram}>
+                {keyProgram}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </div>
   )
 }
@@ -262,7 +324,7 @@ export function BuyBookPage({
   toggleSurveyItem,
   printSurveyBuyBook,
 }: BuyBookPageProps) {
-  const surveyFilters = useSurveyFilters(surveyItems)
+  const surveyFilters = useSurveyFilters(surveyItems, DEFAULT_SURVEY_FILTER_FIELDS)
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const allVisibleSelected =
     surveyFilters.filteredItems.length > 0 &&
@@ -373,21 +435,32 @@ export function BuyBookPage({
 
 export function SurveyPage({
   surveyItems,
+  surveyFilterFields,
   surveyLoading,
   surveyError,
   surveyMessage,
   surveyQuery,
   selectedSurveyItemIds,
   isSubmittingSurvey,
+  surveyEmail,
+  setSurveyEmail,
   setSurveyQuery,
+  surveyOpen = true,
+  surveyClosedMessage = 'No survey is open right now.',
   toggleSurveyItem,
   submitSurveyResponse,
   bulkUpdateSurveyInterest,
   getSurveyResponse,
   updateSurveyResponse,
 }: SurveyPageProps) {
-  const surveyFilters = useSurveyFilters(surveyItems)
+  const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+  const [currentPage, setCurrentPage] = useState(0)
+  const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
+  const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+  useEffect(() => {
+    setCurrentPage(0)
+  }, [surveyFilters.filteredItems])
   const allVisibleSelected =
     surveyFilters.filteredItems.length > 0 &&
     surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
@@ -399,12 +472,23 @@ export function SurveyPage({
     })
   }
 
+  if (!surveyLoading && !surveyOpen) {
+    return (
+      <main className="app-shell viewer-shell survey-shell">
+        <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
+        <div className="empty-state survey-closed-state">{surveyClosedMessage}</div>
+        <PublicFooter />
+      </main>
+    )
+  }
+
   return (
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
 
-      <section className="viewer-toolbar survey-toolbar">
-        <div className="buy-book-filter-group">
+      <section className="survey-toolbar">
+        {/* Row 1: Search + Filters */}
+        <div className="survey-toolbar-filters">
           <label>
             Search
             <input
@@ -414,8 +498,6 @@ export function SurveyPage({
             />
           </label>
           <SurveyFilterControls {...surveyFilters} />
-        </div>
-        <div className="viewer-toolbar-actions survey-toolbar-actions">
           <button
             className="secondary-action"
             type="button"
@@ -424,8 +506,15 @@ export function SurveyPage({
               surveyFilters.resetFilters()
             }}
           >
-            Reset Search
+            Reset
           </button>
+          <span className="survey-item-count">
+            {surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}
+          </span>
+        </div>
+
+        {/* Row 2: Selection actions + Email + Submit */}
+        <div className="survey-toolbar-actions">
           <button
             className="secondary-action"
             type="button"
@@ -450,24 +539,69 @@ export function SurveyPage({
           >
             Mark Not Interested
           </button>
+          <div className="survey-toolbar-spacer" />
+          <label className="survey-email-field">
+            <span>Your Email <span className="survey-email-required" aria-label="required">*</span></span>
+            <input
+              autoComplete="email"
+              inputMode="email"
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={surveyEmail}
+              onChange={(event) => setSurveyEmail(event.target.value)}
+            />
+          </label>
+          <button className="secondary-action" type="button" onClick={() => window.print()}>
+            Print Survey
+          </button>
           <button
             className="primary-action"
             type="button"
             onClick={submitSurveyResponse}
-            disabled={selectedSurveyItemIds.length === 0}
+            disabled={selectedSurveyItemIds.length === 0 || isSubmittingSurvey}
           >
             {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
           </button>
-          <span>{surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}</span>
         </div>
       </section>
+
+      <div className="survey-pager">
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage === 0}
+          onClick={() => setCurrentPage(Math.max(safePage - 1, 0))}
+        >
+          Back
+        </button>
+        <span>
+          Page {pages.length === 0 ? 0 : safePage + 1} of {pages.length}
+        </span>
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage >= pages.length - 1}
+          onClick={() => setCurrentPage(Math.min(safePage + 1, pages.length - 1))}
+        >
+          Next
+        </button>
+      </div>
 
       {surveyError && <div className="error">{surveyError}</div>}
       {surveyMessage && <div className="success">{surveyMessage}</div>}
 
       <section className="survey-grid" aria-label="Survey items">
-        {surveyFilters.filteredItems.map((item) => (
-          <article key={item.id} className="survey-card">
+        {surveyFilters.filteredItems.map((item, index) => {
+          const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
+          return (
+          <article
+            key={item.id}
+            className={`survey-card${item.page_break_before && index > 0 ? ' survey-page-break' : ''}${
+              pageIndex === safePage ? '' : ' survey-page-hidden'
+            }`}
+            style={{ '--response-width': `${item.response_width || 36}%` } as React.CSSProperties}
+          >
             <label className="survey-select">
               <input
                 checked={selectedSurveyItemIds.includes(item.id)}
@@ -522,7 +656,8 @@ export function SurveyPage({
               </label>
             </div>
           </article>
-        ))}
+          )
+        })}
         {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
           <div className="empty-state">No survey items found.</div>
         )}
@@ -541,6 +676,8 @@ export function SurveyPage({
 
 export function ViewerPage({
   isPublicKanbanPath,
+  gridPath,
+  kanbanPath,
   publicQuery,
   publicStatusFilter,
   publicStatusOptions,
@@ -589,14 +726,14 @@ export function ViewerPage({
             <button
               className={!isPublicKanbanPath ? 'active' : ''}
               type="button"
-              onClick={() => goToPath('/viewer')}
+              onClick={() => goToPath(gridPath)}
             >
               Grid
             </button>
             <button
               className={isPublicKanbanPath ? 'active' : ''}
               type="button"
-              onClick={() => goToPath('/viewer/kanban')}
+              onClick={() => goToPath(kanbanPath)}
             >
               Kanban
             </button>

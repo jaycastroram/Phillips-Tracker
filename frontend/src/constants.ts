@@ -3,13 +3,15 @@ import type {
   EditableField,
   ItemDraft,
   SheetKey,
+  SurveyFilterField,
   SurveyResponseDraft,
 } from './types'
 
 export const API_BASE = '/api'
-export const AUTH_STORAGE_KEY = 'phillips-tracker-auth-token'
+export const DEFAULT_COMPANY_SLUG = 'phillips'
+export const AUTH_STORAGE_KEY = 'mrl-tracker-auth-token'
 export const SHEET_ORDER: SheetKey[] = ['ad-hoc', 'buys', 'completed']
-export const COLUMN_WIDTH_STORAGE_KEY = 'phillips-tracker-column-widths'
+export const COLUMN_WIDTH_STORAGE_KEY = 'mrl-tracker-column-widths'
 export const NOT_ON_TRACK_STATUSES = new Set([
   'Details Needed',
   'Quoting',
@@ -57,3 +59,12 @@ export const EMPTY_SURVEY_RESPONSE: SurveyResponseDraft = {
   interest: '',
   notes: '',
 }
+
+export const DEFAULT_SURVEY_FILTER_FIELDS: SurveyFilterField[] = ['brand', 'channel', 'product_type']
+export const SURVEY_FILTER_FIELDS: { field: SurveyFilterField; label: string }[] = [
+  { field: 'brand', label: 'Brand' },
+  { field: 'channel', label: 'Channel' },
+  { field: 'product_type', label: 'Product Type' },
+  { field: 'key_program', label: 'Key Program' },
+]
+

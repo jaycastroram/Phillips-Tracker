@@ -4,43 +4,37 @@ import {
   useMemo,
   useState,
   type FormEvent,
-  type MouseEvent as ReactMouseEvent,
 } from 'react'
 import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
 import {
   API_BASE,
   AUTH_STORAGE_KEY,
-  BASE_COLUMNS,
-  COLUMN_WIDTH_STORAGE_KEY,
-  DEFAULT_COLUMN_WIDTHS,
-  EMPTY_ITEM_DRAFT,
   EMPTY_SURVEY_RESPONSE,
-  SHEET_ORDER,
+  SURVEY_FILTER_FIELDS,
+  DEFAULT_SURVEY_FILTER_FIELDS,
 } from './constants'
+import { useApi } from './hooks/useApi'
+import { useCompanyConfig } from './hooks/useCompanyConfig'
+import { AdminPage } from './pages/AdminPage'
+import { SurveysPage } from './pages/SurveysPage'
+import { SystemLogPage } from './pages/SystemLogPage'
+import { TrackerPage } from './pages/TrackerPage'
 import { BuyBookPage, SurveyPage, ViewerPage } from './publicPages'
 import type {
-  AdminSettingsTab,
   AppUser,
-  AuditLog,
-  ColumnKey,
   EditableField,
-  ItemDraft,
   KanbanColumn,
   Page,
   PendingUpdates,
-  Role,
-  RowPageSize,
   SheetKey,
   SheetMeta,
-  SheetStatus,
-  SortDirection,
-  StatusTargetSheet,
+  SurveyFilterField,
   SurveyInterest,
   SurveyItem,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
-import { escapePrintValue, isImageReference } from './utils'
+import { companyPublicApiPath, escapePrintValue, isImageReference, parsePublicRoute, publicPagePath } from './utils'
 import './App.css'
 
 function App() {
@@ -48,102 +42,63 @@ function App() {
   const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '')
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null)
   const [page, setPage] = useState<Page>('tracker')
-  const [adminSettingsTab, setAdminSettingsTab] = useState<AdminSettingsTab>('users')
   const [authChecking, setAuthChecking] = useState(Boolean(token))
   const [sheets, setSheets] = useState<Record<SheetKey, SheetMeta> | null>(null)
   const [activeSheet, setActiveSheet] = useState<SheetKey>('ad-hoc')
   const [items, setItems] = useState<TrackerItem[]>([])
-  const [users, setUsers] = useState<AppUser[]>([])
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([])
-  const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([])
-  const [sheetStatuses, setSheetStatuses] = useState<SheetStatus[]>([])
   const [query, setQuery] = useState('')
-  const [publicQuery, setPublicQuery] = useState('')
-  const [publicStatusFilter, setPublicStatusFilter] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [publicItems, setPublicItems] = useState<TrackerItem[]>([])
   const [surveyItems, setSurveyItems] = useState<SurveyItem[]>([])
-  const [rowPageSize, setRowPageSize] = useState<RowPageSize>(20)
-  const [currentTablePage, setCurrentTablePage] = useState(1)
-  const [sortField, setSortField] = useState<EditableField>('date_or_buy')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [publicQuery, setPublicQuery] = useState('')
+  const [publicStatusFilter, setPublicStatusFilter] = useState('')
+  const [surveyQuery, setSurveyQuery] = useState('')
+  const [surveyFilterFields, setSurveyFilterFields] = useState<SurveyFilterField[]>(DEFAULT_SURVEY_FILTER_FIELDS)
+  const [surveyOpen, setSurveyOpen] = useState(true)
+  const [surveyClosedMessage, setSurveyClosedMessage] = useState('')
+  const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
+  const SURVEY_EMAIL_KEY = 'mrl-survey-email'
+  const [surveyEmail, setSurveyEmailState] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('email') ?? window.localStorage.getItem(SURVEY_EMAIL_KEY) ?? ''
+  })
+  const setSurveyEmail = (email: string) => {
+    setSurveyEmailState(email)
+    if (email) window.localStorage.setItem(SURVEY_EMAIL_KEY, email)
+    else window.localStorage.removeItem(SURVEY_EMAIL_KEY)
+  }
+  const [surveyResponses, setSurveyResponses] = useState<Record<number, SurveyResponseDraft>>({})
+  const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([])
   const [pendingCreates, setPendingCreates] = useState<TrackerItem[]>([])
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdates>({})
   const [pendingDeletes, setPendingDeletes] = useState<number[]>([])
-  const [isAddFormOpen, setIsAddFormOpen] = useState(false)
-  const [addForm, setAddForm] = useState<ItemDraft>(EMPTY_ITEM_DRAFT)
   const [refreshItemsToken, setRefreshItemsToken] = useState(0)
   const [loading, setLoading] = useState(true)
   const [publicLoading, setPublicLoading] = useState(false)
   const [surveyLoading, setSurveyLoading] = useState(false)
-  const [usersLoading, setUsersLoading] = useState(false)
-  const [logsLoading, setLogsLoading] = useState(false)
-  const [kanbanColumnsLoading, setKanbanColumnsLoading] = useState(false)
-  const [statusesLoading, setStatusesLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
   const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
-  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const [error, setError] = useState('')
-  const [publicError, setPublicError] = useState('')
+  const [publicError] = useState('')
   const [surveyError, setSurveyError] = useState('')
   const [authError, setAuthError] = useState('')
-  const [adminMessage, setAdminMessage] = useState('')
-  const [kanbanMessage, setKanbanMessage] = useState('')
   const [surveyMessage, setSurveyMessage] = useState('')
-  const [surveyQuery, setSurveyQuery] = useState('')
-  const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
-  const [surveyResponses, setSurveyResponses] = useState<Record<number, SurveyResponseDraft>>({})
-  const [loginForm, setLoginForm] = useState({ email: 'admin@example.com', password: 'Admin123' })
-  const [showNewUserPassword, setShowNewUserPassword] = useState(false)
-  const [newUser, setNewUser] = useState({
-    email: '',
-    name: '',
-    password: '',
-    role: 'editor' as Role,
-    is_active: true,
-  })
-  const [newKanbanColumn, setNewKanbanColumn] = useState({
-    title: '',
-    statuses: [] as string[],
-    sort_order: 0,
-    is_visible: true,
-  })
-  const [newSheetStatus, setNewSheetStatus] = useState({
-    sheet: 'ad-hoc' as StatusTargetSheet,
-    status: '',
-  })
-  const [columnWidths, setColumnWidths] = useState<Record<ColumnKey, number>>(() => {
-    const saved = window.localStorage.getItem(COLUMN_WIDTH_STORAGE_KEY)
-    if (!saved) return DEFAULT_COLUMN_WIDTHS
+  const [loginForm, setLoginForm] = useState({ email: '', password: '' })
+  const [, setCurrentTablePage] = useState(1)
 
-    try {
-      return { ...DEFAULT_COLUMN_WIDTHS, ...JSON.parse(saved) }
-    } catch {
-      return DEFAULT_COLUMN_WIDTHS
-    }
-  })
+  const companyConfig = useCompanyConfig()
 
-  const columns = useMemo(() => {
-    return BASE_COLUMNS.map((column) =>
-      column.field === 'date_or_buy'
-        ? { ...column, label: sheets?.[activeSheet]?.dateLabel ?? column.label }
-        : column,
-    )
-  }, [activeSheet, sheets])
-
-  const isPublicViewerPath = currentPath === '/viewer' || currentPath === '/viewer/kanban'
-  const isPublicKanbanPath = currentPath === '/viewer/kanban'
-  const isPublicSurveyPath = currentPath === '/survey'
-  const isPublicBuyBookPath = currentPath === '/buy-book'
+  const publicRoute = useMemo(() => parsePublicRoute(currentPath), [currentPath])
+  const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
+  const isPublicViewerPath = publicPage === 'viewer'
+  const isPublicSurveyPath = publicPage === 'survey'
+  const isPublicBuyBookPath = publicPage === 'buy-book'
 
   useEffect(() => {
-    function handlePopState() {
-      setCurrentPath(window.location.pathname)
-    }
-
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
+    function handlePop() { setCurrentPath(window.location.pathname) }
+    window.addEventListener('popstate', handlePop)
+    return () => window.removeEventListener('popstate', handlePop)
   }, [])
 
   const handleLogout = useCallback(() => {
@@ -152,483 +107,158 @@ function App() {
     setCurrentUser(null)
     setSheets(null)
     setItems([])
-    setUsers([])
-    setAuditLogs([])
-    setKanbanColumns([])
-    setSheetStatuses([])
     setPendingCreates([])
     setPendingUpdates({})
     setPendingDeletes([])
     setPage('tracker')
   }, [])
 
-  const apiFetch = useCallback(async (path: string, options: RequestInit = {}) => {
-    const headers = new Headers(options.headers)
-    if (!headers.has('Content-Type') && options.body && !(options.body instanceof FormData)) {
-      headers.set('Content-Type', 'application/json')
-    }
-    if (token) headers.set('Authorization', `Bearer ${token}`)
+  const { apiFetch } = useApi(token, handleLogout)
 
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers })
-    if (response.status === 401) {
-      handleLogout()
-      throw new Error('Please log in again.')
-    }
-    return response
+  // --- Auth ---
+  useEffect(() => {
+    if (!token) return
+    setAuthChecking(true)
+    fetch(`${API_BASE}/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => { if (!res.ok) throw new Error('expired'); return res.json() })
+      .then((data) => setCurrentUser(data.user))
+      .catch(() => handleLogout())
+      .finally(() => setAuthChecking(false))
   }, [handleLogout, token])
-
-  function acceptLogin(nextToken: string, user: AppUser) {
-    window.localStorage.setItem(AUTH_STORAGE_KEY, nextToken)
-    setToken(nextToken)
-    setCurrentUser(user)
-    setAuthError('')
-    setPage('tracker')
-  }
 
   async function login(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setAuthError('')
-
-    const response = await fetch(`${API_BASE}/auth/login`, {
+    const res = await fetch(`${API_BASE}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(loginForm),
     })
-    if (!response.ok) {
-      setAuthError('Invalid email or password.')
-      return
-    }
-
-    const data = await response.json()
-    acceptLogin(data.token, data.user)
+    if (!res.ok) { setAuthError('Invalid email or password.'); return }
+    const data = await res.json()
+    window.localStorage.setItem(AUTH_STORAGE_KEY, data.token)
+    setToken(data.token)
+    setCurrentUser(data.user)
+    setPage('tracker')
   }
 
-  async function downloadSurveyResponses() {
-    try {
-      const response = await apiFetch('/admin/survey-responses/export')
-      if (!response.ok) {
-        const message = await response.text()
-        setError(message || 'Unable to download survey responses.')
-        return
-      }
-
-      const blob = await response.blob()
-      const downloadUrl = window.URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = downloadUrl
-      link.download = `survey-responses-${new Date().toISOString().slice(0, 10)}.xlsx`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      window.URL.revokeObjectURL(downloadUrl)
-      setError('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to download survey responses.')
-    }
-  }
-
-  useEffect(() => {
-    if (!token) {
-      return
-    }
-
-    async function loadCurrentUser() {
-      setAuthChecking(true)
-      try {
-        const response = await fetch(`${API_BASE}/auth/me`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        if (!response.ok) throw new Error('Stored login expired.')
-        const data = await response.json()
-        setCurrentUser(data.user)
-      } catch {
-        handleLogout()
-      } finally {
-        setAuthChecking(false)
-      }
-    }
-
-    loadCurrentUser()
-  }, [handleLogout, token])
-
-  useEffect(() => {
-    if (!isPublicViewerPath) return
-
-    const controller = new AbortController()
-
-    async function loadPublicItems() {
-      setPublicLoading(true)
-      setPublicError('')
-      const params = new URLSearchParams()
-      if (publicQuery.trim()) params.set('q', publicQuery.trim())
-
-      try {
-        const response = await fetch(`${API_BASE}/public/items?${params}`, {
-          signal: controller.signal,
-        })
-        if (!response.ok) throw new Error('Unable to load viewer data.')
-        const data = await response.json()
-        setPublicItems(data.items)
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return
-        setPublicError(err instanceof Error ? err.message : 'Unable to load viewer data.')
-      } finally {
-        setPublicLoading(false)
-      }
-    }
-
-    loadPublicItems()
-    return () => controller.abort()
-  }, [isPublicViewerPath, publicQuery])
-
-  useEffect(() => {
-    if (!isPublicSurveyPath && !isPublicBuyBookPath) return
-
-    const controller = new AbortController()
-
-    async function loadSurveyItems() {
-      setSurveyLoading(true)
-      setSurveyError('')
-      const params = new URLSearchParams()
-      if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
-
-      try {
-        const response = await fetch(`${API_BASE}/public/survey-items?${params}`, {
-          signal: controller.signal,
-        })
-        if (!response.ok) throw new Error('Unable to load survey items.')
-        const data = await response.json()
-        setSurveyItems(data.items)
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') return
-        setSurveyError(err instanceof Error ? err.message : 'Unable to load survey items.')
-      } finally {
-        setSurveyLoading(false)
-      }
-    }
-
-    loadSurveyItems()
-    return () => controller.abort()
-  }, [isPublicBuyBookPath, isPublicSurveyPath, surveyQuery])
-
+  // --- Sheets ---
   const loadSheets = useCallback(async () => {
-    const response = await apiFetch('/sheets')
-    if (!response.ok) throw new Error('Unable to load sheet configuration.')
-    const data = await response.json()
+    const res = await apiFetch('/sheets')
+    if (!res.ok) return
+    const data = await res.json()
     setSheets(data.sheets)
   }, [apiFetch])
 
   useEffect(() => {
     if (!currentUser) return
-
-    const timeoutId = window.setTimeout(() => {
-      loadSheets().catch((err: Error) => setError(err.message))
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
+    loadSheets()
   }, [currentUser, loadSheets])
 
+  // --- Items ---
   useEffect(() => {
     if (!currentUser || page !== 'tracker') return
-
     const controller = new AbortController()
-
-    async function loadItems() {
-      setLoading(true)
-      setError('')
-      const params = new URLSearchParams({ sheet: activeSheet })
-      if (query.trim()) params.set('q', query.trim())
-      if (statusFilter) params.set('status', statusFilter)
-
-      const response = await apiFetch(`/items?${params}`, {
-        signal: controller.signal,
-      })
-      if (!response.ok) throw new Error('Unable to load tracker rows.')
-      const data = await response.json()
-      setItems(data.items)
-      setLoading(false)
-    }
-
-    loadItems().catch((err: Error) => {
-      if (err.name === 'AbortError') return
-      setError(err.message)
-      setLoading(false)
-    })
-
+    setLoading(true)
+    setError('')
+    const params = new URLSearchParams({ sheet: activeSheet })
+    if (query.trim()) params.set('q', query.trim())
+    if (statusFilter) params.set('status', statusFilter)
+    apiFetch(`/items?${params}`, { signal: controller.signal })
+      .then((res) => { if (!res.ok) throw new Error('Unable to load tracker rows.'); return res.json() })
+      .then((data) => { setItems(data.items); setLoading(false) })
+      .catch((err) => { if (err.name !== 'AbortError') { setError(err.message); setLoading(false) } })
     return () => controller.abort()
   }, [activeSheet, apiFetch, currentUser, page, query, refreshItemsToken, statusFilter])
 
-  const loadUsers = useCallback(async () => {
-    setUsersLoading(true)
-    setError('')
-    try {
-      const response = await apiFetch('/admin/users')
-      if (!response.ok) throw new Error('Unable to load users.')
-      const data = await response.json()
-      setUsers(data.users)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load users.')
-    } finally {
-      setUsersLoading(false)
-    }
-  }, [apiFetch])
-
-  useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users' || adminSettingsTab !== 'users') {
-      return
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      loadUsers()
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [adminSettingsTab, currentUser, loadUsers, page])
-
-  const loadAuditLogs = useCallback(async () => {
-    setLogsLoading(true)
-    setError('')
-    try {
-      const response = await apiFetch('/admin/audit-logs')
-      if (!response.ok) throw new Error('Unable to load system log.')
-      const data = await response.json()
-      setAuditLogs(data.logs)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load system log.')
-    } finally {
-      setLogsLoading(false)
-    }
-  }, [apiFetch])
-
-  useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'system-log') return
-
-    const timeoutId = window.setTimeout(() => {
-      loadAuditLogs()
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [currentUser, loadAuditLogs, page])
-
-  const loadKanbanColumns = useCallback(async (admin = false) => {
-    setKanbanColumnsLoading(true)
-    if (admin) {
-      setError('')
-    } else {
-      setPublicError('')
-    }
-
-    try {
-      const response = admin
-        ? await apiFetch('/admin/kanban-columns')
-        : await fetch(`${API_BASE}/public/kanban-columns`)
-      if (!response.ok) throw new Error('Unable to load kanban columns.')
-      const data = await response.json()
-      setKanbanColumns(data.columns)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to load kanban columns.'
-      if (admin) {
-        setError(message)
-      } else {
-        setPublicError(message)
-      }
-    } finally {
-      setKanbanColumnsLoading(false)
-    }
-  }, [apiFetch])
-
-  const loadSheetStatuses = useCallback(async () => {
-    setStatusesLoading(true)
-    setError('')
-    try {
-      const response = await apiFetch('/admin/sheet-statuses')
-      if (!response.ok) throw new Error('Unable to load tracker statuses.')
-      const data = await response.json()
-      setSheetStatuses(data.statuses)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to load tracker statuses.')
-    } finally {
-      setStatusesLoading(false)
-    }
-  }, [apiFetch])
-
+  // --- Public items ---
   useEffect(() => {
     if (!isPublicViewerPath) return
+    const controller = new AbortController()
+    setPublicLoading(true)
+    const params = new URLSearchParams()
+    if (publicQuery.trim()) params.set('q', publicQuery.trim())
+    fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'items')}?${params}`, { signal: controller.signal })
+      .then((res) => res.ok ? res.json() : Promise.reject(res.status))
+      .then((data) => { setPublicItems(Array.isArray(data.items) ? data.items : []); setPublicLoading(false) })
+      .catch(() => { setPublicItems([]); setPublicLoading(false) })
+    return () => controller.abort()
+  }, [companySlug, isPublicViewerPath, publicQuery])
 
-    const timeoutId = window.setTimeout(() => {
-      loadKanbanColumns(false)
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [isPublicViewerPath, loadKanbanColumns])
-
+  // --- Survey / buy-book items ---
   useEffect(() => {
-    if (!currentUser || currentUser.role !== 'admin' || page !== 'admin-users' || adminSettingsTab !== 'kanban') {
-      return
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      loadKanbanColumns(true)
-      loadSheetStatuses()
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [adminSettingsTab, currentUser, loadKanbanColumns, loadSheetStatuses, page])
-
-  useEffect(() => {
-    if (
-      !currentUser ||
-      currentUser.role !== 'admin' ||
-      page !== 'admin-users' ||
-      adminSettingsTab !== 'statuses'
-    ) {
-      return
-    }
-
-    const timeoutId = window.setTimeout(() => {
-      loadSheetStatuses()
-    }, 0)
-
-    return () => window.clearTimeout(timeoutId)
-  }, [adminSettingsTab, currentUser, loadSheetStatuses, page])
-
-  function updateDraft(itemId: number, field: EditableField, value: string) {
-    setItems((current) =>
-      current.map((item) => (item.id === itemId ? { ...item, [field]: value } : item)),
-    )
-    if (itemId < 0) {
-      setPendingCreates((current) =>
-        current.map((item) => (item.id === itemId ? { ...item, [field]: value } : item)),
-      )
-      return
-    }
-
-    setPendingUpdates((current) => ({
-      ...current,
-      [itemId]: {
-        ...(current[itemId] ?? {}),
-        [field]: value,
-      },
-    }))
-  }
-
-  function openAddForm() {
-    setAddForm({
-      ...EMPTY_ITEM_DRAFT,
-      current_status: sheets?.[activeSheet]?.statuses[0] ?? '',
-    })
-    setIsAddFormOpen(true)
-  }
-
-  function addDraftRow(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const draftItem: TrackerItem = {
-      id: -Date.now(),
-      sheet: activeSheet,
-      source_row: undefined,
-      ...addForm,
-      extra: {},
-      updated_at: new Date().toISOString(),
-    }
-
-    setItems((current) => [...current, draftItem])
-    setPendingCreates((current) => [...current, draftItem])
-    setIsAddFormOpen(false)
-    setCurrentTablePage(1)
-  }
-
-  function deleteRow(itemId: number) {
-    const confirmed = window.confirm('Delete this tracker row?')
-    if (!confirmed) return
-
-    setItems((current) => current.filter((item) => item.id !== itemId))
-    if (itemId < 0) {
-      setPendingCreates((current) => current.filter((item) => item.id !== itemId))
-      return
-    }
-
-    setPendingDeletes((current) => (current.includes(itemId) ? current : [...current, itemId]))
-    setPendingUpdates((current) => {
-      const next = { ...current }
-      delete next[itemId]
-      return next
-    })
-  }
-
-  async function uploadVisualReference(
-    file: File,
-    uploadKey: string,
-    applyUrl: (url: string) => void,
-  ) {
-    if (!file.type.startsWith('image/')) {
-      setError('Please upload a picture file.')
-      return
-    }
-
-    const formData = new FormData()
-    formData.append('file', file)
-    setUploadingVisualReference(uploadKey)
-    setError('')
-
-    try {
-      const response = await apiFetch('/uploads/visual-reference', {
-        method: 'POST',
-        body: formData,
+    if (!isPublicSurveyPath && !isPublicBuyBookPath) return
+    const controller = new AbortController()
+    setSurveyLoading(true)
+    const params = new URLSearchParams({ surface: isPublicSurveyPath ? 'survey' : 'buy-book' })
+    if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
+    fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-items')}?${params}`, { signal: controller.signal })
+      .then((res) => res.ok ? res.json() : Promise.reject(res.status))
+      .then((data) => {
+        setSurveyItems(Array.isArray(data.items) ? data.items : [])
+        if (Array.isArray(data.filter_fields)) {
+          const allowed = new Set(SURVEY_FILTER_FIELDS.map((f) => f.field))
+          setSurveyFilterFields(data.filter_fields.filter((f: string) => allowed.has(f as SurveyFilterField)))
+        }
+        if (isPublicSurveyPath) {
+          setSurveyOpen(data.survey_open !== false)
+          setSurveyClosedMessage(
+            typeof data.message === 'string' && data.message
+              ? data.message
+              : 'No survey is open right now.',
+          )
+        } else {
+          setSurveyOpen(true)
+          setSurveyClosedMessage('')
+        }
+        setSurveyLoading(false)
       })
-      if (!response.ok) {
-        const message =
-          response.status === 500
-            ? 'Cloudinary is not configured yet.'
-            : 'Unable to upload that image.'
-        throw new Error(message)
-      }
+      .catch(() => setSurveyLoading(false))
+    return () => controller.abort()
+  }, [companySlug, isPublicBuyBookPath, isPublicSurveyPath, surveyQuery])
 
-      const data = await response.json()
-      applyUrl(data.url)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to upload that image.')
-    } finally {
-      setUploadingVisualReference(null)
+  // --- Kanban (public) ---
+  useEffect(() => {
+    if (!isPublicViewerPath) return
+    fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'kanban-columns')}`)
+      .then((res) => res.json()).then((data) => setKanbanColumns(data.columns)).catch(() => {})
+  }, [companySlug, isPublicViewerPath])
+
+  // --- Tracker mutations ---
+  function updateDraft(itemId: number, field: EditableField, value: string) {
+    setItems((c) => c.map((item) => item.id === itemId ? { ...item, [field]: value } : item))
+    if (itemId < 0) {
+      setPendingCreates((c) => c.map((item) => item.id === itemId ? { ...item, [field]: value } : item))
+      return
     }
+    setPendingUpdates((c) => ({ ...c, [itemId]: { ...(c[itemId] ?? {}), [field]: value } }))
   }
 
   async function submitChanges() {
-    if (!hasPendingChanges) return
-
+    const pendingUpdateCount = Object.keys(pendingUpdates).length
+    if (pendingCreates.length + pendingUpdateCount + pendingDeletes.length === 0) return
     setIsSubmittingChanges(true)
     setError('')
     try {
-      const response = await apiFetch('/items/changes', {
+      const res = await apiFetch('/items/changes', {
         method: 'POST',
         body: JSON.stringify({
           creates: pendingCreates.map((item) => ({
-            sheet: item.sheet,
-            date_or_buy: item.date_or_buy,
-            current_status: item.current_status,
-            visual_reference: item.visual_reference,
-            brand: item.brand,
-            program_name: item.program_name,
-            item_name: item.item_name,
-            qty: item.qty,
-            important_notes: item.important_notes,
-            mrl_order_number: item.mrl_order_number,
-            estimated_ship_date: item.estimated_ship_date,
-            estimated_ihd: item.estimated_ihd,
-            tracking: item.tracking,
+            sheet: item.sheet, date_or_buy: item.date_or_buy, current_status: item.current_status,
+            visual_reference: item.visual_reference, brand: item.brand, program_name: item.program_name,
+            item_name: item.item_name, qty: item.qty, important_notes: item.important_notes,
+            mrl_order_number: item.mrl_order_number, estimated_ship_date: item.estimated_ship_date,
+            estimated_ihd: item.estimated_ihd, tracking: item.tracking,
           })),
-          updates: Object.entries(pendingUpdates).map(([id, changes]) => ({
-            id: Number(id),
-            changes,
-          })),
+          updates: Object.entries(pendingUpdates).map(([id, changes]) => ({ id: Number(id), changes })),
           deletes: pendingDeletes,
         }),
       })
-      if (!response.ok) throw new Error('Unable to submit changes.')
+      if (!res.ok) throw new Error('Unable to submit changes.')
       setPendingCreates([])
       setPendingUpdates({})
       setPendingDeletes([])
-      setRefreshItemsToken((current) => current + 1)
-      if (isAdmin) loadAuditLogs()
+      setRefreshItemsToken((t) => t + 1)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to submit changes.')
     } finally {
@@ -636,728 +266,179 @@ function App() {
     }
   }
 
-  async function createUser(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setAdminMessage('')
-    setError('')
-
-    const response = await apiFetch('/admin/users', {
-      method: 'POST',
-      body: JSON.stringify(newUser),
-    })
-    if (!response.ok) {
-      setError(response.status === 409 ? 'A user with that email already exists.' : 'Unable to create user.')
-      return
-    }
-
-    const data = await response.json()
-    setUsers((current) => [data.user, ...current])
-    setNewUser({ email: '', name: '', password: '', role: 'editor', is_active: true })
-    setAdminMessage('User created.')
-  }
-
-  async function updateUser(userId: number, updates: Partial<AppUser>) {
-    setAdminMessage('')
-    setError('')
-    const response = await apiFetch(`/admin/users/${userId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    })
-    if (!response.ok) {
-      setError('Unable to update user.')
-      return
-    }
-    const data = await response.json()
-    setUsers((current) => current.map((user) => (user.id === userId ? data.user : user)))
-    if (currentUser?.id === userId) setCurrentUser(data.user)
-    setAdminMessage('User updated.')
-  }
-
-  async function resetUserPassword(userId: number) {
-    const password = window.prompt('Enter the new password for this user:')
-    if (!password) return
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.')
-      return
-    }
-
-    const response = await apiFetch(`/admin/users/${userId}/reset-password`, {
-      method: 'POST',
-      body: JSON.stringify({ password }),
-    })
-    if (!response.ok) {
-      setError('Unable to reset password.')
-      return
-    }
-    setAdminMessage('Password reset.')
-  }
-
-  async function createSheetStatus(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setAdminMessage('')
-    setError('')
-
-    const targetSheets = newSheetStatus.sheet === 'all' ? SHEET_ORDER : [newSheetStatus.sheet]
-    const createdStatuses: SheetStatus[] = []
-    const skippedSheets: string[] = []
-
-    for (const sheetKey of targetSheets) {
-      const response = await apiFetch('/admin/sheet-statuses', {
-        method: 'POST',
-        body: JSON.stringify({ sheet: sheetKey, status: newSheetStatus.status }),
-      })
-      if (response.status === 409) {
-        skippedSheets.push(sheets?.[sheetKey]?.label ?? sheetKey)
-        continue
-      }
-      if (!response.ok) {
-        setError('Unable to create status.')
-        return
-      }
-      const data = await response.json()
-      createdStatuses.push(data.status)
-    }
-
-    if (createdStatuses.length > 0) {
-      setSheetStatuses((current) => [...current, ...createdStatuses])
-    }
-    setNewSheetStatus((current) => ({ ...current, status: '' }))
-    await loadSheets()
-
-    const createdMessage =
-      createdStatuses.length === 1 ? 'Status created.' : `Status created for ${createdStatuses.length} sheets.`
-    setAdminMessage(
-      skippedSheets.length
-        ? `${createdMessage} Already existed for: ${skippedSheets.join(', ')}.`
-        : createdMessage,
-    )
-  }
-
-  async function deleteSheetStatus(statusRow: SheetStatus) {
-    const confirmed = window.confirm(`Remove "${statusRow.status}" from ${sheets?.[statusRow.sheet]?.label ?? 'this sheet'}?`)
-    if (!confirmed) return
-    setAdminMessage('')
-    setError('')
-    const response = await apiFetch(`/admin/sheet-statuses/${statusRow.id}`, { method: 'DELETE' })
-    if (!response.ok) {
-      setError('Unable to remove status.')
-      return
-    }
-    setSheetStatuses((current) => current.filter((row) => row.id !== statusRow.id))
-    await loadSheets()
-    setAdminMessage('Status removed.')
-  }
-
-  function toggleStatusSelection(selectedStatuses: string[], statusLabel: string) {
-    return selectedStatuses.includes(statusLabel)
-      ? selectedStatuses.filter((status) => status !== statusLabel)
-      : [...selectedStatuses, statusLabel]
-  }
-
-  async function createKanbanColumn(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setKanbanMessage('')
-    setError('')
-    const response = await apiFetch('/admin/kanban-columns', {
-      method: 'POST',
-      body: JSON.stringify({
-        title: newKanbanColumn.title,
-        statuses: newKanbanColumn.statuses,
-        sort_order: newKanbanColumn.sort_order,
-        is_visible: newKanbanColumn.is_visible,
-      }),
-    })
-    if (!response.ok) {
-      setError('Unable to create kanban column.')
-      return
-    }
-    const data = await response.json()
-    setKanbanColumns((current) => [...current, data.column])
-    setNewKanbanColumn({ title: '', statuses: [], sort_order: 0, is_visible: true })
-    setKanbanMessage('Kanban column created.')
-  }
-
-  async function updateKanbanColumn(columnId: number, updates: Partial<KanbanColumn>) {
-    setKanbanMessage('')
-    setError('')
-    const response = await apiFetch(`/admin/kanban-columns/${columnId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(updates),
-    })
-    if (!response.ok) {
-      setError('Unable to update kanban column.')
-      return
-    }
-    const data = await response.json()
-    setKanbanColumns((current) =>
-      current.map((column) => (column.id === columnId ? data.column : column)),
-    )
-    setKanbanMessage('Kanban column updated.')
-  }
-
-  async function deleteKanbanColumn(columnId: number) {
-    const confirmed = window.confirm('Delete this kanban column? Items will not be deleted.')
-    if (!confirmed) return
-    setKanbanMessage('')
-    setError('')
-    const response = await apiFetch(`/admin/kanban-columns/${columnId}`, { method: 'DELETE' })
-    if (!response.ok) {
-      setError('Unable to delete kanban column.')
-      return
-    }
-    setKanbanColumns((current) => current.filter((column) => column.id !== columnId))
-    setKanbanMessage('Kanban column deleted.')
-  }
-
-  const activeStatuses = sheets?.[activeSheet]?.statuses ?? []
-  const allStatusOptions = useMemo(() => {
-    const statuses = new Set<string>()
-    if (sheets) {
-      SHEET_ORDER.forEach((sheetKey) => {
-        sheets[sheetKey]?.statuses.forEach((statusLabel) => statuses.add(statusLabel))
-      })
-    }
-    sheetStatuses.forEach((statusRow) => statuses.add(statusRow.status))
-    return [...statuses].sort((first, second) => first.localeCompare(second))
-  }, [sheets, sheetStatuses])
-  const selectedSurveyItems = useMemo(() => {
-    return surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
-  }, [selectedSurveyItemIds, surveyItems])
-  const pendingUpdateCount = Object.keys(pendingUpdates).length
-  const pendingChangeCount = pendingCreates.length + pendingUpdateCount + pendingDeletes.length
-  const hasPendingChanges = pendingChangeCount > 0
-  const tableWidth = useMemo(() => {
-    return Object.values(columnWidths).reduce((total, width) => total + width, 0)
-  }, [columnWidths])
-
-  const tablePageCount =
-    rowPageSize === 'all' ? 1 : Math.max(1, Math.ceil(items.length / rowPageSize))
-  const activeTablePage = Math.min(currentTablePage, tablePageCount)
-  const sortedItems = useMemo(() => {
-    return [...items].sort((firstItem, secondItem) => {
-      const firstValue = firstItem[sortField] ?? ''
-      const secondValue = secondItem[sortField] ?? ''
-      const firstDate = Date.parse(firstValue)
-      const secondDate = Date.parse(secondValue)
-      const firstNumber = Number(firstValue.replace(/,/g, ''))
-      const secondNumber = Number(secondValue.replace(/,/g, ''))
-
-      let result: number
-      if (!Number.isNaN(firstDate) && !Number.isNaN(secondDate)) {
-        result = firstDate - secondDate
-      } else if (
-        firstValue.trim() !== '' &&
-        secondValue.trim() !== '' &&
-        !Number.isNaN(firstNumber) &&
-        !Number.isNaN(secondNumber)
-      ) {
-        result = firstNumber - secondNumber
-      } else {
-        result = firstValue.localeCompare(secondValue, undefined, {
-          numeric: true,
-          sensitivity: 'base',
-        })
-      }
-
-      return sortDirection === 'asc' ? result : -result
-    })
-  }, [items, sortDirection, sortField])
-
-  const visibleItems = useMemo(() => {
-    if (rowPageSize === 'all') return sortedItems
-
-    const start = (activeTablePage - 1) * rowPageSize
-    return sortedItems.slice(start, start + rowPageSize)
-  }, [activeTablePage, rowPageSize, sortedItems])
-  const visibleStart = items.length === 0 ? 0 : (activeTablePage - 1) * (rowPageSize === 'all' ? items.length : rowPageSize) + 1
-  const visibleEnd =
-    rowPageSize === 'all' ? items.length : Math.min(items.length, activeTablePage * rowPageSize)
-
-  const statusCounts = useMemo(() => {
-    return items.reduce<Record<string, number>>((counts, item) => {
-      const label = item.current_status || 'No Status'
-      counts[label] = (counts[label] ?? 0) + 1
-      return counts
-    }, {})
-  }, [items])
-
-  const publicStatusOptions = useMemo(() => {
-    return [...new Set(publicItems.map((item) => item.current_status).filter(Boolean))].sort((first, second) =>
-      first.localeCompare(second),
-    )
-  }, [publicItems])
-  const publicGridItems = useMemo(() => {
-    return publicStatusFilter
-      ? publicItems.filter((item) => item.current_status === publicStatusFilter)
-      : publicItems
-  }, [publicItems, publicStatusFilter])
-
-  const visibleKanbanColumns = useMemo(() => {
-    return [...kanbanColumns]
-      .filter((column) => column.is_visible)
-      .sort((first, second) => first.sort_order - second.sort_order || first.id - second.id)
-  }, [kanbanColumns])
-
-  const publicKanbanColumns = useMemo(() => {
-    const columnsWithItems = visibleKanbanColumns.map((column) => ({
-      column,
-      items: publicItems.filter((item) => column.statuses.includes(item.current_status)),
-    }))
-    const matchedStatuses = new Set(visibleKanbanColumns.flatMap((column) => column.statuses))
-    const unmatchedItems = publicItems.filter((item) => !matchedStatuses.has(item.current_status))
-    if (unmatchedItems.length > 0) {
-      columnsWithItems.push({
-        column: {
-          id: -1,
-          title: 'Other',
-          statuses: [],
-          sort_order: 999,
-          is_visible: true,
-          created_at: '',
-          updated_at: '',
-        },
-        items: unmatchedItems,
-      })
-    }
-    return columnsWithItems
-  }, [publicItems, visibleKanbanColumns])
-
-  function resizeColumn(column: ColumnKey, event: ReactMouseEvent<HTMLButtonElement>) {
-    event.preventDefault()
-    const startX = event.clientX
-    const startWidth = columnWidths[column]
-
-    function onMouseMove(moveEvent: globalThis.MouseEvent) {
-      const nextWidth = Math.max(80, startWidth + moveEvent.clientX - startX)
-      setColumnWidths((current) => {
-        const updated = { ...current, [column]: nextWidth }
-        window.localStorage.setItem(COLUMN_WIDTH_STORAGE_KEY, JSON.stringify(updated))
-        return updated
-      })
-    }
-
-    function onMouseUp() {
-      document.body.classList.remove('is-resizing-column')
-      window.removeEventListener('mousemove', onMouseMove)
-      window.removeEventListener('mouseup', onMouseUp)
-    }
-
-    document.body.classList.add('is-resizing-column')
-    window.addEventListener('mousemove', onMouseMove)
-    window.addEventListener('mouseup', onMouseUp)
-  }
-
-  function resetColumnWidths() {
-    setColumnWidths(DEFAULT_COLUMN_WIDTHS)
-    window.localStorage.removeItem(COLUMN_WIDTH_STORAGE_KEY)
-  }
-
-  function changeRowPageSize(value: string) {
-    setRowPageSize(value === 'all' ? 'all' : (Number(value) as RowPageSize))
-    setCurrentTablePage(1)
-  }
-
-  function sortByColumn(field: EditableField) {
-    if (sortField === field) {
-      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
-    } else {
-      setSortField(field)
-      setSortDirection('asc')
-    }
-    setCurrentTablePage(1)
-  }
-
-  function goToPath(path: string) {
-    window.history.pushState({}, '', path)
-    setCurrentPath(path)
-  }
-
-  function openPublicPath(path: string) {
-    window.open(path, '_blank', 'noopener')
-  }
-
-  function auditLogSummary(log: AuditLog) {
-    if (log.action === 'update' && log.before && log.after) {
-      const changes = BASE_COLUMNS.flatMap((column) => {
-        const beforeValue = String(log.before?.[column.field] ?? '')
-        const afterValue = String(log.after?.[column.field] ?? '')
-        return beforeValue === afterValue ? [] : [`${column.label}: "${beforeValue}" to "${afterValue}"`]
-      })
-      return changes.length ? changes.join('; ') : 'Updated tracker row'
-    }
-
-    const itemName = String(log.after?.item_name ?? log.before?.item_name ?? '').trim()
-    const programName = String(log.after?.program_name ?? log.before?.program_name ?? '').trim()
-    const label = [programName, itemName].filter(Boolean).join(' - ')
-    if (log.action === 'create') return label ? `Created ${label}` : 'Created tracker row'
-    if (log.action === 'delete') return label ? `Deleted ${label}` : 'Deleted tracker row'
-    return 'Tracker row changed'
-  }
-
-  function renderStatusMultiSelect(
-    selectedStatuses: string[],
-    onChange: (nextStatuses: string[]) => void,
-  ) {
-    return (
-      <details className="status-multi-select">
-        <summary>
-          <span>{selectedStatuses.length ? `${selectedStatuses.length} selected` : 'Choose statuses'}</span>
-        </summary>
-        <div className="status-multi-menu">
-          {allStatusOptions.map((statusLabel) => (
-            <label key={statusLabel} className="status-option">
-              <input
-                checked={selectedStatuses.includes(statusLabel)}
-                type="checkbox"
-                onChange={() => onChange(toggleStatusSelection(selectedStatuses, statusLabel))}
-              />
-              {statusLabel}
-            </label>
-          ))}
-          {allStatusOptions.length === 0 && <span className="muted">No statuses available yet.</span>}
-        </div>
-        {selectedStatuses.length > 0 && (
-          <div className="selected-status-chips">
-            {selectedStatuses.map((statusLabel) => (
-              <span key={statusLabel}>{statusLabel}</span>
-            ))}
-          </div>
-        )}
-      </details>
-    )
-  }
-
+  // --- Survey ---
   function getSurveyResponse(itemId: number) {
     return surveyResponses[itemId] ?? EMPTY_SURVEY_RESPONSE
   }
 
   function updateSurveyResponse(itemId: number, updates: Partial<SurveyResponseDraft>) {
-    setSurveyResponses((current) => ({
-      ...current,
-      [itemId]: {
-        ...(current[itemId] ?? EMPTY_SURVEY_RESPONSE),
-        ...updates,
-      },
-    }))
+    setSurveyResponses((c) => ({ ...c, [itemId]: { ...(c[itemId] ?? EMPTY_SURVEY_RESPONSE), ...updates } }))
   }
 
   function toggleSurveyItem(itemId: number) {
-    setSelectedSurveyItemIds((current) =>
-      current.includes(itemId) ? current.filter((id) => id !== itemId) : [...current, itemId],
-    )
+    setSelectedSurveyItemIds((c) => c.includes(itemId) ? c.filter((id) => id !== itemId) : [...c, itemId])
   }
 
   function bulkUpdateSurveyInterest(interest: Exclude<SurveyInterest, ''>) {
-    if (selectedSurveyItemIds.length === 0) return
-    setSurveyResponses((current) => {
-      const next = { ...current }
-      selectedSurveyItemIds.forEach((itemId) => {
-        next[itemId] = {
-          ...(next[itemId] ?? EMPTY_SURVEY_RESPONSE),
-          interest,
-        }
-      })
+    if (!selectedSurveyItemIds.length) return
+    setSurveyResponses((c) => {
+      const next = { ...c }
+      selectedSurveyItemIds.forEach((id) => { next[id] = { ...(next[id] ?? EMPTY_SURVEY_RESPONSE), interest } })
       return next
     })
   }
 
-  function printSurveyBuyBook() {
-    if (selectedSurveyItems.length === 0) return
-
-    const printFrame = document.createElement('iframe')
-    printFrame.title = 'SmartBuy Survey Buy Book'
-    printFrame.style.position = 'fixed'
-    printFrame.style.right = '0'
-    printFrame.style.bottom = '0'
-    printFrame.style.width = '0'
-    printFrame.style.height = '0'
-    printFrame.style.border = '0'
-    document.body.appendChild(printFrame)
-
-    const printFrameWindow = printFrame.contentWindow
-    const printDocument = printFrameWindow?.document
-    if (!printFrameWindow || !printDocument) {
-      printFrame.remove()
-      setSurveyError('Unable to prepare the print view.')
-      return
-    }
-
-    const itemMarkup = selectedSurveyItems
-      .map((item, index) => {
-        const imageMarkup = isImageReference(item.image_url)
-          ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
-          : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
-
-        return `
-          <article class="buy-book-item">
-            <div class="item-image">${imageMarkup}</div>
-            <div class="item-copy">
-              <dl>
-                <div>
-                  <dt>Name:</dt>
-                  <dd>${escapePrintValue(item.item_name || `Item ${index + 1}`)}</dd>
-                </div>
-                <div>
-                  <dt>Description:</dt>
-                  <dd>${escapePrintValue(item.item_description || 'No description provided.')}</dd>
-                </div>
-                <div>
-                  <dt>Unit of Measure:</dt>
-                  <dd>${escapePrintValue(item.uom || '-')}</dd>
-                </div>
-                <div>
-                  <dt>Price:</dt>
-                  <dd>${escapePrintValue(item.price || '-')}</dd>
-                </div>
-              </dl>
-            </div>
-          </article>
-        `
-      })
-      .join('')
-
-    const buyBookHtml = `
-      <!doctype html>
-      <html>
-        <head>
-          <title>SmartBuy Survey Buy Book</title>
-          <style>
-            * { box-sizing: border-box; }
-            body {
-              margin: 0;
-              padding: 30px 42px;
-              color: #111;
-              font-family: Arial, Helvetica, sans-serif;
-              background: #fff;
-            }
-            header {
-              border-bottom: 2px solid #111;
-              padding-bottom: 10px;
-              margin-bottom: 26px;
-            }
-            .print-banner {
-              width: 100%;
-              max-height: 74px;
-              object-fit: contain;
-              object-position: center;
-              display: block;
-              margin-bottom: 8px;
-            }
-            .print-title-row {
-              display: none;
-            }
-            h1 {
-              margin: 0;
-              font-size: 28px;
-              letter-spacing: -0.02em;
-            }
-            .subhead {
-              margin: 4px 0 0;
-              color: #565656;
-              font-size: 11px;
-              font-weight: 700;
-              text-transform: uppercase;
-              letter-spacing: 0.08em;
-            }
-            .buy-book-grid {
-              display: grid;
-              grid-template-columns: repeat(2, minmax(0, 1fr));
-              gap: 34px 44px;
-              align-items: start;
-            }
-            .buy-book-item {
-              break-inside: avoid;
-              display: grid;
-              grid-template-columns: 116px minmax(0, 1fr);
-              gap: 16px;
-              align-items: start;
-              min-height: 126px;
-            }
-            .item-image {
-              min-height: 104px;
-              display: grid;
-              place-items: center;
-              background: #fff;
-            }
-            .item-image img {
-              width: 100%;
-              height: 104px;
-              object-fit: contain;
-            }
-            .image-placeholder {
-              width: 70px;
-              height: 70px;
-              display: grid;
-              place-items: center;
-              border-radius: 999px;
-              background: #f4f4f4;
-              color: #FD4338;
-              font-size: 20px;
-              font-weight: 800;
-            }
-            dl {
-              margin: 0;
-              display: grid;
-              gap: 3px;
-            }
-            dt {
-              display: inline;
-              margin-right: 4px;
-              color: #111;
-              font-size: 11px;
-              font-weight: 800;
-            }
-            dd {
-              display: inline;
-              margin: 0;
-              font-size: 11px;
-              line-height: 1.25;
-            }
-            dl div {
-              display: block;
-            }
-            footer {
-              position: fixed;
-              right: 0;
-              bottom: 0;
-              left: 0;
-              color: #777;
-              font-size: 9px;
-              text-align: center;
-            }
-            @media print {
-              @page { size: landscape; margin: 0.35in; }
-              body { padding: 0; }
-              .buy-book-item { page-break-inside: avoid; }
-            }
-          </style>
-        </head>
-        <body>
-          <header>
-            <img class="print-banner" src="/SmartBuy Analytics -Buy Book Logo (1).png" alt="SmartBuy Buy Book" />
-          </header>
-          <main class="buy-book-grid">${itemMarkup}</main>
-          <footer>This Buy Book was created in SmartBuy&trade;</footer>
-        </body>
-      </html>
-    `
-
-    printDocument.open()
-    printDocument.write(buyBookHtml)
-    printDocument.close()
-
-    window.setTimeout(() => {
-      printFrameWindow.focus()
-      printFrameWindow.print()
-      window.setTimeout(() => printFrame.remove(), 1000)
-    }, 250)
-  }
-
   async function submitSurveyResponse() {
-    if (selectedSurveyItems.length === 0) return
-
-    const missingInterest = selectedSurveyItems.filter((item) => !getSurveyResponse(item.id).interest)
-    if (missingInterest.length > 0) {
-      setSurveyError('Choose Interested or Not Interested for each selected item before submitting.')
+    const selected = surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
+    if (!selected.length) return
+    if (!surveyEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(surveyEmail.trim())) {
+      setSurveyError('Please enter a valid email address before submitting.')
       return
     }
-
-    setIsSubmittingSurvey(true)
-    setSurveyError('')
-    setSurveyMessage('')
+    const missing = selected.filter((item) => !getSurveyResponse(item.id).interest)
+    if (missing.length) { setSurveyError('Choose Interested or Not Interested for each selected item.'); return }
+    setIsSubmittingSurvey(true); setSurveyError(''); setSurveyMessage('')
     try {
-      for (const item of selectedSurveyItems) {
-        const responseDraft = getSurveyResponse(item.id)
-        const isInterested = responseDraft.interest === 'Interested'
-        const response = await fetch(`${API_BASE}/public/survey-responses`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+      for (const item of selected) {
+        const draft = getSurveyResponse(item.id)
+        const interested = draft.interest === 'Interested'
+        const res = await fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            survey_item_id: item.id,
-            email: 'survey-response@example.com',
-            attention_effectiveness: isInterested ? 5 : 1,
-            recommend_rollout: isInterested ? 'Yes' : 'No',
-            retail_engagement: isInterested ? 5 : 1,
-            stands_out: isInterested ? 'Yes' : 'No',
-            price_reasonable: 'Yes',
-            feedback: responseDraft.notes,
+            survey_item_id: item.id, email: surveyEmail.trim().toLowerCase(),
+            attention_effectiveness: interested ? 5 : 1, recommend_rollout: interested ? 'Yes' : 'No',
+            retail_engagement: interested ? 5 : 1, stands_out: interested ? 'Yes' : 'No',
+            price_reasonable: 'Yes', feedback: draft.notes,
           }),
         })
-        if (!response.ok) throw new Error('Unable to submit survey response.')
+        if (!res.ok) throw new Error('Unable to submit survey response.')
       }
-      setSurveyMessage(
-        selectedSurveyItems.length === 1
-          ? `Thanks. Your response for ${selectedSurveyItems[0].item_name} was submitted.`
-          : `Thanks. Your response was submitted for ${selectedSurveyItems.length} items.`,
-      )
+      setSurveyEmail(surveyEmail.trim().toLowerCase())
+      setSurveyMessage(selected.length === 1
+        ? `Thanks ${surveyEmail}. Your response for ${selected[0].item_name} was submitted.`
+        : `Thanks ${surveyEmail}. Your response was submitted for ${selected.length} items.`)
       setSelectedSurveyItemIds([])
     } catch (err) {
-      setSurveyError(err instanceof Error ? err.message : 'Unable to submit survey response.')
+      setSurveyError(err instanceof Error ? err.message : 'Unable to submit.')
     } finally {
       setIsSubmittingSurvey(false)
     }
   }
 
+  // --- Buy book print ---
+  function printSurveyBuyBook() {
+    const selected = surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
+    if (!selected.length) return
+    const printFrame = document.createElement('iframe')
+    printFrame.title = 'SmartBuy Survey Buy Book'
+    Object.assign(printFrame.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' })
+    document.body.appendChild(printFrame)
+    const pw = printFrame.contentWindow
+    const pd = pw?.document
+    if (!pw || !pd) { printFrame.remove(); return }
+    const itemMarkup = selected.map((item, i) => {
+      const img = isImageReference(item.image_url)
+        ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
+        : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
+      return `<article class="buy-book-item"><div class="item-image">${img}</div><div class="item-copy"><dl>
+        <div><dt>Name:</dt><dd>${escapePrintValue(item.item_name || `Item ${i + 1}`)}</dd></div>
+        <div><dt>Description:</dt><dd>${escapePrintValue(item.item_description || 'No description.')}</dd></div>
+        <div><dt>UOM:</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
+        <div><dt>Price:</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
+      </dl></div></article>`
+    }).join('')
+    pd.open()
+    pd.write(`<!doctype html><html><head><title>SmartBuy Buy Book</title><style>
+      *{box-sizing:border-box}body{margin:0;padding:30px 42px;font-family:Arial,sans-serif}
+      .buy-book-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 44px}
+      .buy-book-item{break-inside:avoid;display:grid;grid-template-columns:116px 1fr;gap:16px;min-height:126px}
+      .item-image{min-height:104px;display:grid;place-items:center}
+      .item-image img{width:100%;height:104px;object-fit:contain}
+      .image-placeholder{width:70px;height:70px;display:grid;place-items:center;border-radius:999px;background:#f4f4f4;color:#FD4338;font-size:20px;font-weight:800}
+      dl{margin:0;display:grid;gap:3px}dt{display:inline;margin-right:4px;font-size:11px;font-weight:800}
+      dd{display:inline;margin:0;font-size:11px}@media print{@page{size:landscape;margin:.35in}}
+    </style></head><body><main class="buy-book-grid">${itemMarkup}</main></body></html>`)
+    pd.close()
+    setTimeout(() => { pw.focus(); pw.print(); setTimeout(() => printFrame.remove(), 1000) }, 250)
+  }
+
+  // --- Navigation helpers ---
+  function goToPath(path: string) { window.history.pushState({}, '', path); setCurrentPath(path) }
+  function openPublicPath(path: string) { window.open(path, '_blank', 'noopener') }
+
+  // --- Derived values ---
+  const isAdmin = currentUser?.role === 'admin'
+
+  const publicStatusOptions = useMemo(() =>
+    [...new Set(publicItems.map((item) => item.current_status).filter(Boolean))].sort(), [publicItems])
+
+  const publicGridItems = useMemo(() =>
+    publicStatusFilter ? publicItems.filter((item) => item.current_status === publicStatusFilter) : publicItems,
+    [publicItems, publicStatusFilter])
+
+  const visibleKanbanColumns = useMemo(() =>
+    [...kanbanColumns].filter((c) => c.is_visible).sort((a, b) => a.sort_order - b.sort_order || a.id - b.id),
+    [kanbanColumns])
+
+  const publicKanbanColumns = useMemo(() => {
+    const cols = visibleKanbanColumns.map((column) => ({
+      column,
+      items: publicItems.filter((item) => column.statuses.includes(item.current_status)),
+    }))
+    const matched = new Set(visibleKanbanColumns.flatMap((c) => c.statuses))
+    const unmatched = publicItems.filter((item) => !matched.has(item.current_status))
+    if (unmatched.length) {
+      cols.push({ column: { id: -1, title: 'Other', statuses: [], sort_order: 999, is_visible: true, created_at: '', updated_at: '' }, items: unmatched })
+    }
+    return cols
+  }, [publicItems, visibleKanbanColumns])
+
+  async function downloadSurveyResponses(periodId?: number | null) {
+    try {
+      const params = new URLSearchParams()
+      if (periodId != null) params.set('period_id', String(periodId))
+      const res = await apiFetch(
+        `/admin/survey-responses/export${params.toString() ? `?${params}` : ''}`,
+      )
+      if (!res.ok) { setError('Unable to download survey responses.'); return }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url; a.download = `survey-responses-${new Date().toISOString().slice(0, 10)}.xlsx`
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to download survey responses.')
+    }
+  }
+
+  // ---- Public pages ----
   if (isPublicBuyBookPath) {
-    return (
-      <BuyBookPage
-        surveyItems={surveyItems}
-        surveyLoading={surveyLoading}
-        surveyError={surveyError}
-        surveyQuery={surveyQuery}
-        selectedSurveyItemIds={selectedSurveyItemIds}
-        setSurveyQuery={setSurveyQuery}
-        toggleSurveyItem={toggleSurveyItem}
-        printSurveyBuyBook={printSurveyBuyBook}
-      />
-    )
+    return <BuyBookPage surveyItems={surveyItems} surveyLoading={surveyLoading} surveyError={surveyError}
+      surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
+      setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook} />
   }
-
   if (isPublicSurveyPath) {
-    return (
-      <SurveyPage
-        surveyItems={surveyItems}
-        surveyLoading={surveyLoading}
-        surveyError={surveyError}
-        surveyMessage={surveyMessage}
-        surveyQuery={surveyQuery}
-        selectedSurveyItemIds={selectedSurveyItemIds}
-        isSubmittingSurvey={isSubmittingSurvey}
-        setSurveyQuery={setSurveyQuery}
-        toggleSurveyItem={toggleSurveyItem}
-        submitSurveyResponse={submitSurveyResponse}
-        bulkUpdateSurveyInterest={bulkUpdateSurveyInterest}
-        getSurveyResponse={getSurveyResponse}
-        updateSurveyResponse={updateSurveyResponse}
-      />
-    )
+    return <SurveyPage surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
+      surveyLoading={surveyLoading} surveyError={surveyError} surveyMessage={surveyMessage}
+      surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
+      isSubmittingSurvey={isSubmittingSurvey} setSurveyQuery={setSurveyQuery}
+      surveyEmail={surveyEmail} setSurveyEmail={setSurveyEmail}
+      surveyOpen={surveyOpen} surveyClosedMessage={surveyClosedMessage}
+      toggleSurveyItem={toggleSurveyItem} submitSurveyResponse={submitSurveyResponse}
+      bulkUpdateSurveyInterest={bulkUpdateSurveyInterest} getSurveyResponse={getSurveyResponse}
+      updateSurveyResponse={updateSurveyResponse} />
   }
-
   if (isPublicViewerPath) {
-    return (
-      <ViewerPage
-        isPublicKanbanPath={isPublicKanbanPath}
-        publicQuery={publicQuery}
-        publicStatusFilter={publicStatusFilter}
-        publicStatusOptions={publicStatusOptions}
-        publicLoading={publicLoading}
-        publicError={publicError}
-        publicItems={publicItems}
-        publicGridItems={publicGridItems}
-        publicKanbanColumns={publicKanbanColumns}
-        setPublicQuery={setPublicQuery}
-        setPublicStatusFilter={setPublicStatusFilter}
-        goToPath={goToPath}
-      />
-    )
+    return <ViewerPage isPublicKanbanPath={isPublicKanbanPath}
+      gridPath={publicPagePath(publicRoute, '/viewer')} kanbanPath={publicPagePath(publicRoute, '/viewer/kanban')}
+      publicQuery={publicQuery} publicStatusFilter={publicStatusFilter} publicStatusOptions={publicStatusOptions}
+      publicLoading={publicLoading} publicError={publicError} publicItems={publicItems}
+      publicGridItems={publicGridItems} publicKanbanColumns={publicKanbanColumns}
+      setPublicQuery={setPublicQuery} setPublicStatusFilter={setPublicStatusFilter} goToPath={goToPath} />
   }
 
   if (authChecking) {
-    return (
-      <main className="auth-shell">
-        <div className="auth-card">Checking your session...</div>
-      </main>
-    )
+    return <main className="auth-shell"><div className="auth-card">Checking your session...</div></main>
   }
 
   if (!currentUser) {
@@ -1368,1032 +449,124 @@ function App() {
           <p className="eyebrow">Project Tracker</p>
           <h1>Sign In</h1>
           <p className="subtitle">Use your invited account to access the tracker.</p>
-
-          <label>
-            Email
-            <input
-              autoComplete="email"
-              value={loginForm.email}
-              onChange={(event) => setLoginForm((current) => ({ ...current, email: event.target.value }))}
-            />
+          <label>Email
+            <input autoComplete="email" value={loginForm.email}
+              onChange={(e) => setLoginForm((f) => ({ ...f, email: e.target.value }))} />
           </label>
-          <label>
-            Password
-            <input
-              autoComplete="current-password"
-              type="password"
-              value={loginForm.password}
-              onChange={(event) =>
-                setLoginForm((current) => ({ ...current, password: event.target.value }))
-              }
-            />
+          <label>Password
+            <input autoComplete="current-password" type="password" value={loginForm.password}
+              onChange={(e) => setLoginForm((f) => ({ ...f, password: e.target.value }))} />
           </label>
-
           {authError && <div className="error">{authError}</div>}
-          <button className="primary-action" type="submit">
-            Log In
-          </button>
-          <p className="dev-note">Dev admin: admin@example.com / Admin123</p>
+          <button className="primary-action" type="submit">Log In</button>
         </form>
       </main>
     )
   }
 
-  const isAdmin = currentUser.role === 'admin'
-
   return (
     <main className="app-shell">
       <header className="brand-header">
         <div className="brand-topline">
-          <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+          {companyConfig.logo_url
+            ? <img className="company-logo" src={companyConfig.logo_url} alt={companyConfig.company_name} />
+            : <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />}
           <span>Analytics On Demand</span>
         </div>
         <details className="nav-menu">
           <summary>Menu</summary>
           <nav className="app-nav" aria-label="Primary navigation">
-            <button
-              className={page === 'tracker' ? 'active' : ''}
-              type="button"
-              onClick={() => setPage('tracker')}
-            >
-              Tracker
-            </button>
-            {isAdmin && (
-              <>
-                <button
-                  className={page === 'admin-users' ? 'active' : ''}
-                  type="button"
-                  onClick={() => setPage('admin-users')}
-                >
-                  Admin Settings
-                </button>
-                <button
-                  className={page === 'system-log' ? 'active' : ''}
-                  type="button"
-                  onClick={() => setPage('system-log')}
-                >
-                  System Log
-                </button>
-                <button type="button" onClick={downloadSurveyResponses}>
-                  Download Survey Responses
-                </button>
-              </>
-            )}
-            <button type="button" onClick={() => openPublicPath('/viewer')}>
-              Viewer
-            </button>
-            <button type="button" onClick={() => openPublicPath('/survey')}>
-              Survey
-            </button>
-            <button type="button" onClick={() => openPublicPath('/buy-book')}>
-              Buy Book
-            </button>
-            <button type="button" onClick={handleLogout}>
-              Log Out
-            </button>
+            <button className={page === 'tracker' ? 'active' : ''} type="button" onClick={() => setPage('tracker')}>Tracker</button>
+            <button className={page === 'surveys' ? 'active' : ''} type="button" onClick={() => setPage('surveys')}>Surveys</button>
+            {isAdmin && <>
+              <button className={page === 'admin-users' ? 'active' : ''} type="button" onClick={() => setPage('admin-users')}>Admin Settings</button>
+              <button className={page === 'system-log' ? 'active' : ''} type="button" onClick={() => setPage('system-log')}>System Log</button>
+            </>}
+            <button type="button" onClick={() => openPublicPath('/viewer')}>Viewer</button>
+            <button type="button" onClick={() => openPublicPath('/survey')}>Survey</button>
+            <button type="button" onClick={() => openPublicPath('/buy-book')}>Buy Book</button>
+            <button type="button" onClick={handleLogout}>Log Out</button>
           </nav>
         </details>
       </header>
 
       <section className="client-title-row">
-        <img
-          className="tracker-brand-banner"
-          src="/SmartBuy Analytics - Status Tracker Logo.png"
-          alt="Tito's, LALO, and SmartBuy Status Tracker"
-        />
+        {companyConfig.banner_url
+          ? <img className="tracker-brand-banner" src={companyConfig.banner_url} alt={companyConfig.company_name} />
+          : <img className="tracker-brand-banner" src="/SmartBuy Analytics - Status Tracker Logo.png" alt="SmartBuy Status Tracker" />}
         <div className="tracker-page-title">
           <p className="eyebrow">
             {page === 'admin-users'
               ? 'Admin Settings'
               : page === 'system-log'
                 ? 'System Log'
-                : 'Project Tracker'}
+                : page === 'surveys'
+                  ? 'Surveys'
+                  : 'Project Tracker'}
           </p>
           <h1>
             {page === 'admin-users'
               ? 'Admin Settings'
               : page === 'system-log'
                 ? 'System Log'
-                : 'Tracker Dashboard'}
+                : page === 'surveys'
+                  ? 'Survey Studio'
+                  : 'Tracker Dashboard'}
           </h1>
-          <p className="subtitle">
-            Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).
-          </p>
+          <p className="subtitle">Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).</p>
         </div>
       </section>
 
-      {page === 'admin-users' ? (
-        <section className="admin-page">
-          {error && <div className="error">{error}</div>}
-          {adminMessage && <div className="success">{adminMessage}</div>}
-          {kanbanMessage && <div className="success">{kanbanMessage}</div>}
-
-          <div className="admin-tabs" role="tablist" aria-label="Admin settings sections">
-            <button
-              className={adminSettingsTab === 'users' ? 'active' : ''}
-              type="button"
-              onClick={() => setAdminSettingsTab('users')}
-            >
-              Manage Users
-            </button>
-            <button
-              className={adminSettingsTab === 'statuses' ? 'active' : ''}
-              type="button"
-              onClick={() => setAdminSettingsTab('statuses')}
-            >
-              Manage Statuses
-            </button>
-            <button
-              className={adminSettingsTab === 'kanban' ? 'active' : ''}
-              type="button"
-              onClick={() => setAdminSettingsTab('kanban')}
-            >
-              Kanban Settings
-            </button>
-          </div>
-
-          {adminSettingsTab === 'users' && (
-            <>
-          <form className="admin-create-card" onSubmit={createUser}>
-            <h2>Create User</h2>
-            <label>
-              Name
-              <input
-                value={newUser.name}
-                onChange={(event) => setNewUser((current) => ({ ...current, name: event.target.value }))}
-                placeholder="Jane Smith"
-              />
-            </label>
-            <label>
-              Email
-              <input
-                required
-                type="email"
-                value={newUser.email}
-                onChange={(event) => setNewUser((current) => ({ ...current, email: event.target.value }))}
-                placeholder="jane@example.com"
-              />
-            </label>
-            <label>
-              Temporary Password
-              <div className="password-field">
-                <input
-                  required
-                  minLength={6}
-                  type={showNewUserPassword ? 'text' : 'password'}
-                  value={newUser.password}
-                  onChange={(event) =>
-                    setNewUser((current) => ({ ...current, password: event.target.value }))
-                  }
-                />
-                <button
-                  aria-label={showNewUserPassword ? 'Hide temporary password' : 'Show temporary password'}
-                  className="password-toggle"
-                  type="button"
-                  onClick={() => setShowNewUserPassword((current) => !current)}
-                >
-                  <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24">
-                    <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                </button>
-              </div>
-            </label>
-            <label>
-              Role
-              <select
-                value={newUser.role}
-                onChange={(event) =>
-                  setNewUser((current) => ({ ...current, role: event.target.value as Role }))
-                }
-              >
-                <option value="editor">Editor</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <label className="checkbox-label">
-              <input
-                checked={newUser.is_active}
-                type="checkbox"
-                onChange={(event) =>
-                  setNewUser((current) => ({ ...current, is_active: event.target.checked }))
-                }
-              />
-              Active
-            </label>
-            <button className="primary-action" type="submit">
-              Create User
-            </button>
-          </form>
-            </>
-          )}
-
-          {adminSettingsTab === 'statuses' && (
-          <section className="admin-create-card status-settings-card">
-            <form onSubmit={createSheetStatus}>
-              <h2>Manage Statuses</h2>
-              <label>
-                Sheet
-                <select
-                  value={newSheetStatus.sheet}
-                  onChange={(event) =>
-                    setNewSheetStatus((current) => ({
-                      ...current,
-                      sheet: event.target.value as StatusTargetSheet,
-                    }))
-                  }
-                >
-                  <option value="all">All Sheets</option>
-                  {SHEET_ORDER.map((sheetKey) => (
-                    <option key={sheetKey} value={sheetKey}>
-                      {sheets?.[sheetKey]?.label ?? sheetKey}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                New Status
-                <input
-                  required
-                  value={newSheetStatus.status}
-                  onChange={(event) =>
-                    setNewSheetStatus((current) => ({ ...current, status: event.target.value }))
-                  }
-                  placeholder="New status label"
-                />
-              </label>
-              <button className="primary-action" type="submit">
-                Add Status
-              </button>
-            </form>
-
-            <div className="status-settings-list">
-              <div className="table-tools">
-                <span>
-                  {statusesLoading ? 'Loading statuses...' : `${sheetStatuses.length} tracker statuses`}
-                </span>
-                <button type="button" onClick={loadSheetStatuses}>
-                  Refresh
-                </button>
-              </div>
-              {SHEET_ORDER.map((sheetKey) => {
-                const rows = sheetStatuses.filter((statusRow) => statusRow.sheet === sheetKey)
-                return (
-                  <div key={sheetKey} className="status-group">
-                    <h3>{sheets?.[sheetKey]?.label ?? sheetKey}</h3>
-                    <div className="selected-status-chips removable-status-chips">
-                      {rows.map((statusRow) => (
-                        <span key={statusRow.id}>
-                          {statusRow.status}
-                          <button type="button" onClick={() => deleteSheetStatus(statusRow)}>
-                            Remove
-                          </button>
-                        </span>
-                      ))}
-                      {!rows.length && <em>No statuses yet.</em>}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-          )}
-
-          {adminSettingsTab === 'users' && (
-          <section className="table-card admin-users-card">
-            <div className="table-tools">
-              <span>{usersLoading ? 'Loading users...' : `${users.length} users`}</span>
-              <button type="button" onClick={loadUsers}>
-                Refresh
-              </button>
-            </div>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Active</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((user) => (
-                    <tr key={user.id}>
-                      <td>
-                        <input
-                          value={user.name}
-                          onBlur={(event) => updateUser(user.id, { name: event.target.value })}
-                          onChange={(event) =>
-                            setUsers((current) =>
-                              current.map((row) =>
-                                row.id === user.id ? { ...row, name: event.target.value } : row,
-                              ),
-                            )
-                          }
-                        />
-                      </td>
-                      <td>
-                        <input
-                          type="email"
-                          value={user.email}
-                          onBlur={(event) => updateUser(user.id, { email: event.target.value })}
-                          onChange={(event) =>
-                            setUsers((current) =>
-                              current.map((row) =>
-                                row.id === user.id ? { ...row, email: event.target.value } : row,
-                              ),
-                            )
-                          }
-                        />
-                      </td>
-                      <td>
-                        <select
-                          value={user.role}
-                          onChange={(event) => updateUser(user.id, { role: event.target.value as Role })}
-                        >
-                          <option value="editor">Editor</option>
-                          <option value="admin">Admin</option>
-                        </select>
-                      </td>
-                      <td className="actions">
-                        <input
-                          checked={user.is_active}
-                          type="checkbox"
-                          onChange={(event) => updateUser(user.id, { is_active: event.target.checked })}
-                        />
-                      </td>
-                      <td className="actions">
-                        <button type="button" onClick={() => resetUserPassword(user.id)}>
-                          Reset Password
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-          )}
-
-          {adminSettingsTab === 'kanban' && (
-        <section className="kanban-settings-page">
-          <form className="admin-create-card kanban-create-card" onSubmit={createKanbanColumn}>
-            <h2>Create Kanban Column</h2>
-            <label>
-              Header
-              <input
-                required
-                value={newKanbanColumn.title}
-                onChange={(event) =>
-                  setNewKanbanColumn((current) => ({ ...current, title: event.target.value }))
-                }
-                placeholder="Needs Details"
-              />
-            </label>
-            <label className="wide-field">
-              Statuses
-              {renderStatusMultiSelect(newKanbanColumn.statuses, (nextStatuses) =>
-                setNewKanbanColumn((current) => ({ ...current, statuses: nextStatuses })),
-              )}
-            </label>
-            <label>
-              Order
-              <input
-                type="number"
-                value={newKanbanColumn.sort_order}
-                onChange={(event) =>
-                  setNewKanbanColumn((current) => ({
-                    ...current,
-                    sort_order: Number(event.target.value),
-                  }))
-                }
-              />
-            </label>
-            <label className="checkbox-label">
-              <input
-                checked={newKanbanColumn.is_visible}
-                type="checkbox"
-                onChange={(event) =>
-                  setNewKanbanColumn((current) => ({ ...current, is_visible: event.target.checked }))
-                }
-              />
-              Visible
-            </label>
-            <button className="primary-action" type="submit">
-              Create Column
-            </button>
-          </form>
-
-          <section className="table-card kanban-settings-card">
-            <div className="table-tools">
-              <span>
-                {kanbanColumnsLoading
-                  ? 'Loading kanban columns...'
-                  : `${kanbanColumns.length} kanban columns`}
-              </span>
-              <button type="button" onClick={() => loadKanbanColumns(true)}>
-                Refresh
-              </button>
-            </div>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Header</th>
-                    <th>Statuses</th>
-                    <th>Order</th>
-                    <th>Visible</th>
-                    <th>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {kanbanColumns.map((column) => (
-                    <tr key={column.id}>
-                      <td>
-                        <input
-                          value={column.title}
-                          onBlur={(event) => updateKanbanColumn(column.id, { title: event.target.value })}
-                          onChange={(event) =>
-                            setKanbanColumns((current) =>
-                              current.map((row) =>
-                                row.id === column.id ? { ...row, title: event.target.value } : row,
-                              ),
-                            )
-                          }
-                        />
-                      </td>
-                      <td>
-                        {renderStatusMultiSelect(column.statuses, (nextStatuses) =>
-                          updateKanbanColumn(column.id, { statuses: nextStatuses }),
-                        )}
-                      </td>
-                      <td>
-                        <input
-                          type="number"
-                          value={column.sort_order}
-                          onBlur={(event) =>
-                            updateKanbanColumn(column.id, { sort_order: Number(event.target.value) })
-                          }
-                          onChange={(event) =>
-                            setKanbanColumns((current) =>
-                              current.map((row) =>
-                                row.id === column.id
-                                  ? { ...row, sort_order: Number(event.target.value) }
-                                  : row,
-                              ),
-                            )
-                          }
-                        />
-                      </td>
-                      <td className="actions">
-                        <input
-                          checked={column.is_visible}
-                          type="checkbox"
-                          onChange={(event) =>
-                            updateKanbanColumn(column.id, { is_visible: event.target.checked })
-                          }
-                        />
-                      </td>
-                      <td className="actions">
-                        <button type="button" onClick={() => deleteKanbanColumn(column.id)}>
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                  {!kanbanColumnsLoading && kanbanColumns.length === 0 && (
-                    <tr>
-                      <td colSpan={5} className="empty-state">
-                        No kanban columns yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </section>
-          )}
-        </section>
-      ) : page === 'system-log' ? (
-        <>
-          {error && <div className="error">{error}</div>}
-          <section className="table-card audit-log-card">
-            <div className="table-tools">
-              <span>{logsLoading ? 'Loading system log...' : `${auditLogs.length} log entries`}</span>
-              <button type="button" onClick={loadAuditLogs}>
-                Refresh
-              </button>
-            </div>
-            <div className="table-scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Time</th>
-                    <th>User</th>
-                    <th>Action</th>
-                    <th>Sheet</th>
-                    <th>Item</th>
-                    <th>Summary</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {auditLogs.map((log) => (
-                    <tr key={log.id}>
-                      <td>{new Date(log.created_at).toLocaleString()}</td>
-                      <td>{log.user_email}</td>
-                      <td>{log.action}</td>
-                      <td>{log.sheet ?? ''}</td>
-                      <td>{log.item_id ?? ''}</td>
-                      <td>
-                        <code>{auditLogSummary(log)}</code>
-                      </td>
-                    </tr>
-                  ))}
-                  {!logsLoading && auditLogs.length === 0 && (
-                    <tr>
-                      <td colSpan={6} className="empty-state">
-                        No system log entries yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </>
-      ) : (
-        <>
-          <div className="tracker-actions">
-            <button className="primary-action" type="button" onClick={openAddForm}>
-              Add
-            </button>
-            <button className="secondary-action" type="button" onClick={() => openPublicPath('/viewer/kanban')}>
-              Viewer Kanban
-            </button>
-            <button
-              className={`submit-action ${hasPendingChanges ? 'ready' : ''}`}
-              disabled={!hasPendingChanges || isSubmittingChanges}
-              type="button"
-              onClick={submitChanges}
-            >
-              {isSubmittingChanges
-                ? 'Submitting...'
-                : hasPendingChanges
-                  ? `Submit Changes (${pendingChangeCount})`
-                  : 'Submit Changes'}
-            </button>
-          </div>
-
-          <section className="tabs" aria-label="Tracker sheets">
-        {SHEET_ORDER.map((sheet) => (
-          <button
-            key={sheet}
-            className={sheet === activeSheet ? 'active' : ''}
-            type="button"
-            onClick={() => {
-              setActiveSheet(sheet)
-              setStatusFilter('')
-              setCurrentTablePage(1)
-            }}
-          >
-            {sheets?.[sheet]?.label ?? sheet}
-          </button>
-        ))}
-          </section>
-
-          <section className="toolbar">
-        <label>
-          Search
-          <input
-            value={query}
-            onChange={(event) => {
-              setQuery(event.target.value)
-              setCurrentTablePage(1)
-            }}
-            placeholder="Brand, program, item, notes, tracking..."
-          />
-        </label>
-
-        <label>
-          Status
-          <select
-            value={statusFilter}
-            onChange={(event) => {
-              setStatusFilter(event.target.value)
-              setCurrentTablePage(1)
-            }}
-          >
-            <option value="">All statuses</option>
-            {activeStatuses.map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <button
-          className="secondary-action"
-          type="button"
-          onClick={() => {
-            setQuery('')
-            setStatusFilter('')
-            setCurrentTablePage(1)
-          }}
-        >
-          Reset Filters
-        </button>
-
-        <div className="row-count">
-          {loading ? 'Loading...' : `${items.length.toLocaleString()} rows`}
-        </div>
-          </section>
-
-          {error && <div className="error">{error}</div>}
-
-          {isAddFormOpen && (
-            <div className="modal-backdrop" role="presentation">
-              <form className="modal-card" onSubmit={addDraftRow}>
-                <div className="modal-header">
-                  <div>
-                    <p className="eyebrow">New Tracker Item</p>
-                    <h2>Add {sheets?.[activeSheet]?.label ?? 'Tracker'} Row</h2>
-                  </div>
-                  <button type="button" onClick={() => setIsAddFormOpen(false)}>
-                    Close
-                  </button>
-                </div>
-
-                <div className="add-form-grid">
-                  {columns.map((column) => (
-                    <label key={column.field}>
-                      {column.label}
-                      {column.field === 'current_status' ? (
-                        <select
-                          value={addForm.current_status}
-                          onChange={(event) =>
-                            setAddForm((current) => ({
-                              ...current,
-                              current_status: event.target.value,
-                            }))
-                          }
-                        >
-                          <option value="">No Status</option>
-                          {activeStatuses.map((status) => (
-                            <option key={status} value={status}>
-                              {status}
-                            </option>
-                          ))}
-                        </select>
-                      ) : column.field === 'visual_reference' ? (
-                        <div className="visual-reference-field">
-                          {isImageReference(addForm.visual_reference) && (
-                            <button
-                              className="visual-reference-preview"
-                              type="button"
-                              onClick={() =>
-                                setPreviewImage({
-                                  url: addForm.visual_reference,
-                                  title: addForm.item_name || 'Visual reference',
-                                })
-                              }
-                            >
-                              <img src={addForm.visual_reference} alt="Visual reference preview" />
-                            </button>
-                          )}
-                          <input
-                            value={addForm.visual_reference}
-                            onChange={(event) =>
-                              setAddForm((current) => ({
-                                ...current,
-                                visual_reference: event.target.value,
-                              }))
-                            }
-                            placeholder="Paste a URL or upload an image"
-                          />
-                          <div className="visual-reference-actions">
-                            <label className="upload-chip">
-                              {uploadingVisualReference === 'add-visual-reference'
-                                ? 'Uploading...'
-                                : 'Upload Image'}
-                              <input
-                                accept="image/jpeg,image/png,image/webp"
-                                disabled={uploadingVisualReference === 'add-visual-reference'}
-                                type="file"
-                                onChange={(event) => {
-                                  const file = event.target.files?.[0]
-                                  event.target.value = ''
-                                  if (!file) return
-                                  uploadVisualReference(file, 'add-visual-reference', (url) =>
-                                    setAddForm((current) => ({ ...current, visual_reference: url })),
-                                  )
-                                }}
-                              />
-                            </label>
-                            {addForm.visual_reference && (
-                              <a href={addForm.visual_reference} target="_blank" rel="noreferrer">
-                                Preview
-                              </a>
-                            )}
-                          </div>
-                        </div>
-                      ) : column.field === 'important_notes' || column.field === 'tracking' ? (
-                        <textarea
-                          value={addForm[column.field]}
-                          onChange={(event) =>
-                            setAddForm((current) => ({
-                              ...current,
-                              [column.field]: event.target.value,
-                            }))
-                          }
-                        />
-                      ) : (
-                        <input
-                          type={
-                            column.field === 'date_or_buy' && activeSheet === 'ad-hoc'
-                              ? 'date'
-                              : 'text'
-                          }
-                          value={addForm[column.field]}
-                          onChange={(event) =>
-                            setAddForm((current) => ({
-                              ...current,
-                              [column.field]: event.target.value,
-                            }))
-                          }
-                        />
-                      )}
-                    </label>
-                  ))}
-                </div>
-
-                <div className="modal-actions">
-                  <button type="button" onClick={() => setIsAddFormOpen(false)}>
-                    Cancel
-                  </button>
-                  <button className="primary-action" type="submit">
-                    Add Draft
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          <section className="status-summary" aria-label="Status summary">
-        {Object.entries(statusCounts).map(([status, count]) => (
-          <button
-            key={status}
-            type="button"
-            onClick={() => {
-              setStatusFilter(status === 'No Status' ? '' : status)
-              setCurrentTablePage(1)
-            }}
-          >
-            <strong>{count}</strong>
-            <span>{status}</span>
-          </button>
-        ))}
-          </section>
-
-          <section className="table-card">
-        <div className="table-tools">
-          <span>Drag the right edge of any column header to resize it.</span>
-          <div className="table-tool-actions">
-            <label>
-              Rows
-              <select value={rowPageSize} onChange={(event) => changeRowPageSize(event.target.value)}>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={30}>30</option>
-                <option value="all">All</option>
-              </select>
-            </label>
-            <button type="button" onClick={resetColumnWidths}>
-              Reset Columns
-            </button>
-          </div>
-        </div>
-        <div className="table-scroll">
-          <table style={{ minWidth: tableWidth }}>
-            <colgroup>
-              {columns.map((column) => (
-                <col key={column.field} style={{ width: columnWidths[column.field] }} />
-              ))}
-              <col style={{ width: columnWidths.actions }} />
-            </colgroup>
-            <thead>
-              <tr>
-                {columns.map((column) => (
-                  <th key={column.field} className={column.className}>
-                    <button
-                      aria-label={`Sort by ${column.label}`}
-                      aria-sort={
-                        sortField === column.field
-                          ? sortDirection === 'asc'
-                            ? 'ascending'
-                            : 'descending'
-                          : 'none'
-                      }
-                      className="column-sort"
-                      type="button"
-                      onClick={() => sortByColumn(column.field)}
-                    >
-                      <span>{column.label}</span>
-                      <span className="sort-arrows" aria-hidden="true">
-                        <span className={sortField === column.field && sortDirection === 'asc' ? 'active' : ''}>
-                          ▲
-                        </span>
-                        <span className={sortField === column.field && sortDirection === 'desc' ? 'active' : ''}>
-                          ▼
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      aria-label={`Resize ${column.label} column`}
-                      className="column-resizer"
-                      type="button"
-                      onMouseDown={(event) => resizeColumn(column.field, event)}
-                    />
-                  </th>
-                ))}
-                <th className="actions">
-                  <span>Actions</span>
-                  <button
-                    aria-label="Resize Actions column"
-                    className="column-resizer"
-                    type="button"
-                    onMouseDown={(event) => resizeColumn('actions', event)}
-                  />
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {!loading &&
-                visibleItems.map((item) => (
-                  <tr key={item.id}>
-                    {columns.map((column) => {
-                      const value = item[column.field] ?? ''
-
-                      return (
-                        <td key={column.field} className={column.className}>
-                          {column.field === 'current_status' ? (
-                            <select
-                              value={value}
-                              onChange={(event) => {
-                                updateDraft(item.id, column.field, event.target.value)
-                              }}
-                            >
-                              <option value="">No Status</option>
-                              {activeStatuses.map((status) => (
-                                <option key={status} value={status}>
-                                  {status}
-                                </option>
-                              ))}
-                            </select>
-                          ) : column.field === 'visual_reference' ? (
-                            <div className="visual-reference-field">
-                              {isImageReference(value) && (
-                                <button
-                                  className="visual-reference-preview"
-                                  type="button"
-                                  onClick={() =>
-                                    setPreviewImage({
-                                      url: value,
-                                      title: item.item_name || 'Visual reference',
-                                    })
-                                  }
-                                >
-                                  <img src={value} alt="Visual reference preview" />
-                                </button>
-                              )}
-                              <input
-                                value={value}
-                                onChange={(event) =>
-                                  updateDraft(item.id, column.field, event.target.value)
-                                }
-                              />
-                              <div className="visual-reference-actions">
-                                <label className="upload-chip">
-                                  {uploadingVisualReference === `${item.id}-visual-reference`
-                                    ? 'Uploading...'
-                                    : 'Upload'}
-                                  <input
-                                    accept="image/jpeg,image/png,image/webp"
-                                    disabled={uploadingVisualReference === `${item.id}-visual-reference`}
-                                    type="file"
-                                    onChange={(event) => {
-                                      const file = event.target.files?.[0]
-                                      event.target.value = ''
-                                      if (!file) return
-                                      uploadVisualReference(file, `${item.id}-visual-reference`, (url) =>
-                                        updateDraft(item.id, column.field, url),
-                                      )
-                                    }}
-                                  />
-                                </label>
-                                {value && (
-                                  <a href={value} target="_blank" rel="noreferrer">
-                                    Preview
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-                          ) : column.field === 'important_notes' || column.field === 'tracking' ? (
-                            <textarea
-                              value={value}
-                              onChange={(event) =>
-                                updateDraft(item.id, column.field, event.target.value)
-                              }
-                            />
-                          ) : (
-                            <input
-                              type={
-                                column.field === 'date_or_buy' && activeSheet === 'ad-hoc'
-                                  ? 'date'
-                                  : 'text'
-                              }
-                              value={value}
-                              onChange={(event) =>
-                                updateDraft(item.id, column.field, event.target.value)
-                              }
-                            />
-                          )}
-                          {item.id < 0 && <span className="saving">New draft</span>}
-                          {item.id > 0 && pendingUpdates[item.id]?.[column.field] !== undefined && (
-                            <span className="saving">Unsaved</span>
-                          )}
-                        </td>
-                      )
-                    })}
-                    <td className="actions">
-                      {isAdmin ? (
-                        <button type="button" onClick={() => deleteRow(item.id)}>
-                          Delete
-                        </button>
-                      ) : (
-                        <span className="muted">Admin only</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              {!loading && items.length === 0 && (
-                <tr>
-                  <td colSpan={columns.length + 1} className="empty-state">
-                    No rows match the current filters.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        {!loading && items.length > 0 && (
-          <div className="table-pagination">
-            <span>
-              Showing {visibleStart.toLocaleString()}-{visibleEnd.toLocaleString()} of{' '}
-              {items.length.toLocaleString()} rows
-            </span>
-            {rowPageSize !== 'all' && (
-              <div className="pagination-actions">
-                <button
-                  disabled={activeTablePage === 1}
-                  type="button"
-                  onClick={() => setCurrentTablePage((page) => Math.max(1, page - 1))}
-                >
-                  Previous
-                </button>
-                <span>
-                  Page {activeTablePage} of {tablePageCount}
-                </span>
-                <button
-                  disabled={activeTablePage === tablePageCount}
-                  type="button"
-                  onClick={() => setCurrentTablePage((page) => Math.min(tablePageCount, page + 1))}
-                >
-                  Next
-                </button>
-              </div>
-            )}
-          </div>
-        )}
-          </section>
-        </>
+      {page === 'admin-users' && (
+        <AdminPage
+          currentUser={currentUser}
+          sheets={sheets}
+          apiFetch={apiFetch}
+          onSheetStatusChanged={loadSheets}
+        />
       )}
-      {previewImage && (
-        <div className="image-lightbox-backdrop" role="presentation" onClick={() => setPreviewImage(null)}>
-          <div className="image-lightbox-card" role="dialog" aria-modal="true" aria-label={previewImage.title}>
-            <button className="image-lightbox-close" type="button" onClick={() => setPreviewImage(null)}>
-              Close
-            </button>
-            <img
-              src={previewImage.url}
-              alt={previewImage.title}
-              onClick={(event) => event.stopPropagation()}
-            />
-          </div>
-        </div>
+
+      {page === 'surveys' && (
+        <SurveysPage
+          apiFetch={apiFetch}
+          onDownloadSurveyResponses={downloadSurveyResponses}
+        />
+      )}
+
+      {page === 'system-log' && <SystemLogPage apiFetch={apiFetch} />}
+
+      {page === 'tracker' && (
+        <TrackerPage
+          currentUser={currentUser}
+          sheets={sheets}
+          activeSheet={activeSheet}
+          items={items}
+          loading={loading}
+          error={error}
+          query={query}
+          statusFilter={statusFilter}
+          pendingCreates={pendingCreates}
+          pendingUpdates={pendingUpdates}
+          pendingDeletes={pendingDeletes}
+          isSubmittingChanges={isSubmittingChanges}
+          uploadingVisualReference={uploadingVisualReference}
+          apiFetch={apiFetch}
+          setActiveSheet={setActiveSheet}
+          setQuery={setQuery}
+          setStatusFilter={setStatusFilter}
+          setCurrentTablePage={setCurrentTablePage}
+          updateDraft={updateDraft}
+          deleteRow={() => {/* handled inside TrackerPage via ConfirmModal */}}
+          submitChanges={submitChanges}
+          openPublicPath={openPublicPath}
+          setUploadingVisualReference={setUploadingVisualReference}
+          setError={setError}
+          setPendingCreates={setPendingCreates}
+          setPendingUpdates={setPendingUpdates}
+          setPendingDeletes={setPendingDeletes}
+          setItems={setItems}
+          setRefreshItemsToken={setRefreshItemsToken}
+        />
       )}
     </main>
   )
