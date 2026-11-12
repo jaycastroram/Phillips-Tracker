@@ -58,6 +58,19 @@ def execute(conn: Any, query: str, params: tuple | list = ()) -> Any:
     return conn.execute(db_sql(query), tuple(params))
 
 
+def sql_group_concat_distinct(expression: str, alias: str) -> str:
+    """SQLite GROUP_CONCAT vs Postgres STRING_AGG."""
+    if IS_POSTGRES:
+        return f"STRING_AGG(DISTINCT ({expression})::text, ',') AS {alias}"
+    return f"GROUP_CONCAT(DISTINCT {expression}) AS {alias}"
+
+
+def sql_round_avg(expression: str, alias: str, digits: int = 1) -> str:
+    if IS_POSTGRES:
+        return f"ROUND(AVG({expression})::numeric, {digits}) AS {alias}"
+    return f"ROUND(AVG({expression}), {digits}) AS {alias}"
+
+
 def ensure_column(conn: Any, table_name: str, column_name: str, column_definition: str) -> None:
     if IS_POSTGRES:
         execute(conn, f"ALTER TABLE {table_name} ADD COLUMN IF NOT EXISTS {column_name} {column_definition}")

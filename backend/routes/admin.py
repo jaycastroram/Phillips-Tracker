@@ -26,6 +26,8 @@ from database import (
     normalize_filter_fields,
     period_item_to_public,
     sheet_status_to_public,
+    sql_group_concat_distinct,
+    sql_round_avg,
     survey_filter_fields,
     survey_item_to_public,
     survey_period_to_public,
@@ -87,6 +89,16 @@ def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends
             total_args.append(period["id"])
             response_args.append(period["id"])
 
+        email_agg = sql_group_concat_distinct("sr.email", "respondent_emails")
+        avg_attention = sql_round_avg(
+            "CASE WHEN sr.id IS NOT NULL THEN sr.attention_effectiveness END",
+            "avg_attention",
+        )
+        avg_engagement = sql_round_avg(
+            "CASE WHEN sr.id IS NOT NULL THEN sr.retail_engagement END",
+            "avg_engagement",
+        )
+
         # Prefer period snapshot items when a period is selected; fall back to catalog.
         if period is not None:
             item_rows = execute(
@@ -106,16 +118,18 @@ def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends
                     SUM(CASE WHEN sr.recommend_rollout = 'Yes' THEN 1 ELSE 0 END) AS interested,
                     SUM(CASE WHEN sr.recommend_rollout = 'No' THEN 1 ELSE 0 END) AS not_interested,
                     SUM(CASE WHEN sr.recommend_rollout = 'Maybe' THEN 1 ELSE 0 END) AS maybe,
-                    ROUND(AVG(CASE WHEN sr.id IS NOT NULL THEN sr.attention_effectiveness END), 1) AS avg_attention,
-                    ROUND(AVG(CASE WHEN sr.id IS NOT NULL THEN sr.retail_engagement END), 1) AS avg_engagement,
-                    GROUP_CONCAT(DISTINCT sr.email) AS respondent_emails
+                    {avg_attention},
+                    {avg_engagement},
+                    {email_agg}
                 FROM survey_period_items spi
                 LEFT JOIN survey_responses sr
                     ON sr.survey_item_id = spi.catalog_item_id
                     AND sr.company_id = ?
                     AND sr.survey_period_id = spi.survey_period_id
                 WHERE spi.survey_period_id = ?
-                GROUP BY spi.id
+                GROUP BY
+                    spi.id, spi.catalog_item_id, spi.item_name, spi.brand, spi.channel,
+                    spi.product_type, spi.key_program, spi.image_url, spi.price, spi.uom, spi.sort_order
                 ORDER BY interested DESC, total_responses DESC, spi.sort_order ASC
                 """,
                 (company_id, period["id"]),
@@ -138,16 +152,18 @@ def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends
                     SUM(CASE WHEN sr.recommend_rollout = 'Yes' THEN 1 ELSE 0 END) AS interested,
                     SUM(CASE WHEN sr.recommend_rollout = 'No' THEN 1 ELSE 0 END) AS not_interested,
                     SUM(CASE WHEN sr.recommend_rollout = 'Maybe' THEN 1 ELSE 0 END) AS maybe,
-                    ROUND(AVG(CASE WHEN sr.id IS NOT NULL THEN sr.attention_effectiveness END), 1) AS avg_attention,
-                    ROUND(AVG(CASE WHEN sr.id IS NOT NULL THEN sr.retail_engagement END), 1) AS avg_engagement,
-                    GROUP_CONCAT(DISTINCT sr.email) AS respondent_emails
+                    {avg_attention},
+                    {avg_engagement},
+                    {email_agg}
                 FROM survey_items si
                 LEFT JOIN survey_responses sr ON sr.survey_item_id = si.id AND sr.company_id = ?{period_clause}
-                WHERE si.company_id = ? AND si.is_active = 1
-                GROUP BY si.id
+                WHERE si.company_id = ? AND si.is_active = ?
+                GROUP BY
+                    si.id, si.item_name, si.brand, si.channel, si.product_type, si.key_program,
+                    si.image_url, si.price, si.uom, si.sort_order
                 ORDER BY interested DESC, total_responses DESC, si.sort_order ASC
                 """,
-                (*item_args, company_id),
+                (*item_args, company_id, True),
             ).fetchall()
 
         totals = execute(
