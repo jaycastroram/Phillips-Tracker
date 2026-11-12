@@ -23,6 +23,7 @@ from database import (
     survey_item_to_public,
     survey_period_to_public,
     survey_response_to_public,
+    with_returning,
 )
 from models import SurveyResponseCreate
 
@@ -246,7 +247,7 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if IS_POSTGRES:
-            row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+            row = execute(conn, with_returning(sql), values).fetchone()
         else:
             cursor = execute(conn, sql, values)
             row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (cursor.lastrowid,)).fetchone()

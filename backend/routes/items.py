@@ -16,6 +16,7 @@ from database import (
     execute,
     row_to_item,
     utc_now,
+    with_returning,
     write_audit_log,
 )
 from models import ItemChangeBatch, ItemCreate, ItemUpdate
@@ -162,7 +163,7 @@ def create_item(payload: ItemCreate, user: sqlite3.Row = Depends(get_current_use
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if IS_POSTGRES:
-            row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+            row = execute(conn, with_returning(sql), values).fetchone()
         else:
             cursor = execute(conn, sql, values)
             row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -247,7 +248,7 @@ def submit_item_changes(payload: ItemChangeBatch, user: sqlite3.Row = Depends(ge
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             if IS_POSTGRES:
-                row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+                row = execute(conn, with_returning(sql), values).fetchone()
             else:
                 cursor = execute(conn, sql, values)
                 row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()

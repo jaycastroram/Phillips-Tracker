@@ -58,6 +58,16 @@ def execute(conn: Any, query: str, params: tuple | list = ()) -> Any:
     return conn.execute(db_sql(query), tuple(params))
 
 
+def with_returning(sql: str) -> str:
+    """Append RETURNING * for Postgres inserts without breaking column-list parentheses."""
+    if not IS_POSTGRES:
+        return sql
+    cleaned = sql.rstrip().rstrip(";")
+    if " returning " in cleaned.lower():
+        return cleaned
+    return f"{cleaned} RETURNING *"
+
+
 def sql_group_concat_distinct(expression: str, alias: str) -> str:
     """SQLite GROUP_CONCAT vs Postgres STRING_AGG."""
     if IS_POSTGRES:

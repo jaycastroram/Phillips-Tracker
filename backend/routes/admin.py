@@ -33,6 +33,7 @@ from database import (
     survey_period_to_public,
     user_to_public,
     utc_now,
+    with_returning,
     audit_log_to_public,
 )
 from models import (
@@ -717,7 +718,7 @@ def create_user(payload: UserCreate, user: sqlite3.Row = Depends(require_admin))
                       payload.role, payload.is_active)
             sql = "INSERT INTO users (email, name, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?)"
             if IS_POSTGRES:
-                row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+                row = execute(conn, with_returning(sql), values).fetchone()
             else:
                 cursor = execute(conn, sql, values)
                 row = execute(conn, "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -800,7 +801,7 @@ def create_kanban_column(payload: KanbanColumnCreate, user: sqlite3.Row = Depend
     sql = "INSERT INTO kanban_columns (company_id, title, statuses_json, sort_order, is_visible) VALUES (?, ?, ?, ?, ?)"
     with connect() as conn:
         if IS_POSTGRES:
-            row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+            row = execute(conn, with_returning(sql), values).fetchone()
         else:
             cursor = execute(conn, sql, values)
             row = execute(conn, "SELECT * FROM kanban_columns WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -884,7 +885,7 @@ def create_sheet_status(payload: SheetStatusCreate, user: sqlite3.Row = Depends(
             values = (company_id, payload.sheet, status_label, max_sort + 1)
             sql = "INSERT INTO sheet_statuses (company_id, sheet, status, sort_order) VALUES (?, ?, ?, ?)"
             if IS_POSTGRES:
-                row = execute(conn, sql.replace(")", ") RETURNING *", 1), values).fetchone()
+                row = execute(conn, with_returning(sql), values).fetchone()
             else:
                 cursor = execute(conn, sql, values)
                 row = execute(conn, "SELECT * FROM sheet_statuses WHERE id = ?", (cursor.lastrowid,)).fetchone()
