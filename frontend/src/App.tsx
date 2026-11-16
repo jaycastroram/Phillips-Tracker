@@ -629,7 +629,7 @@ function App() {
           <summary>Menu</summary>
           <nav className="app-nav" aria-label="Primary navigation">
             <button className={page === 'tracker' ? 'active' : ''} type="button" onClick={() => setPage('tracker')}>Tracker</button>
-            <button className={page === 'surveys' ? 'active' : ''} type="button" onClick={() => setPage('surveys')}>Surveys</button>
+            <button className={page === 'surveys' ? 'active' : ''} type="button" onClick={() => setPage('surveys')}>Survey/Buy Book Edit</button>
             {isAdmin && <>
               <button className={page === 'admin-users' ? 'active' : ''} type="button" onClick={() => setPage('admin-users')}>Admin Settings</button>
               <button className={page === 'system-log' ? 'active' : ''} type="button" onClick={() => setPage('system-log')}>System Log</button>
@@ -689,7 +689,7 @@ function App() {
               : page === 'system-log'
                 ? 'System Log'
                 : page === 'surveys'
-                  ? 'Surveys'
+                  ? 'Survey/Buy Book Edit'
                   : 'Project Tracker'}
           </p>
           <h1>
@@ -698,7 +698,7 @@ function App() {
               : page === 'system-log'
                 ? 'System Log'
                 : page === 'surveys'
-                  ? 'Survey Studio'
+                  ? 'Survey/Buy Book Edit'
                   : 'Tracker Dashboard'}
           </h1>
           <p className="subtitle">Signed in as {currentUser.name || currentUser.email} ({currentUser.role}).</p>
