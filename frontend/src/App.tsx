@@ -38,6 +38,16 @@ import type {
 import { companyPublicApiPath, escapePrintValue, isImageReference, parsePublicRoute, publicPagePath } from './utils'
 import './App.css'
 
+function ExternalLinkIcon() {
+  return (
+    <svg className="nav-external-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24">
+      <path d="M14 3h7v7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 14 21 3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M21 14v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
 function App() {
   const [currentPath, setCurrentPath] = useState(window.location.pathname)
   const [token, setToken] = useState(() => window.localStorage.getItem(AUTH_STORAGE_KEY) ?? '')
@@ -489,9 +499,15 @@ function App() {
               <button className={page === 'admin-users' ? 'active' : ''} type="button" onClick={() => setPage('admin-users')}>Admin Settings</button>
               <button className={page === 'system-log' ? 'active' : ''} type="button" onClick={() => setPage('system-log')}>System Log</button>
             </>}
-            <button type="button" onClick={() => openPublicPath('/viewer')}>Viewer</button>
-            <button type="button" onClick={() => openPublicPath('/survey')}>Survey</button>
-            <button type="button" onClick={() => openPublicPath('/buy-book')}>Buy Book</button>
+            <button className="nav-external" type="button" onClick={() => openPublicPath('/viewer')}>
+              Viewer <ExternalLinkIcon />
+            </button>
+            <button className="nav-external" type="button" onClick={() => openPublicPath('/survey')}>
+              Survey <ExternalLinkIcon />
+            </button>
+            <button className="nav-external" type="button" onClick={() => openPublicPath('/buy-book')}>
+              Buy Book <ExternalLinkIcon />
+            </button>
             <button type="button" onClick={handleLogout}>Log Out</button>
           </nav>
         </details>

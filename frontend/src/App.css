@@ -105,6 +105,26 @@
   text-align: left;
 }
 
+.nav-menu .app-nav button.nav-external {
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  background: #eef5ff;
+  border-color: #9bb8e8;
+  color: var(--brand-blue);
+}
+
+.nav-menu .app-nav button.nav-external:hover {
+  background: #dceaff;
+  border-color: var(--brand-blue);
+}
+
+.nav-external-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
 .client-title-row {
   display: flex;
   align-items: flex-start;
