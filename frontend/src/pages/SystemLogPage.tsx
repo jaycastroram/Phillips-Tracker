@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BASE_COLUMNS } from '../constants'
-import type { AuditLog, CompanyInfo } from '../types'
-import {
-  readAdminCompanyFilter,
-  writeAdminCompanyFilter,
-  type AdminCompanyFilter,
-} from '../utils/adminCompany'
+import type { AuditLog } from '../types'
+import type { AdminCompanyFilter } from '../utils/adminCompany'
 
 type SystemLogPageProps = {
+  companyFilter: AdminCompanyFilter
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
 }
 
@@ -28,22 +25,10 @@ function auditLogSummary(log: AuditLog): string {
   return 'Tracker row changed'
 }
 
-export function SystemLogPage({ apiFetch }: SystemLogPageProps) {
+export function SystemLogPage({ companyFilter, apiFetch }: SystemLogPageProps) {
   const [logs, setLogs] = useState<AuditLog[]>([])
-  const [companies, setCompanies] = useState<CompanyInfo[]>([])
-  const [companyFilter, setCompanyFilter] = useState<AdminCompanyFilter>(() => readAdminCompanyFilter('all'))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-
-  const loadCompanies = useCallback(async () => {
-    try {
-      const res = await apiFetch('/admin/companies')
-      if (!res.ok) return
-      setCompanies((await res.json()).companies || [])
-    } catch {
-      /* ignore — log page can still load without company names */
-    }
-  }, [apiFetch])
 
   const loadLogs = useCallback(async () => {
     setLoading(true)
@@ -63,36 +48,11 @@ export function SystemLogPage({ apiFetch }: SystemLogPageProps) {
     }
   }, [apiFetch, companyFilter])
 
-  useEffect(() => { loadCompanies() }, [loadCompanies])
   useEffect(() => { loadLogs() }, [loadLogs])
 
   return (
     <>
       {error && <div className="error">{error}</div>}
-      <div className="admin-company-filter">
-        <label>
-          Company
-          <select
-            value={companyFilter === 'all' ? 'all' : String(companyFilter)}
-            onChange={(e) => {
-              const value = e.target.value
-              const next: AdminCompanyFilter = value === 'all' ? 'all' : Number(value)
-              setCompanyFilter(next)
-              writeAdminCompanyFilter(next)
-            }}
-          >
-            <option value="all">All companies</option>
-            {companies.map((company) => (
-              <option key={company.id} value={company.id}>
-                {company.company_name || company.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="admin-company-filter-note">
-          Filters audit entries by company. Shared with Admin Settings and Surveys.
-        </span>
-      </div>
       <section className="table-card audit-log-card">
         <div className="table-tools">
           <span>{loading ? 'Loading system log...' : `${logs.length} log entries`}</span>

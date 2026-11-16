@@ -641,12 +641,31 @@ function App() {
       <section className="client-title-row">
         {isAdmin ? (
           <div className="admin-brand-banner">
-            <img src={smartBuyLogo} alt="SmartBuy" />
-            <div>
-              <strong>SmartBuy</strong>
-              <span>Powered by FSI</span>
-              <em>Viewing {adminDatasetLabel}</em>
+            <div className="admin-brand-banner-main">
+              <img src={smartBuyLogo} alt="SmartBuy" />
+              <div>
+                <strong>SmartBuy</strong>
+                <span>Powered by FSI</span>
+                <em>Viewing {adminDatasetLabel}</em>
+              </div>
             </div>
+            <label className="admin-brand-company">
+              Company dataset
+              <select
+                value={adminCompanyFilter === 'all' ? 'all' : String(adminCompanyFilter)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  handleAdminCompanyFilterChange(value === 'all' ? 'all' : Number(value))
+                }}
+              >
+                <option value="all">All companies</option>
+                {adminCompanies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.company_name || company.name}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
         ) : companyConfig.banner_url ? (
           <img className="tracker-brand-banner" src={companyConfig.banner_url} alt={companyConfig.company_name} />
@@ -680,6 +699,9 @@ function App() {
         <AdminPage
           currentUser={currentUser}
           sheets={sheets}
+          companies={adminCompanies}
+          companyFilter={adminCompanyFilter}
+          onCompanyFilterChange={handleAdminCompanyFilterChange}
           apiFetch={apiFetch}
           onSheetStatusChanged={loadSheets}
         />
@@ -690,13 +712,17 @@ function App() {
           currentUser={currentUser}
           companies={adminCompanies}
           companyFilter={adminCompanyFilter}
-          onCompanyFilterChange={handleAdminCompanyFilterChange}
           apiFetch={apiFetch}
           onDownloadSurveyResponses={downloadSurveyResponses}
         />
       )}
 
-      {page === 'system-log' && <SystemLogPage apiFetch={apiFetch} />}
+      {page === 'system-log' && (
+        <SystemLogPage
+          companyFilter={adminCompanyFilter}
+          apiFetch={apiFetch}
+        />
+      )}
 
       {page === 'tracker' && (
         <TrackerPage
@@ -713,9 +739,7 @@ function App() {
           pendingDeletes={pendingDeletes}
           isSubmittingChanges={isSubmittingChanges}
           uploadingVisualReference={uploadingVisualReference}
-          companies={adminCompanies}
           companyFilter={adminCompanyFilter}
-          onCompanyFilterChange={handleAdminCompanyFilterChange}
           apiFetch={apiFetch}
           setActiveSheet={setActiveSheet}
           setQuery={setQuery}

@@ -485,14 +485,23 @@ button {
 
 .admin-brand-banner {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  justify-content: space-between;
+  gap: 14px 24px;
   width: 100%;
   min-height: 72px;
-  padding: 10px 16px;
+  padding: 12px 16px;
   border: 1px solid var(--brand-gridline);
   border-radius: 16px;
   background: linear-gradient(135deg, #ffffff 0%, #eef4fb 100%);
+}
+
+.admin-brand-banner-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
 }
 
 .admin-brand-banner img {
@@ -521,6 +530,17 @@ button {
   font-style: normal;
   font-size: 0.85rem;
   font-weight: 700;
+}
+
+.admin-brand-company {
+  display: grid;
+  gap: 6px;
+  min-width: min(100%, 240px);
+  font-weight: 700;
+}
+
+.admin-brand-company select {
+  min-width: min(100%, 240px);
 }
 
 .admin-company-filter {

@@ -14,32 +14,38 @@ import type {
   StatusTargetSheet,
 } from '../types'
 import {
-  readAdminCompanyFilter,
   resolveWorkingCompanyId,
   withCompanyQuery,
-  writeAdminCompanyFilter,
   type AdminCompanyFilter,
 } from '../utils/adminCompany'
 
 type AdminPageProps = {
   currentUser: AppUser
   sheets: Record<SheetKey, SheetMeta> | null
+  companies: CompanyInfo[]
+  companyFilter: AdminCompanyFilter
+  onCompanyFilterChange: (value: AdminCompanyFilter) => void
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
   onSheetStatusChanged: () => void
 }
 
-export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheetStatusChanged }: AdminPageProps) {
+export function AdminPage({
+  currentUser: _currentUser,
+  sheets,
+  companies: companiesProp,
+  companyFilter,
+  onCompanyFilterChange: _onCompanyFilterChange,
+  apiFetch,
+  onSheetStatusChanged,
+}: AdminPageProps) {
   const [tab, setTab] = useState<AdminSettingsTab>('users')
   const [adminMessage, setAdminMessage] = useState('')
   const [kanbanMessage, setKanbanMessage] = useState('')
   const [error, setError] = useState('')
 
   // --- Companies ---
-  const [companies, setCompanies] = useState<CompanyInfo[]>([])
+  const [companies, setCompanies] = useState<CompanyInfo[]>(companiesProp)
   const [companiesLoading, setCompaniesLoading] = useState(false)
-  const [companyFilter, setCompanyFilter] = useState<AdminCompanyFilter>(() =>
-    readAdminCompanyFilter(_currentUser.company_id ?? 'all'),
-  )
   const [scopedSheets, setScopedSheets] = useState<Record<SheetKey, SheetMeta> | null>(sheets)
 
   // --- Users ---
@@ -85,10 +91,9 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
     return [...set].sort((a, b) => a.localeCompare(b))
   })()
 
-  function updateCompanyFilter(next: AdminCompanyFilter) {
-    setCompanyFilter(next)
-    writeAdminCompanyFilter(next)
-  }
+  useEffect(() => {
+    setCompanies(companiesProp)
+  }, [companiesProp])
 
   // --- Loaders ---
   const loadCompanies = useCallback(async () => {
@@ -292,33 +297,6 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
       {error && <div className="error">{error}</div>}
       {adminMessage && <div className="success">{adminMessage}</div>}
       {kanbanMessage && <div className="success">{kanbanMessage}</div>}
-
-      <div className="admin-company-filter">
-        <label>
-          Company
-          <select
-            value={companyFilter === 'all' ? 'all' : String(companyFilter)}
-            onChange={(e) => {
-              const value = e.target.value
-              updateCompanyFilter(value === 'all' ? 'all' : Number(value))
-            }}
-          >
-            <option value="all">All companies</option>
-            {companies.map((company) => (
-              <option key={company.id} value={company.id}>
-                {company.company_name || company.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="admin-company-filter-note">
-          {tab === 'users'
-            ? 'Filters the user list. New users default to the selected company when one is chosen.'
-            : tab === 'companies'
-              ? 'Company list always shows every company.'
-              : 'Statuses and Kanban are edited for the selected company (or the first company when All is selected).'}
-        </span>
-      </div>
 
       <div className="admin-tabs" role="tablist" aria-label="Admin settings sections">
         {(['users', 'companies', 'statuses', 'kanban'] as AdminSettingsTab[]).map((t) => (

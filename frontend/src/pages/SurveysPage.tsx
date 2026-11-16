@@ -15,7 +15,6 @@ type Props = {
   currentUser: AppUser
   companies: CompanyInfo[]
   companyFilter: AdminCompanyFilter
-  onCompanyFilterChange: (value: AdminCompanyFilter) => void
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
   onDownloadSurveyResponses: (periodId?: number | null) => void
 }
@@ -24,7 +23,6 @@ export function SurveysPage({
   currentUser,
   companies,
   companyFilter,
-  onCompanyFilterChange,
   apiFetch,
   onDownloadSurveyResponses,
 }: Props) {
@@ -51,31 +49,6 @@ export function SurveysPage({
 
   return (
     <section className="surveys-page">
-      {isAdmin && (
-        <div className="admin-company-filter">
-          <label>
-            Company
-            <select
-              value={companyFilter === 'all' ? 'all' : String(companyFilter)}
-              onChange={(e) => {
-                const value = e.target.value
-                onCompanyFilterChange(value === 'all' ? 'all' : Number(value))
-              }}
-            >
-              <option value="all">All companies (uses first / home company for edits)</option>
-              {companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.company_name || company.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="admin-company-filter-note">
-            Admins can create and edit surveys and buy books for any company. Editors stay locked to theirs.
-          </span>
-        </div>
-      )}
-
       <div className="admin-tabs" role="tablist" aria-label="Survey sections">
         <button
           className={tab === 'manage' ? 'active' : ''}

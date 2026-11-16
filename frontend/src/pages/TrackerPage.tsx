@@ -16,7 +16,6 @@ import {
 import type {
   AppUser,
   ColumnKey,
-  CompanyInfo,
   EditableField,
   ItemDraft,
   PendingUpdates,
@@ -43,9 +42,7 @@ type TrackerPageProps = {
   pendingDeletes: number[]
   isSubmittingChanges: boolean
   uploadingVisualReference: string | null
-  companies: CompanyInfo[]
   companyFilter: AdminCompanyFilter
-  onCompanyFilterChange: (value: AdminCompanyFilter) => void
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
   setActiveSheet: (sheet: SheetKey) => void
   setQuery: (q: string) => void
@@ -78,9 +75,7 @@ export function TrackerPage({
   pendingDeletes,
   isSubmittingChanges,
   uploadingVisualReference,
-  companies,
   companyFilter,
-  onCompanyFilterChange,
   apiFetch,
   setActiveSheet,
   setQuery,
@@ -319,32 +314,6 @@ export function TrackerPage({
 
   return (
     <>
-      {isAdmin && (
-        <div className="admin-company-filter">
-          <label>
-            Company dataset
-            <select
-              value={companyFilter === 'all' ? 'all' : String(companyFilter)}
-              onChange={(e) => {
-                const value = e.target.value
-                onCompanyFilterChange(value === 'all' ? 'all' : Number(value))
-                setLocalTablePage(1)
-              }}
-            >
-              <option value="all">All companies</option>
-              {companies.map((company) => (
-                <option key={company.id} value={company.id}>
-                  {company.company_name || company.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="admin-company-filter-note">
-            Defaults to all companies. Pick one company to add new rows for that dataset.
-          </span>
-        </div>
-      )}
-
       <div className="tracker-actions">
         <button className="primary-action" type="button" onClick={openAddForm}>Add</button>
         <button className="secondary-action" type="button" onClick={() => openPublicPath('/viewer/kanban')}>
