@@ -352,7 +352,11 @@ def seed_sheet_statuses_if_empty(conn: Any, company_id: int) -> None:
         for sort_order, status_label in enumerate(sheet_config["statuses"], start=1):
             execute(
                 conn,
-                "INSERT INTO sheet_statuses (company_id, sheet, status, sort_order) VALUES (?, ?, ?, ?)",
+                """
+                INSERT INTO sheet_statuses (company_id, sheet, status, sort_order)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT (company_id, sheet, status) DO NOTHING
+                """,
                 (company_id, sheet_key, status_label, sort_order),
             )
 

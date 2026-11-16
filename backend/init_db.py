@@ -202,11 +202,11 @@ def _create_core_tables(conn) -> None:
         """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS sheet_statuses (
-                id SERIAL PRIMARY KEY, sheet TEXT NOT NULL, status TEXT NOT NULL,
+                id SERIAL PRIMARY KEY, company_id INTEGER, sheet TEXT NOT NULL, status TEXT NOT NULL,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE(sheet, status)
+                UNIQUE(company_id, sheet, status)
             )
         """)
         conn.execute("""
@@ -338,6 +338,13 @@ def _backfill_company_ids(conn, company_id: int) -> None:
 def _scope_sheet_status_uniqueness(conn) -> None:
     """Migrate old UNIQUE(sheet, status) constraint to UNIQUE(company_id, sheet, status)."""
     if IS_POSTGRES:
+        # Production DBs created before multi-company still have UNIQUE(sheet, status),
+        # which blocks seeding statuses for additional companies.
+        execute(
+            conn,
+            "ALTER TABLE sheet_statuses DROP CONSTRAINT IF EXISTS sheet_statuses_sheet_status_key",
+        )
+        execute(conn, "DROP INDEX IF EXISTS sheet_statuses_sheet_status_key")
         execute(conn, """
             CREATE UNIQUE INDEX IF NOT EXISTS sheet_statuses_company_sheet_status_idx
             ON sheet_statuses (company_id, sheet, status)
