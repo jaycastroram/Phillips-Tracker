@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: phillips-tracker
+    name: smartbuy-tracker
     env: python
     buildCommand: python -m pip install -r backend/requirements.txt && cd frontend && npm install && npm run build
     startCommand: python backend/app.py
