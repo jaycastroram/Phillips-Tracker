@@ -557,7 +557,9 @@ function App() {
           {authError && <div className="error">{authError}</div>}
           <button className="primary-action" type="submit">Log In</button>
           <p className="subtitle" style={{ marginTop: '1rem', fontSize: '0.85rem' }}>
-            Demo users (password <code>Demo1234</code>): phillips@example.com, demo@example.com, acme@example.com
+            Admin: <code>admin@example.com</code> / <code>Admin123</code>
+            <br />
+            Company editors (password <code>Demo1234</code>): phillips@example.com, demo@example.com, acme@example.com
           </p>
         </form>
       </main>
