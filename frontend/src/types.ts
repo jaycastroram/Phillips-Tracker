@@ -19,6 +19,9 @@ export type TrackerItem = {
   id: number
   sheet: SheetKey
   source_row?: number
+  company_id?: number | null
+  company_name?: string
+  company_slug?: string
   date_or_buy: string
   current_status: string
   visual_reference: string
@@ -37,7 +40,7 @@ export type TrackerItem = {
 
 export type EditableField = Exclude<
   keyof TrackerItem,
-  'id' | 'sheet' | 'source_row' | 'extra' | 'updated_at'
+  'id' | 'sheet' | 'source_row' | 'extra' | 'updated_at' | 'company_id' | 'company_name' | 'company_slug'
 >
 
 export type ColumnKey = EditableField | 'actions'

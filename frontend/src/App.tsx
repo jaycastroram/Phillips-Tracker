@@ -166,11 +166,15 @@ function App() {
 
   // --- Sheets ---
   const loadSheets = useCallback(async () => {
-    const res = await apiFetch('/sheets')
+    const params = new URLSearchParams()
+    if (currentUser?.role === 'admin' && typeof adminCompanyFilter === 'number') {
+      params.set('company_id', String(adminCompanyFilter))
+    }
+    const res = await apiFetch(`/sheets${params.toString() ? `?${params}` : ''}`)
     if (!res.ok) return
     const data = await res.json()
     setSheets(data.sheets)
-  }, [apiFetch])
+  }, [adminCompanyFilter, apiFetch, currentUser?.role])
 
   useEffect(() => {
     if (!currentUser) return
@@ -186,12 +190,15 @@ function App() {
     const params = new URLSearchParams({ sheet: activeSheet })
     if (query.trim()) params.set('q', query.trim())
     if (statusFilter) params.set('status', statusFilter)
+    if (currentUser.role === 'admin' && typeof adminCompanyFilter === 'number') {
+      params.set('company_id', String(adminCompanyFilter))
+    }
     apiFetch(`/items?${params}`, { signal: controller.signal })
       .then((res) => { if (!res.ok) throw new Error('Unable to load tracker rows.'); return res.json() })
       .then((data) => { setItems(data.items); setLoading(false) })
       .catch((err) => { if (err.name !== 'AbortError') { setError(err.message); setLoading(false) } })
     return () => controller.abort()
-  }, [activeSheet, apiFetch, currentUser, page, query, refreshItemsToken, statusFilter])
+  }, [activeSheet, adminCompanyFilter, apiFetch, currentUser, page, query, refreshItemsToken, statusFilter])
 
   // --- Public items ---
   useEffect(() => {
@@ -259,10 +266,18 @@ function App() {
   async function submitChanges() {
     const pendingUpdateCount = Object.keys(pendingUpdates).length
     if (pendingCreates.length + pendingUpdateCount + pendingDeletes.length === 0) return
+    if (currentUser?.role === 'admin' && adminCompanyFilter === 'all' && pendingCreates.length > 0) {
+      setError('Select a company dataset before adding tracker rows.')
+      return
+    }
     setIsSubmittingChanges(true)
     setError('')
     try {
-      const res = await apiFetch('/items/changes', {
+      const params = new URLSearchParams()
+      if (currentUser?.role === 'admin' && typeof adminCompanyFilter === 'number') {
+        params.set('company_id', String(adminCompanyFilter))
+      }
+      const res = await apiFetch(`/items/changes${params.toString() ? `?${params}` : ''}`, {
         method: 'POST',
         body: JSON.stringify({
           creates: pendingCreates.map((item) => ({
@@ -276,7 +291,10 @@ function App() {
           deletes: pendingDeletes,
         }),
       })
-      if (!res.ok) throw new Error('Unable to submit changes.')
+      if (!res.ok) {
+        const detail = await res.json().catch(() => null)
+        throw new Error(detail?.detail || 'Unable to submit changes.')
+      }
       setPendingCreates([])
       setPendingUpdates({})
       setPendingDeletes([])
@@ -432,10 +450,14 @@ function App() {
     [adminCompanyFilter, adminCompanies, currentUser?.company_id],
   )
 
-  const adminWorkingCompany = useMemo(
-    () => adminCompanies.find((company) => company.id === adminWorkingCompanyId) ?? null,
-    [adminCompanies, adminWorkingCompanyId],
-  )
+  const adminWorkingCompany = useMemo(() => {
+    if (adminCompanyFilter === 'all') return null
+    return adminCompanies.find((company) => company.id === adminCompanyFilter) ?? null
+  }, [adminCompanyFilter, adminCompanies])
+
+  const adminDatasetLabel = adminCompanyFilter === 'all'
+    ? 'all companies'
+    : (adminWorkingCompany?.company_name || adminWorkingCompany?.name || 'selected company')
 
   useEffect(() => {
     if (!isAdmin || !token) {
@@ -453,11 +475,19 @@ function App() {
   function handleAdminCompanyFilterChange(value: AdminCompanyFilter) {
     setAdminCompanyFilter(value)
     writeAdminCompanyFilter(value)
+    setPendingCreates([])
+    setPendingUpdates({})
+    setPendingDeletes([])
+    setItems([])
+    setError('')
+    setStatusFilter('')
+    setRefreshItemsToken((tokenValue) => tokenValue + 1)
   }
 
   function openPublicPath(path: string) {
     const slug =
       (isAdmin && adminWorkingCompany?.company_slug)
+      || (isAdmin && adminCompanies[0]?.company_slug)
       || currentUser?.company?.company_slug
       || companyConfig.company_slug
       || DEFAULT_COMPANY_SLUG
@@ -615,9 +645,7 @@ function App() {
             <div>
               <strong>SmartBuy</strong>
               <span>Powered by FSI</span>
-              {adminWorkingCompany && (
-                <em>Viewing {adminWorkingCompany.company_name || adminWorkingCompany.name}</em>
-              )}
+              <em>Viewing {adminDatasetLabel}</em>
             </div>
           </div>
         ) : companyConfig.banner_url ? (
@@ -685,6 +713,9 @@ function App() {
           pendingDeletes={pendingDeletes}
           isSubmittingChanges={isSubmittingChanges}
           uploadingVisualReference={uploadingVisualReference}
+          companies={adminCompanies}
+          companyFilter={adminCompanyFilter}
+          onCompanyFilterChange={handleAdminCompanyFilterChange}
           apiFetch={apiFetch}
           setActiveSheet={setActiveSheet}
           setQuery={setQuery}

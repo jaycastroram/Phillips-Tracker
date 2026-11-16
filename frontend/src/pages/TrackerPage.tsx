@@ -16,6 +16,7 @@ import {
 import type {
   AppUser,
   ColumnKey,
+  CompanyInfo,
   EditableField,
   ItemDraft,
   PendingUpdates,
@@ -25,6 +26,7 @@ import type {
   SortDirection,
   TrackerItem,
 } from '../types'
+import type { AdminCompanyFilter } from '../utils/adminCompany'
 import { isImageReference } from '../utils'
 
 type TrackerPageProps = {
@@ -41,6 +43,9 @@ type TrackerPageProps = {
   pendingDeletes: number[]
   isSubmittingChanges: boolean
   uploadingVisualReference: string | null
+  companies: CompanyInfo[]
+  companyFilter: AdminCompanyFilter
+  onCompanyFilterChange: (value: AdminCompanyFilter) => void
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
   setActiveSheet: (sheet: SheetKey) => void
   setQuery: (q: string) => void
@@ -73,6 +78,9 @@ export function TrackerPage({
   pendingDeletes,
   isSubmittingChanges,
   uploadingVisualReference,
+  companies,
+  companyFilter,
+  onCompanyFilterChange,
   apiFetch,
   setActiveSheet,
   setQuery,
@@ -91,6 +99,7 @@ export function TrackerPage({
   setRefreshItemsToken: _setRefreshItemsToken,
 }: TrackerPageProps) {
   const isAdmin = currentUser.role === 'admin'
+  const viewingAllCompanies = isAdmin && companyFilter === 'all'
   const [rowPageSize, setRowPageSize] = useState<RowPageSize>(20)
   const [currentTablePage, setLocalTablePage] = useState(1)
   const [sortField, setSortField] = useState<EditableField>('date_or_buy')
@@ -117,8 +126,10 @@ export function TrackerPage({
   const pendingChangeCount = pendingCreates.length + pendingUpdateCount + pendingDeletes.length
   const hasPendingChanges = pendingChangeCount > 0
 
+  const companyColumnWidth = 160
   const tableWidth = useMemo(() =>
-    Object.values(columnWidths).reduce((t, w) => t + w, 0), [columnWidths])
+    Object.values(columnWidths).reduce((t, w) => t + w, 0) + (viewingAllCompanies ? companyColumnWidth : 0),
+  [columnWidths, viewingAllCompanies])
 
   const sortedItems = useMemo(() => {
     return [...items].sort((a, b) => {
@@ -152,6 +163,10 @@ export function TrackerPage({
     }, {}), [items])
 
   function openAddForm() {
+    if (viewingAllCompanies) {
+      setError('Select a company dataset before adding tracker rows.')
+      return
+    }
     setAddForm({ ...EMPTY_ITEM_DRAFT, current_status: sheets?.[activeSheet]?.statuses[0] ?? '' })
     setIsAddFormOpen(true)
   }
@@ -208,6 +223,7 @@ export function TrackerPage({
     const params = new URLSearchParams({ sheet: activeSheet })
     if (query.trim()) params.set('q', query.trim())
     if (statusFilter) params.set('status', statusFilter)
+    if (isAdmin && typeof companyFilter === 'number') params.set('company_id', String(companyFilter))
     try {
       const res = await apiFetch(`/items/export?${params}`)
       if (!res.ok) throw new Error('Export failed.')
@@ -303,6 +319,32 @@ export function TrackerPage({
 
   return (
     <>
+      {isAdmin && (
+        <div className="admin-company-filter">
+          <label>
+            Company dataset
+            <select
+              value={companyFilter === 'all' ? 'all' : String(companyFilter)}
+              onChange={(e) => {
+                const value = e.target.value
+                onCompanyFilterChange(value === 'all' ? 'all' : Number(value))
+                setLocalTablePage(1)
+              }}
+            >
+              <option value="all">All companies</option>
+              {companies.map((company) => (
+                <option key={company.id} value={company.id}>
+                  {company.company_name || company.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="admin-company-filter-note">
+            Defaults to all companies. Pick one company to add new rows for that dataset.
+          </span>
+        </div>
+      )}
+
       <div className="tracker-actions">
         <button className="primary-action" type="button" onClick={openAddForm}>Add</button>
         <button className="secondary-action" type="button" onClick={() => openPublicPath('/viewer/kanban')}>
@@ -446,11 +488,17 @@ export function TrackerPage({
         <div className="table-scroll">
           <table style={{ minWidth: tableWidth }}>
             <colgroup>
+              {viewingAllCompanies && <col style={{ width: companyColumnWidth }} />}
               {columns.map((col) => <col key={col.field} style={{ width: columnWidths[col.field] }} />)}
               <col style={{ width: columnWidths.actions }} />
             </colgroup>
             <thead>
               <tr>
+                {viewingAllCompanies && (
+                  <th>
+                    <span>Company</span>
+                  </th>
+                )}
                 {columns.map((col) => (
                   <th key={col.field} className={col.className}>
                     <button className="column-sort" type="button"
@@ -477,6 +525,11 @@ export function TrackerPage({
             <tbody>
               {!loading && visibleItems.map((item) => (
                 <tr key={item.id}>
+                  {viewingAllCompanies && (
+                    <td>
+                      <strong>{item.company_name || '—'}</strong>
+                    </td>
+                  )}
                   {columns.map((col) => (
                     <td key={col.field} className={col.className}>
                       {renderCell(item, col)}
@@ -492,7 +545,11 @@ export function TrackerPage({
                 </tr>
               ))}
               {!loading && items.length === 0 && (
-                <tr><td colSpan={columns.length + 1} className="empty-state">No rows match the current filters.</td></tr>
+                <tr>
+                  <td colSpan={columns.length + 1 + (viewingAllCompanies ? 1 : 0)} className="empty-state">
+                    No rows match the current filters.
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>

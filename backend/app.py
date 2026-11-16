@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import CORS_ORIGINS, FRONTEND_DIST
-from database import company_id_for_user, connect, execute, get_sheet_config, resolve_scoped_company_id
+from database import get_sheet_config, resolve_optional_company_scope
 from init_db import init_db
 from routes.auth import get_current_user
 from routes import auth, items, admin, public, uploads, zoho_analytics
@@ -56,7 +56,10 @@ def health() -> dict:
 
 @app.get("/api/sheets")
 def get_sheets(company_id: int | None = None, user=Depends(get_current_user)) -> dict:
-    return {"sheets": get_sheet_config(resolve_scoped_company_id(user, company_id))}
+    scoped = resolve_optional_company_scope(user, company_id)
+    if scoped is None:
+        return {"sheets": get_sheet_config(all_companies=True)}
+    return {"sheets": get_sheet_config(scoped)}
 
 
 # ---------------------------------------------------------------------------

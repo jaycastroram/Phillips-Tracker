@@ -391,6 +391,15 @@ def resolve_scoped_company_id(user: Any, requested_company_id: int | None = None
     return int(company["id"])
 
 
+def resolve_optional_company_scope(user: Any, requested_company_id: int | None = None) -> int | None:
+    """Admin may omit company_id to mean all companies; other roles stay home-scoped."""
+    if _row_get(user, "role") != "admin":
+        return company_id_for_user(user)
+    if requested_company_id is None:
+        return None
+    return resolve_scoped_company_id(user, requested_company_id)
+
+
 def get_default_company() -> Any:
     with connect() as conn:
         company = fetch_company_by_slug(conn, DEFAULT_COMPANY_SLUG)
@@ -793,7 +802,7 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
 # Sheet config
 # ---------------------------------------------------------------------------
 
-def get_sheet_config(company_id: int | None = None) -> dict:
+def get_sheet_config(company_id: int | None = None, *, all_companies: bool = False) -> dict:
     from config import SHEETS
     sheets = {
         sheet_key: {
@@ -803,20 +812,31 @@ def get_sheet_config(company_id: int | None = None) -> dict:
         }
         for sheet_key, sheet_config in SHEETS.items()
     }
-    scoped_company_id = default_company_id() if company_id is None else company_id
     with connect() as conn:
-        rows = execute(
-            conn,
-            """
-            SELECT * FROM sheet_statuses
-            WHERE company_id = ?
-            ORDER BY sheet ASC, sort_order ASC, id ASC
-            """,
-            (scoped_company_id,),
-        ).fetchall()
+        if all_companies:
+            rows = execute(
+                conn,
+                """
+                SELECT sheet, status, MIN(sort_order) AS sort_order
+                FROM sheet_statuses
+                GROUP BY sheet, status
+                ORDER BY sheet ASC, sort_order ASC, status ASC
+                """,
+            ).fetchall()
+        else:
+            scoped_company_id = default_company_id() if company_id is None else company_id
+            rows = execute(
+                conn,
+                """
+                SELECT * FROM sheet_statuses
+                WHERE company_id = ?
+                ORDER BY sheet ASC, sort_order ASC, id ASC
+                """,
+                (scoped_company_id,),
+            ).fetchall()
 
     for row in rows:
-        if row["sheet"] in sheets:
+        if row["sheet"] in sheets and row["status"] not in sheets[row["sheet"]]["statuses"]:
             sheets[row["sheet"]]["statuses"].append(row["status"])
 
     return sheets
