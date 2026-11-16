@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { BASE_COLUMNS } from '../constants'
-import type { AuditLog } from '../types'
+import type { AuditLog, CompanyInfo } from '../types'
+import {
+  readAdminCompanyFilter,
+  writeAdminCompanyFilter,
+  type AdminCompanyFilter,
+} from '../utils/adminCompany'
 
 type SystemLogPageProps = {
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
@@ -25,14 +30,29 @@ function auditLogSummary(log: AuditLog): string {
 
 export function SystemLogPage({ apiFetch }: SystemLogPageProps) {
   const [logs, setLogs] = useState<AuditLog[]>([])
+  const [companies, setCompanies] = useState<CompanyInfo[]>([])
+  const [companyFilter, setCompanyFilter] = useState<AdminCompanyFilter>(() => readAdminCompanyFilter('all'))
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const loadCompanies = useCallback(async () => {
+    try {
+      const res = await apiFetch('/admin/companies')
+      if (!res.ok) return
+      setCompanies((await res.json()).companies || [])
+    } catch {
+      /* ignore — log page can still load without company names */
+    }
+  }, [apiFetch])
 
   const loadLogs = useCallback(async () => {
     setLoading(true)
     setError('')
     try {
-      const res = await apiFetch('/admin/audit-logs')
+      const path = typeof companyFilter === 'number'
+        ? `/admin/audit-logs?company_id=${companyFilter}`
+        : '/admin/audit-logs'
+      const res = await apiFetch(path)
       if (!res.ok) throw new Error('Unable to load system log.')
       const data = await res.json()
       setLogs(data.logs)
@@ -41,13 +61,38 @@ export function SystemLogPage({ apiFetch }: SystemLogPageProps) {
     } finally {
       setLoading(false)
     }
-  }, [apiFetch])
+  }, [apiFetch, companyFilter])
 
+  useEffect(() => { loadCompanies() }, [loadCompanies])
   useEffect(() => { loadLogs() }, [loadLogs])
 
   return (
     <>
       {error && <div className="error">{error}</div>}
+      <div className="admin-company-filter">
+        <label>
+          Company
+          <select
+            value={companyFilter === 'all' ? 'all' : String(companyFilter)}
+            onChange={(e) => {
+              const value = e.target.value
+              const next: AdminCompanyFilter = value === 'all' ? 'all' : Number(value)
+              setCompanyFilter(next)
+              writeAdminCompanyFilter(next)
+            }}
+          >
+            <option value="all">All companies</option>
+            {companies.map((company) => (
+              <option key={company.id} value={company.id}>
+                {company.company_name || company.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="admin-company-filter-note">
+          Filters audit entries by company. Shared with Admin Settings and Surveys.
+        </span>
+      </div>
       <section className="table-card audit-log-card">
         <div className="table-tools">
           <span>{loading ? 'Loading system log...' : `${logs.length} log entries`}</span>
@@ -71,13 +116,15 @@ export function SystemLogPage({ apiFetch }: SystemLogPageProps) {
                   <td>{new Date(log.created_at).toLocaleString()}</td>
                   <td>{log.user_email}</td>
                   <td>{log.action}</td>
-                  <td>{log.sheet ?? ''}</td>
-                  <td>{log.item_id ?? ''}</td>
-                  <td><code>{auditLogSummary(log)}</code></td>
+                  <td>{log.sheet || '—'}</td>
+                  <td>{log.item_id ?? '—'}</td>
+                  <td>{auditLogSummary(log)}</td>
                 </tr>
               ))}
               {!loading && logs.length === 0 && (
-                <tr><td colSpan={6} className="empty-state">No system log entries yet.</td></tr>
+                <tr>
+                  <td colSpan={6} className="empty-state">No system log entries yet.</td>
+                </tr>
               )}
             </tbody>
           </table>

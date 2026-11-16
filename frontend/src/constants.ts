@@ -68,3 +68,13 @@ export const SURVEY_FILTER_FIELDS: { field: SurveyFilterField; label: string }[]
   { field: 'key_program', label: 'Key Program' },
 ]
 
+export type BuyBookGroupBy = SurveyFilterField | 'none'
+export const DEFAULT_BUY_BOOK_GROUP_BY: BuyBookGroupBy = 'brand'
+export const BUY_BOOK_GROUP_OPTIONS: { field: BuyBookGroupBy; label: string }[] = [
+  { field: 'brand', label: 'Brand' },
+  { field: 'channel', label: 'Channel' },
+  { field: 'key_program', label: 'Program' },
+  { field: 'product_type', label: 'Type' },
+  { field: 'none', label: 'No automatic grouping' },
+]
+

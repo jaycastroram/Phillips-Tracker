@@ -7,7 +7,6 @@ import type {
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
-import { DEFAULT_SURVEY_FILTER_FIELDS } from './constants'
 import {
   getViewerStatus,
   isImageReference,
@@ -28,6 +27,7 @@ type PublicKanbanColumn = {
 
 type BuyBookPageProps = {
   surveyItems: SurveyItem[]
+  surveyFilterFields: SurveyFilterField[]
   surveyLoading: boolean
   surveyError: string
   surveyQuery: string
@@ -316,6 +316,7 @@ function SurveyFilterControls({
 
 export function BuyBookPage({
   surveyItems,
+  surveyFilterFields,
   surveyLoading,
   surveyError,
   surveyQuery,
@@ -324,8 +325,14 @@ export function BuyBookPage({
   toggleSurveyItem,
   printSurveyBuyBook,
 }: BuyBookPageProps) {
-  const surveyFilters = useSurveyFilters(surveyItems, DEFAULT_SURVEY_FILTER_FIELDS)
+  const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+  const [currentPage, setCurrentPage] = useState(0)
+  const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
+  const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+  useEffect(() => {
+    setCurrentPage(0)
+  }, [surveyFilters.filteredItems])
   const allVisibleSelected =
     surveyFilters.filteredItems.length > 0 &&
     surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
@@ -384,39 +391,79 @@ export function BuyBookPage({
         </div>
       </section>
 
+      <div className="survey-pager">
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage === 0}
+          onClick={() => setCurrentPage(Math.max(safePage - 1, 0))}
+        >
+          Back
+        </button>
+        <span>
+          Page {pages.length === 0 ? 0 : safePage + 1} of {pages.length}
+        </span>
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage >= pages.length - 1}
+          onClick={() => setCurrentPage(Math.min(safePage + 1, pages.length - 1))}
+        >
+          Next
+        </button>
+      </div>
+
       {surveyError && <div className="error">{surveyError}</div>}
 
       <section className="survey-grid" aria-label="Buy book items">
-        {surveyFilters.filteredItems.map((item) => (
-          <article key={item.id} className="survey-card buy-book-card">
-            <label className="survey-select">
-              <input
-                checked={selectedSurveyItemIds.includes(item.id)}
-                type="checkbox"
-                onChange={() => toggleSurveyItem(item.id)}
-              />
-              <span>Select</span>
-            </label>
-            <button
-              className="survey-image image-preview-trigger"
-              type="button"
-              onClick={() => {
-                if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
-              }}
-            >
-              {isImageReference(item.image_url) ? (
-                <img src={item.image_url} alt="" />
-              ) : (
-                <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+        {surveyFilters.filteredItems.map((item, index) => {
+          const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
+          const previous = index > 0 ? surveyFilters.filteredItems[index - 1] : null
+          const showGroupHeader =
+            Boolean(item.group_label) &&
+            (!previous || previous.group_label !== item.group_label || item.page_break_before)
+          const isOnPage = pageIndex === safePage
+          return (
+            <div key={item.id} className={`buy-book-item-block${isOnPage ? '' : ' survey-page-hidden'}`}>
+              {showGroupHeader && (
+                <header className={`buy-book-group-header${item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}>
+                  <p className="eyebrow">{item.group_field === 'key_program' ? 'Program' : item.group_field === 'product_type' ? 'Type' : item.group_field === 'channel' ? 'Channel' : 'Brand'}</p>
+                  <h2>{item.group_label}</h2>
+                </header>
               )}
-            </button>
-            <div className="survey-card-copy">
-              <span className="survey-column-heading">Item Name</span>
-              <h2>{item.item_name}</h2>
-              <p>{item.item_description || 'No description provided yet.'}</p>
+              <article
+                className={`survey-card buy-book-card${!showGroupHeader && item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}
+              >
+                <label className="survey-select">
+                  <input
+                    checked={selectedSurveyItemIds.includes(item.id)}
+                    type="checkbox"
+                    onChange={() => toggleSurveyItem(item.id)}
+                  />
+                  <span>Select</span>
+                </label>
+                <button
+                  className="survey-image image-preview-trigger"
+                  type="button"
+                  onClick={() => {
+                    if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
+                  }}
+                >
+                  {isImageReference(item.image_url) ? (
+                    <img src={item.image_url} alt="" />
+                  ) : (
+                    <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+                  )}
+                </button>
+                <div className="survey-card-copy">
+                  <span className="survey-column-heading">Item Name</span>
+                  <h2>{item.item_name}</h2>
+                  <p>{item.item_description || 'No description provided yet.'}</p>
+                </div>
+              </article>
             </div>
-          </article>
-        ))}
+          )
+        })}
         {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
           <div className="empty-state">No buy book items found.</div>
         )}

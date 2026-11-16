@@ -41,6 +41,14 @@ ADMIN_NAME = os.getenv("ADMIN_NAME", "Dev Admin")
 DEFAULT_RESPONSE_WIDTH = 36
 DEFAULT_SURVEY_FILTER_FIELDS = ["brand", "channel", "product_type"]
 SURVEY_FILTER_FIELDS = {"brand", "channel", "product_type", "key_program"}
+BUY_BOOK_GROUP_FIELDS = {
+    "brand": "brand",
+    "channel": "channel",
+    "key_program": "key_program",
+    "product_type": "product_type",
+    "none": None,
+}
+DEFAULT_BUY_BOOK_GROUP_BY = "brand"
 
 COMPANY_SCOPED_TABLES = (
     "tracker_items",

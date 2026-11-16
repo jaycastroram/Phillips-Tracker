@@ -127,6 +127,20 @@ class SurveyLayoutUpdate(BaseModel):
     items: list[SurveyLayoutItemUpdate] = []
 
 
+class BuyBookLayoutItemUpdate(BaseModel):
+    id: int
+    in_buy_book: bool = True
+    page_break_before: bool = False
+    image_display_size: Literal["small", "medium", "large", "full"] = "medium"
+    image_fit: Literal["contain", "cover"] = "contain"
+
+
+class BuyBookLayoutUpdate(BaseModel):
+    filter_fields: list[str] = []
+    group_by: Literal["brand", "channel", "key_program", "product_type", "none"] = "brand"
+    items: list[BuyBookLayoutItemUpdate] = []
+
+
 class SurveyPeriodCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     copy_from_period_id: int | None = None

@@ -5,19 +5,23 @@ import json
 import sqlite3
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from config import IS_POSTGRES, SHEETS
 from database import (
+    buy_book_filter_fields,
+    buy_book_group_by,
     close_open_survey_periods,
     connect,
     copy_catalog_items_into_period,
     count_period_items,
     company_id_for_user,
     company_to_public,
+    resolve_scoped_company_id,
     serialize_user,
+    ensure_buy_book_layout,
     ensure_legacy_survey_period,
     ensure_survey_layout,
     execute,
@@ -25,6 +29,7 @@ from database import (
     hash_password,
     kanban_column_to_public,
     list_period_items,
+    normalize_buy_book_group_by,
     normalize_filter_fields,
     period_item_to_public,
     sheet_status_to_public,
@@ -38,6 +43,7 @@ from database import (
     audit_log_to_public,
 )
 from models import (
+    BuyBookLayoutUpdate,
     CompanyUpdate,
     KanbanColumnCreate,
     KanbanColumnUpdate,
@@ -60,8 +66,12 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 # ---------------------------------------------------------------------------
 
 @router.get("/survey-results")
-def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    company_id = company_id_for_user(user)
+def get_survey_results(
+    period_id: int | None = None,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         period = None
@@ -267,8 +277,11 @@ def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends
 # ---------------------------------------------------------------------------
 
 @router.get("/survey-layout")
-def get_survey_layout(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
+def get_survey_layout(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         rows = execute(
             conn,
@@ -280,8 +293,12 @@ def get_survey_layout(user: sqlite3.Row = Depends(require_admin)) -> dict:
 
 
 @router.put("/survey-layout")
-def update_survey_layout(payload: SurveyLayoutUpdate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
+def update_survey_layout(
+    payload: SurveyLayoutUpdate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
     with connect() as conn:
         ensure_survey_layout(conn, company_id)
@@ -324,12 +341,103 @@ def update_survey_layout(payload: SurveyLayoutUpdate, user: sqlite3.Row = Depend
 
 
 # ---------------------------------------------------------------------------
+# Buy book layout
+# ---------------------------------------------------------------------------
+
+@router.get("/buy-book-layout")
+def get_buy_book_layout(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        ensure_buy_book_layout(conn, company_id)
+        rows = execute(
+            conn,
+            """
+            SELECT * FROM survey_items
+            WHERE company_id = ? AND is_active = ?
+            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
+            """,
+            (company_id, True),
+        ).fetchall()
+        fields = buy_book_filter_fields(conn, company_id)
+        group_by = buy_book_group_by(conn, company_id)
+    return {
+        "filter_fields": fields,
+        "group_by": group_by,
+        "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
+    }
+
+
+@router.put("/buy-book-layout")
+def update_buy_book_layout(
+    payload: BuyBookLayoutUpdate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
+    filter_fields = normalize_filter_fields(payload.filter_fields)
+    group_by = normalize_buy_book_group_by(payload.group_by)
+    with connect() as conn:
+        ensure_buy_book_layout(conn, company_id)
+        execute(
+            conn,
+            """
+            UPDATE buy_book_layouts
+            SET filter_fields_json = ?, group_by = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE company_id = ?
+            """,
+            (json.dumps(filter_fields), group_by, company_id),
+        )
+        for index, item in enumerate(payload.items, start=1):
+            cursor = execute(
+                conn,
+                """
+                UPDATE survey_items
+                SET in_buy_book = ?, buy_book_sort_order = ?, buy_book_page_break_before = ?,
+                    image_display_size = ?, image_fit = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND company_id = ? AND is_active = ?
+                """,
+                (
+                    1 if item.in_buy_book else 0,
+                    index,
+                    1 if item.page_break_before and index > 1 else 0,
+                    item.image_display_size,
+                    item.image_fit,
+                    item.id,
+                    company_id,
+                    True,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Catalog item not found")
+        rows = execute(
+            conn,
+            """
+            SELECT * FROM survey_items
+            WHERE company_id = ? AND is_active = ?
+            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
+            """,
+            (company_id, True),
+        ).fetchall()
+    return {
+        "filter_fields": filter_fields,
+        "group_by": group_by,
+        "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
+    }
+
+
+# ---------------------------------------------------------------------------
 # Survey periods
 # ---------------------------------------------------------------------------
 
 @router.get("/survey-periods")
-def list_survey_periods(user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    company_id = company_id_for_user(user)
+def list_survey_periods(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         rows = execute(
@@ -349,8 +457,12 @@ def list_survey_periods(user: sqlite3.Row = Depends(get_current_user)) -> dict:
 
 
 @router.post("/survey-periods", status_code=status.HTTP_201_CREATED)
-def create_survey_period(payload: SurveyPeriodCreate, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    company_id = company_id_for_user(user)
+def create_survey_period(
+    payload: SurveyPeriodCreate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Survey name is required")
@@ -406,8 +518,12 @@ def create_survey_period(payload: SurveyPeriodCreate, user: sqlite3.Row = Depend
 
 
 @router.get("/survey-periods/{period_id}")
-def get_survey_period_detail(period_id: int, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    company_id = company_id_for_user(user)
+def get_survey_period_detail(
+    period_id: int,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -459,8 +575,9 @@ def update_survey_period(
     period_id: int,
     payload: SurveyPeriodUpdate,
     user: sqlite3.Row = Depends(get_current_user),
+    company_id: int | None = Query(default=None),
 ) -> dict:
-    company_id = company_id_for_user(user)
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -501,8 +618,9 @@ def update_survey_period_layout(
     period_id: int,
     payload: SurveyPeriodLayoutUpdate,
     user: sqlite3.Row = Depends(get_current_user),
+    company_id: int | None = Query(default=None),
 ) -> dict:
-    company_id = company_id_for_user(user)
+    company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
@@ -593,8 +711,12 @@ def update_survey_period_layout(
 
 
 @router.delete("/survey-periods/{period_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_survey_period(period_id: int, user: sqlite3.Row = Depends(get_current_user)) -> Response:
-    company_id = company_id_for_user(user)
+def delete_survey_period(
+    period_id: int,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> Response:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -620,8 +742,12 @@ def delete_survey_period(period_id: int, user: sqlite3.Row = Depends(get_current
 # ---------------------------------------------------------------------------
 
 @router.get("/survey-responses/export")
-def export_survey_responses(period_id: int | None = None, user: sqlite3.Row = Depends(get_current_user)) -> Response:
-    company_id = company_id_for_user(user)
+def export_survey_responses(
+    period_id: int | None = None,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> Response:
+    company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         args: list[Any] = [company_id]
@@ -733,10 +859,24 @@ def update_company(company_id: int, payload: CompanyUpdate, user: sqlite3.Row = 
 # ---------------------------------------------------------------------------
 
 @router.get("/users")
-def list_users(user: sqlite3.Row = Depends(require_admin)) -> dict:
+def list_users(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
     del user
     with connect() as conn:
-        rows = execute(conn, "SELECT * FROM users ORDER BY created_at DESC, id DESC").fetchall()
+        if company_id is None:
+            rows = execute(conn, "SELECT * FROM users ORDER BY created_at DESC, id DESC").fetchall()
+        else:
+            rows = execute(
+                conn,
+                """
+                SELECT * FROM users
+                WHERE company_id = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (company_id,),
+            ).fetchall()
         return {"users": [serialize_user(conn, row) for row in rows]}
 
 
@@ -834,21 +974,34 @@ def reset_password(user_id: int, payload: PasswordReset, user: sqlite3.Row = Dep
 # ---------------------------------------------------------------------------
 
 @router.get("/kanban-columns")
-def list_admin_kanban_columns(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
+def list_admin_kanban_columns(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         rows = execute(
             conn,
             "SELECT * FROM kanban_columns WHERE company_id = ? ORDER BY sort_order ASC, id ASC",
-            (company_id,),
+            (scoped_company_id,),
         ).fetchall()
     return {"columns": [kanban_column_to_public(row) for row in rows]}
 
 
 @router.post("/kanban-columns", status_code=status.HTTP_201_CREATED)
-def create_kanban_column(payload: KanbanColumnCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
-    values = (company_id, payload.title.strip(), json.dumps(payload.statuses), payload.sort_order, payload.is_visible)
+def create_kanban_column(
+    payload: KanbanColumnCreate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
+    values = (
+        scoped_company_id,
+        payload.title.strip(),
+        json.dumps(payload.statuses),
+        payload.sort_order,
+        payload.is_visible,
+    )
     sql = "INSERT INTO kanban_columns (company_id, title, statuses_json, sort_order, is_visible) VALUES (?, ?, ?, ?, ?)"
     with connect() as conn:
         if IS_POSTGRES:
@@ -860,7 +1013,12 @@ def create_kanban_column(payload: KanbanColumnCreate, user: sqlite3.Row = Depend
 
 
 @router.patch("/kanban-columns/{column_id}")
-def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqlite3.Row = Depends(require_admin)) -> dict:
+def update_kanban_column(
+    column_id: int,
+    payload: KanbanColumnUpdate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
     updates = payload.model_dump(exclude_unset=True)
     if "title" in updates and updates["title"] is not None:
         updates["title"] = updates["title"].strip()
@@ -869,9 +1027,9 @@ def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqli
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No kanban column fields supplied")
 
-    company_id = company_id_for_user(user)
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     assignments = ", ".join(f"{field} = ?" for field in updates)
-    values = list(updates.values()) + [column_id, company_id]
+    values = list(updates.values()) + [column_id, scoped_company_id]
     with connect() as conn:
         cursor = execute(
             conn,
@@ -880,17 +1038,28 @@ def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqli
         )
         if cursor.rowcount == 0:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Kanban column not found")
-        row = execute(conn, "SELECT * FROM kanban_columns WHERE id = ? AND company_id = ?",
-                      (column_id, company_id)).fetchone()
+        row = execute(
+            conn,
+            "SELECT * FROM kanban_columns WHERE id = ? AND company_id = ?",
+            (column_id, scoped_company_id),
+        ).fetchone()
     return {"column": kanban_column_to_public(row)}
 
 
 @router.delete("/kanban-columns/{column_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_kanban_column(column_id: int, response: Response, user: sqlite3.Row = Depends(require_admin)) -> Response:
-    company_id = company_id_for_user(user)
+def delete_kanban_column(
+    column_id: int,
+    response: Response,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> Response:
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
-        cursor = execute(conn, "DELETE FROM kanban_columns WHERE id = ? AND company_id = ?",
-                         (column_id, company_id))
+        cursor = execute(
+            conn,
+            "DELETE FROM kanban_columns WHERE id = ? AND company_id = ?",
+            (column_id, scoped_company_id),
+        )
     if cursor.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Kanban column not found")
     response.status_code = status.HTTP_204_NO_CONTENT
@@ -902,34 +1071,41 @@ def delete_kanban_column(column_id: int, response: Response, user: sqlite3.Row =
 # ---------------------------------------------------------------------------
 
 @router.get("/sheet-statuses")
-def list_sheet_statuses(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
+def list_sheet_statuses(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         rows = execute(
             conn,
             "SELECT * FROM sheet_statuses WHERE company_id = ? ORDER BY sheet ASC, sort_order ASC, id ASC",
-            (company_id,),
+            (scoped_company_id,),
         ).fetchall()
     return {"statuses": [sheet_status_to_public(row) for row in rows]}
 
 
 @router.post("/sheet-statuses", status_code=status.HTTP_201_CREATED)
-def create_sheet_status(payload: SheetStatusCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
+def create_sheet_status(
+    payload: SheetStatusCreate,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
     if payload.sheet not in SHEETS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
     status_label = payload.status.strip()
     if not status_label:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Status is required")
 
-    company_id = company_id_for_user(user)
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     try:
         with connect() as conn:
             max_sort = execute(
                 conn,
                 "SELECT COALESCE(MAX(sort_order), 0) AS max_sort FROM sheet_statuses WHERE company_id = ? AND sheet = ?",
-                (company_id, payload.sheet),
+                (scoped_company_id, payload.sheet),
             ).fetchone()["max_sort"]
-            values = (company_id, payload.sheet, status_label, max_sort + 1)
+            values = (scoped_company_id, payload.sheet, status_label, max_sort + 1)
             sql = "INSERT INTO sheet_statuses (company_id, sheet, status, sort_order) VALUES (?, ?, ?, ?)"
             if IS_POSTGRES:
                 row = execute(conn, with_returning(sql), values).fetchone()
@@ -944,11 +1120,19 @@ def create_sheet_status(payload: SheetStatusCreate, user: sqlite3.Row = Depends(
 
 
 @router.delete("/sheet-statuses/{status_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_sheet_status(status_id: int, response: Response, user: sqlite3.Row = Depends(require_admin)) -> Response:
-    company_id = company_id_for_user(user)
+def delete_sheet_status(
+    status_id: int,
+    response: Response,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> Response:
+    scoped_company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
-        cursor = execute(conn, "DELETE FROM sheet_statuses WHERE id = ? AND company_id = ?",
-                         (status_id, company_id))
+        cursor = execute(
+            conn,
+            "DELETE FROM sheet_statuses WHERE id = ? AND company_id = ?",
+            (status_id, scoped_company_id),
+        )
     if cursor.rowcount == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Status not found")
     response.status_code = status.HTTP_204_NO_CONTENT
@@ -960,12 +1144,26 @@ def delete_sheet_status(status_id: int, response: Response, user: sqlite3.Row = 
 # ---------------------------------------------------------------------------
 
 @router.get("/audit-logs")
-def list_audit_logs(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    company_id = company_id_for_user(user)
+def list_audit_logs(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
     with connect() as conn:
-        rows = execute(
-            conn,
-            "SELECT * FROM audit_logs WHERE company_id = ? ORDER BY created_at DESC, id DESC LIMIT 250",
-            (company_id,),
-        ).fetchall()
+        if company_id is None:
+            rows = execute(
+                conn,
+                "SELECT * FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 250",
+            ).fetchall()
+        else:
+            scoped_company_id = resolve_scoped_company_id(user, company_id)
+            rows = execute(
+                conn,
+                """
+                SELECT * FROM audit_logs
+                WHERE company_id = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 250
+                """,
+                (scoped_company_id,),
+            ).fetchall()
     return {"logs": [audit_log_to_public(row) for row in rows]}

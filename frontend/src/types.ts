@@ -91,14 +91,18 @@ export type SurveyItem = {
   in_survey: boolean
   in_buy_book: boolean
   survey_sort_order: number
+  buy_book_sort_order?: number
   response_width: number
   page_break_before: boolean
+  buy_book_page_break_before?: boolean
   created_at: string
   updated_at: string
   period_item_id?: number | null
   catalog_item_id?: number
   image_display_size?: 'small' | 'medium' | 'large' | 'full'
   image_fit?: 'contain' | 'cover'
+  group_field?: SurveyFilterField | null
+  group_label?: string | null
 }
 
 export type SurveyPeriodStatus = 'draft' | 'open' | 'closed'

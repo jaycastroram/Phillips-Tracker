@@ -8,6 +8,9 @@ from fastapi import APIRouter, HTTPException, status
 
 from config import IS_POSTGRES
 from database import (
+    apply_buy_book_grouping,
+    buy_book_filter_fields,
+    buy_book_group_by,
     company_to_public,
     connect,
     ensure_default_company,
@@ -175,15 +178,31 @@ def _survey_items_response(company_id: int, q: str, surface: str) -> dict:
         )
         args.extend([like] * 6)
 
-    order_by = "sort_order ASC, id ASC"
+    order_by = (
+        "buy_book_sort_order ASC, sort_order ASC, id ASC"
+        if surface == "buy-book"
+        else "sort_order ASC, id ASC"
+    )
     with connect() as conn:
         rows = execute(
             conn,
             f"SELECT * FROM survey_items WHERE {' AND '.join(clauses)} ORDER BY {order_by}",
             args,
         ).fetchall()
+        if surface == "buy-book":
+            fields = buy_book_filter_fields(conn, company_id)
+            group_by = buy_book_group_by(conn, company_id)
+            items = apply_buy_book_grouping(
+                [survey_item_to_public(row, surface="buy-book") for row in rows],
+                group_by,
+            )
+            return {"items": items, "filter_fields": fields, "group_by": group_by}
+
         fields = survey_filter_fields(conn, company_id)
-    return {"items": [survey_item_to_public(row) for row in rows], "filter_fields": fields}
+    return {
+        "items": [survey_item_to_public(row, surface=surface or None) for row in rows],
+        "filter_fields": fields,
+    }
 
 
 @router.get("/survey-items")

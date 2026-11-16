@@ -3,6 +3,7 @@ from __future__ import annotations
 from config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD, COMPANY_SCOPED_TABLES, IS_POSTGRES
 from database import (
     connect,
+    ensure_buy_book_layout,
     ensure_column,
     ensure_default_company,
     ensure_legacy_survey_period,
@@ -62,12 +63,32 @@ def _create_survey_layouts_table(conn) -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS buy_book_layouts (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL UNIQUE,
+                filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
+                group_by TEXT NOT NULL DEFAULT 'brand',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     else:
         conn.execute("""
             CREATE TABLE IF NOT EXISTS survey_layouts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 company_id INTEGER NOT NULL UNIQUE,
                 filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS buy_book_layouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL UNIQUE,
+                filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
+                group_by TEXT NOT NULL DEFAULT 'brand',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -394,10 +415,24 @@ def _ensure_survey_layout_columns(conn) -> None:
     ensure_column(conn, "survey_items", "in_survey", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "survey_items", "in_buy_book", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "survey_items", "survey_sort_order", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "survey_items", "buy_book_sort_order", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "survey_items", "response_width", f"INTEGER NOT NULL DEFAULT {DEFAULT_RESPONSE_WIDTH}")
     ensure_column(conn, "survey_items", "page_break_before", "INTEGER NOT NULL DEFAULT 0")
+    ensure_column(conn, "survey_items", "buy_book_page_break_before", "INTEGER NOT NULL DEFAULT 0")
     ensure_column(conn, "survey_items", "image_display_size", "TEXT NOT NULL DEFAULT 'medium'")
     ensure_column(conn, "survey_items", "image_fit", "TEXT NOT NULL DEFAULT 'contain'")
+    ensure_column(conn, "buy_book_layouts", "group_by", "TEXT NOT NULL DEFAULT 'brand'")
+    execute(
+        conn,
+        """
+        UPDATE survey_items
+        SET buy_book_sort_order = CASE
+            WHEN buy_book_sort_order = 0 AND sort_order <> 0 THEN sort_order
+            WHEN buy_book_sort_order = 0 THEN id
+            ELSE buy_book_sort_order
+        END
+        """,
+    )
 
 
 def init_db() -> None:
@@ -417,6 +452,7 @@ def init_db() -> None:
         company = ensure_default_company(conn)
         _backfill_company_ids(conn, company["id"])
         ensure_survey_layout(conn, company["id"])
+        ensure_buy_book_layout(conn, company["id"])
         _scope_sheet_status_uniqueness(conn)
         _ensure_company_indexes(conn)
         execute(

@@ -465,6 +465,93 @@ button {
   font-weight: 700;
 }
 
+.admin-brand-copy {
+  display: grid;
+  gap: 2px;
+  line-height: 1.1;
+}
+
+.admin-brand-copy span {
+  font-family: "Poppins", sans-serif;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.admin-brand-copy small {
+  color: #516074;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.admin-brand-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 72px;
+  padding: 10px 16px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 16px;
+  background: linear-gradient(135deg, #ffffff 0%, #eef4fb 100%);
+}
+
+.admin-brand-banner img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.admin-brand-banner strong {
+  display: block;
+  font-family: "Poppins", sans-serif;
+  font-size: 1.35rem;
+}
+
+.admin-brand-banner span {
+  display: block;
+  color: #516074;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.admin-brand-banner em {
+  display: block;
+  margin-top: 4px;
+  color: var(--brand-blue);
+  font-style: normal;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.admin-company-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px 18px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 14px;
+  background: #f7f9fc;
+}
+
+.admin-company-filter label {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  font-weight: 700;
+}
+
+.admin-company-filter select {
+  min-width: 220px;
+}
+
+.admin-company-filter-note {
+  color: #516074;
+  font-size: 0.9rem;
+  max-width: 42rem;
+}
+
 .admin-page {
   display: grid;
   gap: 20px;
@@ -1841,6 +1928,39 @@ td textarea {
 
 .survey-layout-editor .table-tools p {
   margin: 4px 0 0;
+}
+
+.buy-book-group-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+}
+
+.buy-book-group-by {
+  margin-bottom: 16px;
+}
+
+.buy-book-item-block {
+  display: contents;
+}
+
+.buy-book-group-header {
+  grid-column: 1 / -1;
+  margin: 8px 0 4px;
+  padding: 10px 4px 4px;
+  border-bottom: 1px solid var(--brand-gridline);
+}
+
+.buy-book-group-header .eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.buy-book-group-header h2 {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
 }
 
 .survey-layout-filters {

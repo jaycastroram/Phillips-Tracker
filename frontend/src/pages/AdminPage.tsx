@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import { PromptModal } from '../components/PromptModal'
 import { StatusMultiSelect } from '../components/StatusMultiSelect'
 import { SHEET_ORDER } from '../constants'
@@ -13,6 +13,13 @@ import type {
   SheetStatus,
   StatusTargetSheet,
 } from '../types'
+import {
+  readAdminCompanyFilter,
+  resolveWorkingCompanyId,
+  withCompanyQuery,
+  writeAdminCompanyFilter,
+  type AdminCompanyFilter,
+} from '../utils/adminCompany'
 
 type AdminPageProps = {
   currentUser: AppUser
@@ -30,6 +37,10 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   // --- Companies ---
   const [companies, setCompanies] = useState<CompanyInfo[]>([])
   const [companiesLoading, setCompaniesLoading] = useState(false)
+  const [companyFilter, setCompanyFilter] = useState<AdminCompanyFilter>(() =>
+    readAdminCompanyFilter(_currentUser.company_id ?? 'all'),
+  )
+  const [scopedSheets, setScopedSheets] = useState<Record<SheetKey, SheetMeta> | null>(sheets)
 
   // --- Users ---
   const [users, setUsers] = useState<AppUser[]>([])
@@ -55,12 +66,29 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   const [kanbanColumnsLoading, setKanbanColumnsLoading] = useState(false)
   const [newKanbanColumn, setNewKanbanColumn] = useState({ title: '', statuses: [] as string[], sort_order: 0, is_visible: true })
 
+  const workingCompanyId = useMemo(
+    () =>
+      resolveWorkingCompanyId(
+        companyFilter,
+        companies.map((company) => company.id),
+        _currentUser.company_id,
+      ),
+    [companyFilter, companies, _currentUser.company_id],
+  )
+
+  const activeSheets = scopedSheets ?? sheets
+
   const allStatusOptions = (() => {
     const set = new Set<string>()
-    if (sheets) SHEET_ORDER.forEach((k) => sheets[k]?.statuses.forEach((s) => set.add(s)))
+    if (activeSheets) SHEET_ORDER.forEach((k) => activeSheets[k]?.statuses.forEach((s) => set.add(s)))
     sheetStatuses.forEach((r) => set.add(r.status))
     return [...set].sort((a, b) => a.localeCompare(b))
   })()
+
+  function updateCompanyFilter(next: AdminCompanyFilter) {
+    setCompanyFilter(next)
+    writeAdminCompanyFilter(next)
+  }
 
   // --- Loaders ---
   const loadCompanies = useCallback(async () => {
@@ -81,40 +109,68 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   const loadUsers = useCallback(async () => {
     setUsersLoading(true)
     try {
-      const res = await apiFetch('/admin/users')
+      const path = typeof companyFilter === 'number'
+        ? `/admin/users?company_id=${companyFilter}`
+        : '/admin/users'
+      const res = await apiFetch(path)
       if (!res.ok) throw new Error('Unable to load users.')
       setUsers((await res.json()).users)
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load users.') }
     finally { setUsersLoading(false) }
-  }, [apiFetch])
+  }, [apiFetch, companyFilter])
+
+  const loadScopedSheets = useCallback(async () => {
+    if (!workingCompanyId) {
+      setScopedSheets(sheets)
+      return
+    }
+    try {
+      const res = await apiFetch(`/sheets?company_id=${workingCompanyId}`)
+      if (!res.ok) throw new Error('Unable to load sheet config.')
+      setScopedSheets((await res.json()).sheets)
+    } catch {
+      setScopedSheets(sheets)
+    }
+  }, [apiFetch, sheets, workingCompanyId])
 
   const loadSheetStatuses = useCallback(async () => {
+    if (!workingCompanyId) return
     setStatusesLoading(true)
     try {
-      const res = await apiFetch('/admin/sheet-statuses')
+      const res = await apiFetch(withCompanyQuery('/admin/sheet-statuses', workingCompanyId))
       if (!res.ok) throw new Error('Unable to load statuses.')
       setSheetStatuses((await res.json()).statuses)
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load statuses.') }
     finally { setStatusesLoading(false) }
-  }, [apiFetch])
+  }, [apiFetch, workingCompanyId])
 
   const loadKanbanColumns = useCallback(async () => {
+    if (!workingCompanyId) return
     setKanbanColumnsLoading(true)
     try {
-      const res = await apiFetch('/admin/kanban-columns')
+      const res = await apiFetch(withCompanyQuery('/admin/kanban-columns', workingCompanyId))
       if (!res.ok) throw new Error('Unable to load kanban columns.')
       setKanbanColumns((await res.json()).columns)
     } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load kanban columns.') }
     finally { setKanbanColumnsLoading(false) }
-  }, [apiFetch])
+  }, [apiFetch, workingCompanyId])
+
+  useEffect(() => {
+    loadCompanies()
+  }, [loadCompanies])
 
   useEffect(() => {
     setError(''); setAdminMessage(''); setKanbanMessage('')
-    if (tab === 'users') { loadUsers(); loadCompanies() }
-    else if (tab === 'companies') loadCompanies()
-    else if (tab === 'statuses') loadSheetStatuses()
-    else if (tab === 'kanban') { loadKanbanColumns(); loadSheetStatuses() }
-  }, [tab, loadUsers, loadCompanies, loadSheetStatuses, loadKanbanColumns])
+    if (tab === 'users') loadUsers()
+    else if (tab === 'statuses') { loadScopedSheets(); loadSheetStatuses() }
+    else if (tab === 'kanban') { loadScopedSheets(); loadKanbanColumns(); loadSheetStatuses() }
+  }, [tab, companyFilter, loadUsers, loadScopedSheets, loadSheetStatuses, loadKanbanColumns])
+
+  useEffect(() => {
+    if (typeof companyFilter === 'number') {
+      setNewUser((u) => ({ ...u, company_id: companyFilter }))
+    }
+  }, [companyFilter])
 
   // --- Company actions ---
   async function updateCompany(companyId: number, updates: Partial<CompanyInfo>) {
@@ -166,13 +222,14 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   // --- Status actions ---
   async function createSheetStatus(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setAdminMessage(''); setError('')
+    if (!workingCompanyId) { setError('Select a company first.'); return }
     const targetSheets = newSheetStatus.sheet === 'all' ? SHEET_ORDER : [newSheetStatus.sheet as SheetKey]
     const created: SheetStatus[] = [], skipped: string[] = []
     for (const sheetKey of targetSheets) {
-      const res = await apiFetch('/admin/sheet-statuses', {
+      const res = await apiFetch(withCompanyQuery('/admin/sheet-statuses', workingCompanyId), {
         method: 'POST', body: JSON.stringify({ sheet: sheetKey, status: newSheetStatus.status })
       })
-      if (res.status === 409) { skipped.push(sheets?.[sheetKey]?.label ?? sheetKey); continue }
+      if (res.status === 409) { skipped.push(activeSheets?.[sheetKey]?.label ?? sheetKey); continue }
       if (!res.ok) { setError('Unable to create status.'); return }
       created.push((await res.json()).status)
     }
@@ -185,7 +242,8 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
 
   async function deleteSheetStatus(row: SheetStatus) {
     setAdminMessage(''); setError('')
-    const res = await apiFetch(`/admin/sheet-statuses/${row.id}`, { method: 'DELETE' })
+    if (!workingCompanyId) { setError('Select a company first.'); return }
+    const res = await apiFetch(withCompanyQuery(`/admin/sheet-statuses/${row.id}`, workingCompanyId), { method: 'DELETE' })
     if (!res.ok) { setError('Unable to remove status.'); return }
     setSheetStatuses((s) => s.filter((r) => r.id !== row.id))
     onSheetStatusChanged()
@@ -195,7 +253,11 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   // --- Kanban actions ---
   async function createKanbanColumn(e: FormEvent<HTMLFormElement>) {
     e.preventDefault(); setKanbanMessage(''); setError('')
-    const res = await apiFetch('/admin/kanban-columns', { method: 'POST', body: JSON.stringify(newKanbanColumn) })
+    if (!workingCompanyId) { setError('Select a company first.'); return }
+    const res = await apiFetch(withCompanyQuery('/admin/kanban-columns', workingCompanyId), {
+      method: 'POST',
+      body: JSON.stringify(newKanbanColumn),
+    })
     if (!res.ok) { setError('Unable to create kanban column.'); return }
     const data = await res.json()
     setKanbanColumns((c) => [...c, data.column])
@@ -205,7 +267,11 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
 
   async function updateKanbanColumn(columnId: number, updates: Partial<KanbanColumn>) {
     setKanbanMessage(''); setError('')
-    const res = await apiFetch(`/admin/kanban-columns/${columnId}`, { method: 'PATCH', body: JSON.stringify(updates) })
+    if (!workingCompanyId) { setError('Select a company first.'); return }
+    const res = await apiFetch(withCompanyQuery(`/admin/kanban-columns/${columnId}`, workingCompanyId), {
+      method: 'PATCH',
+      body: JSON.stringify(updates),
+    })
     if (!res.ok) { setError('Unable to update kanban column.'); return }
     const data = await res.json()
     setKanbanColumns((c) => c.map((col) => col.id === columnId ? data.column : col))
@@ -214,7 +280,8 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
 
   async function deleteKanbanColumn(columnId: number) {
     setKanbanMessage(''); setError('')
-    const res = await apiFetch(`/admin/kanban-columns/${columnId}`, { method: 'DELETE' })
+    if (!workingCompanyId) { setError('Select a company first.'); return }
+    const res = await apiFetch(withCompanyQuery(`/admin/kanban-columns/${columnId}`, workingCompanyId), { method: 'DELETE' })
     if (!res.ok) { setError('Unable to delete kanban column.'); return }
     setKanbanColumns((c) => c.filter((col) => col.id !== columnId))
     setKanbanMessage('Kanban column deleted.')
@@ -225,6 +292,33 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
       {error && <div className="error">{error}</div>}
       {adminMessage && <div className="success">{adminMessage}</div>}
       {kanbanMessage && <div className="success">{kanbanMessage}</div>}
+
+      <div className="admin-company-filter">
+        <label>
+          Company
+          <select
+            value={companyFilter === 'all' ? 'all' : String(companyFilter)}
+            onChange={(e) => {
+              const value = e.target.value
+              updateCompanyFilter(value === 'all' ? 'all' : Number(value))
+            }}
+          >
+            <option value="all">All companies</option>
+            {companies.map((company) => (
+              <option key={company.id} value={company.id}>
+                {company.company_name || company.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span className="admin-company-filter-note">
+          {tab === 'users'
+            ? 'Filters the user list. New users default to the selected company when one is chosen.'
+            : tab === 'companies'
+              ? 'Company list always shows every company.'
+              : 'Statuses and Kanban are edited for the selected company (or the first company when All is selected).'}
+        </span>
+      </div>
 
       <div className="admin-tabs" role="tablist" aria-label="Admin settings sections">
         {(['users', 'companies', 'statuses', 'kanban'] as AdminSettingsTab[]).map((t) => (
@@ -360,7 +454,7 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
             <label>Sheet
               <select value={newSheetStatus.sheet} onChange={(e) => setNewSheetStatus((s) => ({ ...s, sheet: e.target.value as StatusTargetSheet }))}>
                 <option value="all">All Sheets</option>
-                {SHEET_ORDER.map((k) => <option key={k} value={k}>{sheets?.[k]?.label ?? k}</option>)}
+                {SHEET_ORDER.map((k) => <option key={k} value={k}>{activeSheets?.[k]?.label ?? k}</option>)}
               </select>
             </label>
             <label>New Status<input required value={newSheetStatus.status} placeholder="New status label"
@@ -376,7 +470,7 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
               const rows = sheetStatuses.filter((r) => r.sheet === k)
               return (
                 <div key={k} className="status-group">
-                  <h3>{sheets?.[k]?.label ?? k}</h3>
+                  <h3>{activeSheets?.[k]?.label ?? k}</h3>
                   <div className="selected-status-chips removable-status-chips">
                     {rows.map((r) => (
                       <span key={r.id}>{r.status}<button type="button" onClick={() => deleteSheetStatus(r)}>Remove</button></span>

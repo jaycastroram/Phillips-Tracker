@@ -6,6 +6,7 @@ from typing import Any
 from config import DEFAULT_KANBAN_COLUMNS, DEFAULT_COMPANY_SLUG, SEED_ITEMS_PATH, SHEETS
 from database import (
     IS_POSTGRES,
+    ensure_buy_book_layout,
     ensure_legacy_survey_period,
     ensure_survey_layout,
     execute,
@@ -808,6 +809,7 @@ def seed_demo_companies(conn: Any) -> None:
         company = _ensure_company_record(conn, seed)
         company_id = company["id"]
         ensure_survey_layout(conn, company_id)
+        ensure_buy_book_layout(conn, company_id)
         seed_kanban_columns_if_empty(conn, company_id)
         seed_sheet_statuses_if_empty(conn, company_id)
         _seed_company_survey_items(conn, company_id, seed["survey_items"])

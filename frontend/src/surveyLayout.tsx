@@ -10,7 +10,11 @@ type SurveyLayoutEditorProps = {
   message: string
   title?: string
   description?: string
+  showSurvey?: boolean
   showBuyBook?: boolean
+  showResponseWidth?: boolean
+  filterLegend?: string
+  includeLabel?: string
   saveLabel?: string
   disabled?: boolean
   onSave: (items: SurveyItem[], filterFields: SurveyFilterField[]) => void
@@ -32,7 +36,11 @@ export function SurveyLayoutEditor({
   message,
   title = 'Survey Layout',
   description = 'Drag items into survey order. Page breaks split the survey on screen and when printing.',
+  showSurvey = true,
   showBuyBook = true,
+  showResponseWidth = true,
+  filterLegend = 'Survey filters',
+  includeLabel = 'Buy Book',
   saveLabel = 'Save Layout',
   disabled = false,
   onSave,
@@ -94,7 +102,7 @@ export function SurveyLayoutEditor({
       {message && <div className="success">{message}</div>}
 
       <fieldset className="survey-layout-filters">
-        <legend>Survey filters</legend>
+        <legend>{filterLegend}</legend>
         {SURVEY_FILTER_FIELDS.map((filter) => (
           <label key={filter.field}>
             <input
@@ -108,7 +116,7 @@ export function SurveyLayoutEditor({
       </fieldset>
 
       {loading ? (
-        <div className="empty-state">Loading survey layout...</div>
+        <div className="empty-state">Loading layout...</div>
       ) : (
         <ol className="survey-layout-list">
           {draftItems.map((item, index) => (
@@ -138,14 +146,16 @@ export function SurveyLayoutEditor({
                 <strong>{item.item_name}</strong>
                 <p>{[item.brand, item.channel, item.product_type].filter(Boolean).join(' | ')}</p>
               </div>
-              <label>
-                <input
-                  checked={item.in_survey}
-                  type="checkbox"
-                  onChange={(event) => updateItem(item.id, { in_survey: event.target.checked })}
-                />
-                Survey
-              </label>
+              {showSurvey && (
+                <label>
+                  <input
+                    checked={item.in_survey}
+                    type="checkbox"
+                    onChange={(event) => updateItem(item.id, { in_survey: event.target.checked })}
+                  />
+                  Survey
+                </label>
+              )}
               {showBuyBook && (
                 <label>
                   <input
@@ -153,22 +163,24 @@ export function SurveyLayoutEditor({
                     type="checkbox"
                     onChange={(event) => updateItem(item.id, { in_buy_book: event.target.checked })}
                   />
-                  Buy Book
+                  {includeLabel}
                 </label>
               )}
-              <label className="survey-layout-width">
-                Response width
-                <input
-                  max={70}
-                  min={20}
-                  type="range"
-                  value={item.response_width}
-                  onChange={(event) =>
-                    updateItem(item.id, { response_width: Number(event.target.value) })
-                  }
-                />
-                <span>{item.response_width}%</span>
-              </label>
+              {showResponseWidth && (
+                <label className="survey-layout-width">
+                  Response width
+                  <input
+                    max={70}
+                    min={20}
+                    type="range"
+                    value={item.response_width}
+                    onChange={(event) =>
+                      updateItem(item.id, { response_width: Number(event.target.value) })
+                    }
+                  />
+                  <span>{item.response_width}%</span>
+                </label>
+              )}
               <label className="survey-layout-select">
                 Image Size
                 <select

@@ -9,9 +9,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from config import (
+    BUY_BOOK_GROUP_FIELDS,
     COMPANY_SCOPED_TABLES,
     DB_PATH,
     DATABASE_URL,
+    DEFAULT_BUY_BOOK_GROUP_BY,
     DEFAULT_COMPANY_NAME,
     DEFAULT_COMPANY_SLUG,
     DEFAULT_RESPONSE_WIDTH,
@@ -221,7 +223,15 @@ def sheet_status_to_public(row: sqlite3.Row) -> dict:
     }
 
 
-def survey_item_to_public(row: sqlite3.Row) -> dict:
+def survey_item_to_public(row: sqlite3.Row, *, surface: str | None = None) -> dict:
+    buy_book_sort_order = _row_get(row, "buy_book_sort_order", 0) or 0
+    buy_book_page_break = bool(_row_get(row, "buy_book_page_break_before", 0))
+    page_break_before = bool(row["page_break_before"])
+    survey_sort_order = row["survey_sort_order"]
+    if surface == "buy-book":
+        # Public buy-book consumers reuse page_break_before / survey_sort_order.
+        page_break_before = buy_book_page_break
+        survey_sort_order = buy_book_sort_order
     return {
         "id": row["id"],
         "item_name": row["item_name"],
@@ -239,9 +249,11 @@ def survey_item_to_public(row: sqlite3.Row) -> dict:
         "is_active": bool(row["is_active"]),
         "in_survey": bool(row["in_survey"]),
         "in_buy_book": bool(row["in_buy_book"]),
-        "survey_sort_order": row["survey_sort_order"],
+        "survey_sort_order": survey_sort_order,
+        "buy_book_sort_order": buy_book_sort_order,
         "response_width": row["response_width"] or DEFAULT_RESPONSE_WIDTH,
-        "page_break_before": bool(row["page_break_before"]),
+        "page_break_before": page_break_before,
+        "buy_book_page_break_before": buy_book_page_break,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -366,6 +378,19 @@ def company_id_for_user(user: Any) -> int:
     return default_company_id()
 
 
+def resolve_scoped_company_id(user: Any, requested_company_id: int | None = None) -> int:
+    """Admins may override company scope; other roles always use their own company."""
+    if requested_company_id is None or _row_get(user, "role") != "admin":
+        return company_id_for_user(user)
+
+    with connect() as conn:
+        company = fetch_company_by_id(conn, int(requested_company_id))
+    if company is None:
+        from fastapi import HTTPException, status
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    return int(company["id"])
+
+
 def get_default_company() -> Any:
     with connect() as conn:
         company = fetch_company_by_slug(conn, DEFAULT_COMPANY_SLUG)
@@ -421,6 +446,92 @@ def survey_filter_fields(conn: Any, company_id: int) -> list[str]:
     if not isinstance(stored_fields, list):
         return list(DEFAULT_SURVEY_FILTER_FIELDS)
     return normalize_filter_fields([str(f) for f in stored_fields])
+
+
+def ensure_buy_book_layout(conn: Any, company_id: int) -> Any:
+    existing = execute(
+        conn,
+        "SELECT * FROM buy_book_layouts WHERE company_id = ?",
+        (company_id,),
+    ).fetchone()
+    if existing is not None:
+        return existing
+
+    filter_fields_json = json.dumps(DEFAULT_SURVEY_FILTER_FIELDS)
+    values = (company_id, filter_fields_json, DEFAULT_BUY_BOOK_GROUP_BY)
+    if IS_POSTGRES:
+        return execute(
+            conn,
+            """
+            INSERT INTO buy_book_layouts (company_id, filter_fields_json, group_by)
+            VALUES (?, ?, ?)
+            RETURNING *
+            """,
+            values,
+        ).fetchone()
+
+    cursor = execute(
+        conn,
+        """
+        INSERT INTO buy_book_layouts (company_id, filter_fields_json, group_by)
+        VALUES (?, ?, ?)
+        """,
+        values,
+    )
+    return execute(conn, "SELECT * FROM buy_book_layouts WHERE id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def buy_book_filter_fields(conn: Any, company_id: int) -> list[str]:
+    layout = ensure_buy_book_layout(conn, company_id)
+    try:
+        stored_fields = json.loads(layout["filter_fields_json"] or "[]")
+    except json.JSONDecodeError:
+        return list(DEFAULT_SURVEY_FILTER_FIELDS)
+    if not isinstance(stored_fields, list):
+        return list(DEFAULT_SURVEY_FILTER_FIELDS)
+    return normalize_filter_fields([str(f) for f in stored_fields])
+
+
+def normalize_buy_book_group_by(value: str | None) -> str:
+    if value in BUY_BOOK_GROUP_FIELDS:
+        return value or DEFAULT_BUY_BOOK_GROUP_BY
+    return DEFAULT_BUY_BOOK_GROUP_BY
+
+
+def buy_book_group_by(conn: Any, company_id: int) -> str:
+    layout = ensure_buy_book_layout(conn, company_id)
+    return normalize_buy_book_group_by(_row_get(layout, "group_by", DEFAULT_BUY_BOOK_GROUP_BY))
+
+
+def apply_buy_book_grouping(items: list[dict], group_by: str) -> list[dict]:
+    """Sort by selected facet and force page breaks between group changes."""
+    field = BUY_BOOK_GROUP_FIELDS.get(normalize_buy_book_group_by(group_by))
+    if not field:
+        return items
+
+    indexed = list(enumerate(items))
+    indexed.sort(
+        key=lambda pair: (
+            (str(pair[1].get(field) or "").strip().lower() or "ungrouped"),
+            pair[0],
+        )
+    )
+    grouped: list[dict] = []
+    previous_label: str | None = None
+    for index, (_, item) in enumerate(indexed):
+        next_item = dict(item)
+        label = str(next_item.get(field) or "").strip() or "Ungrouped"
+        next_item["group_field"] = field
+        next_item["group_label"] = label
+        if index == 0:
+            next_item["page_break_before"] = False
+        elif label != previous_label:
+            next_item["page_break_before"] = True
+        else:
+            next_item["page_break_before"] = bool(next_item.get("page_break_before"))
+        previous_label = label
+        grouped.append(next_item)
+    return grouped
 
 
 def parse_period_filter_fields(filter_fields_json: str | None) -> list[str]:

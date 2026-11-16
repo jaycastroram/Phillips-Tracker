@@ -23,6 +23,7 @@ import { TrackerPage } from './pages/TrackerPage'
 import { BuyBookPage, SurveyPage, ViewerPage } from './publicPages'
 import type {
   AppUser,
+  CompanyInfo,
   EditableField,
   KanbanColumn,
   Page,
@@ -35,6 +36,12 @@ import type {
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
+import {
+  readAdminCompanyFilter,
+  resolveWorkingCompanyId,
+  writeAdminCompanyFilter,
+  type AdminCompanyFilter,
+} from './utils/adminCompany'
 import { companyPublicApiPath, escapePrintValue, isImageReference, parsePublicRoute, publicPagePath } from './utils'
 import './App.css'
 
@@ -97,8 +104,12 @@ function App() {
   const [surveyMessage, setSurveyMessage] = useState('')
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [, setCurrentTablePage] = useState(1)
+  const [adminCompanies, setAdminCompanies] = useState<CompanyInfo[]>([])
+  const [adminCompanyFilter, setAdminCompanyFilter] = useState<AdminCompanyFilter>(() =>
+    readAdminCompanyFilter('all'),
+  )
 
-  const companyConfig = useCompanyConfig(currentUser?.company)
+  const companyConfig = useCompanyConfig(currentUser?.role === 'admin' ? null : currentUser?.company)
 
   const publicRoute = useMemo(() => parsePublicRoute(currentPath), [currentPath])
   const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
@@ -347,20 +358,52 @@ function App() {
     const pw = printFrame.contentWindow
     const pd = pw?.document
     if (!pw || !pd) { printFrame.remove(); return }
-    const itemMarkup = selected.map((item, i) => {
-      const img = isImageReference(item.image_url)
-        ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
-        : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
-      return `<article class="buy-book-item"><div class="item-image">${img}</div><div class="item-copy"><dl>
-        <div><dt>Name:</dt><dd>${escapePrintValue(item.item_name || `Item ${i + 1}`)}</dd></div>
-        <div><dt>Description:</dt><dd>${escapePrintValue(item.item_description || 'No description.')}</dd></div>
-        <div><dt>UOM:</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
-        <div><dt>Price:</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
-      </dl></div></article>`
+
+    const pages: typeof selected[] = []
+    let currentPage: typeof selected = []
+    selected.forEach((item, index) => {
+      if (item.page_break_before && index > 0 && currentPage.length > 0) {
+        pages.push(currentPage)
+        currentPage = []
+      }
+      currentPage.push(item)
+    })
+    if (currentPage.length) pages.push(currentPage)
+
+    const pagesMarkup = pages.map((pageItems, pageIndex) => {
+      const groupLabel = pageItems[0]?.group_label
+      const groupHeading = groupLabel
+        ? `<header class="buy-book-group"><p>${escapePrintValue(
+            pageItems[0]?.group_field === 'key_program'
+              ? 'Program'
+              : pageItems[0]?.group_field === 'product_type'
+                ? 'Type'
+                : pageItems[0]?.group_field === 'channel'
+                  ? 'Channel'
+                  : 'Brand',
+          )}</p><h1>${escapePrintValue(groupLabel)}</h1></header>`
+        : ''
+      const itemMarkup = pageItems.map((item, i) => {
+        const img = isImageReference(item.image_url)
+          ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
+          : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
+        return `<article class="buy-book-item"><div class="item-image">${img}</div><div class="item-copy"><dl>
+          <div><dt>Name:</dt><dd>${escapePrintValue(item.item_name || `Item ${i + 1}`)}</dd></div>
+          <div><dt>Description:</dt><dd>${escapePrintValue(item.item_description || 'No description.')}</dd></div>
+          <div><dt>UOM:</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
+          <div><dt>Price:</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
+        </dl></div></article>`
+      }).join('')
+      return `<section class="buy-book-page${pageIndex > 0 ? ' buy-book-page-break' : ''}">${groupHeading}<div class="buy-book-grid">${itemMarkup}</div></section>`
     }).join('')
+
     pd.open()
     pd.write(`<!doctype html><html><head><title>SmartBuy Buy Book</title><style>
       *{box-sizing:border-box}body{margin:0;padding:30px 42px;font-family:Arial,sans-serif}
+      .buy-book-page{padding-bottom:12px}
+      .buy-book-page-break{break-before:page;page-break-before:always}
+      .buy-book-group{margin:0 0 18px} .buy-book-group p{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#666}
+      .buy-book-group h1{margin:4px 0 0;font-size:22px}
       .buy-book-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 44px}
       .buy-book-item{break-inside:avoid;display:grid;grid-template-columns:116px 1fr;gap:16px;min-height:126px}
       .item-image{min-height:104px;display:grid;place-items:center}
@@ -368,20 +411,58 @@ function App() {
       .image-placeholder{width:70px;height:70px;display:grid;place-items:center;border-radius:999px;background:#f4f4f4;color:#FD4338;font-size:20px;font-weight:800}
       dl{margin:0;display:grid;gap:3px}dt{display:inline;margin-right:4px;font-size:11px;font-weight:800}
       dd{display:inline;margin:0;font-size:11px}@media print{@page{size:landscape;margin:.35in}}
-    </style></head><body><main class="buy-book-grid">${itemMarkup}</main></body></html>`)
+    </style></head><body>${pagesMarkup}</body></html>`)
     pd.close()
     setTimeout(() => { pw.focus(); pw.print(); setTimeout(() => printFrame.remove(), 1000) }, 250)
   }
 
   // --- Navigation helpers ---
   function goToPath(path: string) { window.history.pushState({}, '', path); setCurrentPath(path) }
-  function openPublicPath(path: string) {
-    const slug = currentUser?.company?.company_slug || companyConfig.company_slug || DEFAULT_COMPANY_SLUG
-    window.open(`/${slug}${path}`, '_blank', 'noopener')
-  }
 
   // --- Derived values ---
   const isAdmin = currentUser?.role === 'admin'
+
+  const adminWorkingCompanyId = useMemo(
+    () =>
+      resolveWorkingCompanyId(
+        adminCompanyFilter,
+        adminCompanies.map((company) => company.id),
+        currentUser?.company_id ?? null,
+      ),
+    [adminCompanyFilter, adminCompanies, currentUser?.company_id],
+  )
+
+  const adminWorkingCompany = useMemo(
+    () => adminCompanies.find((company) => company.id === adminWorkingCompanyId) ?? null,
+    [adminCompanies, adminWorkingCompanyId],
+  )
+
+  useEffect(() => {
+    if (!isAdmin || !token) {
+      setAdminCompanies([])
+      return
+    }
+    apiFetch('/admin/companies')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.companies) setAdminCompanies(data.companies)
+      })
+      .catch(() => setAdminCompanies([]))
+  }, [apiFetch, isAdmin, token])
+
+  function handleAdminCompanyFilterChange(value: AdminCompanyFilter) {
+    setAdminCompanyFilter(value)
+    writeAdminCompanyFilter(value)
+  }
+
+  function openPublicPath(path: string) {
+    const slug =
+      (isAdmin && adminWorkingCompany?.company_slug)
+      || currentUser?.company?.company_slug
+      || companyConfig.company_slug
+      || DEFAULT_COMPANY_SLUG
+    window.open(`/${slug}${path}`, '_blank', 'noopener')
+  }
 
   const publicStatusOptions = useMemo(() =>
     [...new Set(publicItems.map((item) => item.current_status).filter(Boolean))].sort(), [publicItems])
@@ -411,6 +492,7 @@ function App() {
     try {
       const params = new URLSearchParams()
       if (periodId != null) params.set('period_id', String(periodId))
+      if (isAdmin && adminWorkingCompanyId != null) params.set('company_id', String(adminWorkingCompanyId))
       const res = await apiFetch(
         `/admin/survey-responses/export${params.toString() ? `?${params}` : ''}`,
       )
@@ -427,7 +509,8 @@ function App() {
 
   // ---- Public pages ----
   if (isPublicBuyBookPath) {
-    return <BuyBookPage surveyItems={surveyItems} surveyLoading={surveyLoading} surveyError={surveyError}
+    return <BuyBookPage surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
+      surveyLoading={surveyLoading} surveyError={surveyError}
       surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
       setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook} />
   }
@@ -485,10 +568,20 @@ function App() {
     <main className="app-shell">
       <header className="brand-header">
         <div className="brand-topline">
-          {companyConfig.logo_url
-            ? <img className="company-logo" src={companyConfig.logo_url} alt={companyConfig.company_name} />
-            : <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />}
-          <span>Analytics On Demand</span>
+          {isAdmin ? (
+            <>
+              <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+              <div className="admin-brand-copy">
+                <span>SmartBuy</span>
+                <small>Powered by FSI</small>
+              </div>
+            </>
+          ) : companyConfig.logo_url ? (
+            <img className="company-logo" src={companyConfig.logo_url} alt={companyConfig.company_name} />
+          ) : (
+            <img className="smartbuy-logo" src={smartBuyLogo} alt="SmartBuy" />
+          )}
+          {!isAdmin && <span>Analytics On Demand</span>}
         </div>
         <details className="nav-menu">
           <summary>Menu</summary>
@@ -514,9 +607,22 @@ function App() {
       </header>
 
       <section className="client-title-row">
-        {companyConfig.banner_url
-          ? <img className="tracker-brand-banner" src={companyConfig.banner_url} alt={companyConfig.company_name} />
-          : <img className="tracker-brand-banner" src="/SmartBuy Analytics - Status Tracker Logo.png" alt="SmartBuy Status Tracker" />}
+        {isAdmin ? (
+          <div className="admin-brand-banner">
+            <img src={smartBuyLogo} alt="SmartBuy" />
+            <div>
+              <strong>SmartBuy</strong>
+              <span>Powered by FSI</span>
+              {adminWorkingCompany && (
+                <em>Viewing {adminWorkingCompany.company_name || adminWorkingCompany.name}</em>
+              )}
+            </div>
+          </div>
+        ) : companyConfig.banner_url ? (
+          <img className="tracker-brand-banner" src={companyConfig.banner_url} alt={companyConfig.company_name} />
+        ) : (
+          <img className="tracker-brand-banner" src="/SmartBuy Analytics - Status Tracker Logo.png" alt="SmartBuy Status Tracker" />
+        )}
         <div className="tracker-page-title">
           <p className="eyebrow">
             {page === 'admin-users'
@@ -551,6 +657,10 @@ function App() {
 
       {page === 'surveys' && (
         <SurveysPage
+          currentUser={currentUser}
+          companies={adminCompanies}
+          companyFilter={adminCompanyFilter}
+          onCompanyFilterChange={handleAdminCompanyFilterChange}
           apiFetch={apiFetch}
           onDownloadSurveyResponses={downloadSurveyResponses}
         />
