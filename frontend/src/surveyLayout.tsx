@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { SURVEY_FILTER_FIELDS } from './constants'
 import type { SurveyFilterField, SurveyItem } from './types'
 
@@ -14,6 +14,7 @@ type SurveyLayoutEditorProps = {
   showBuyBook?: boolean
   showResponseWidth?: boolean
   filterLegend?: string
+  filterExtra?: ReactNode
   includeLabel?: string
   saveLabel?: string
   disabled?: boolean
@@ -40,6 +41,7 @@ export function SurveyLayoutEditor({
   showBuyBook = true,
   showResponseWidth = true,
   filterLegend = 'Survey filters',
+  filterExtra,
   includeLabel = 'Buy Book',
   saveLabel = 'Save Layout',
   disabled = false,
@@ -101,18 +103,24 @@ export function SurveyLayoutEditor({
       </div>
       {message && <div className="success">{message}</div>}
 
-      <fieldset className="survey-layout-filters">
+      <fieldset className={`survey-layout-filters${filterExtra ? ' has-extra' : ''}`}>
         <legend>{filterLegend}</legend>
-        {SURVEY_FILTER_FIELDS.map((filter) => (
-          <label key={filter.field}>
-            <input
-              checked={draftFilters.includes(filter.field)}
-              type="checkbox"
-              onChange={() => toggleFilter(filter.field)}
-            />
-            {filter.label}
-          </label>
-        ))}
+        {filterExtra}
+        <div className="survey-layout-filter-row">
+          <p className="survey-layout-filter-label">Public filters</p>
+          <div className="survey-layout-filter-options">
+            {SURVEY_FILTER_FIELDS.map((filter) => (
+              <label key={filter.field}>
+                <input
+                  checked={draftFilters.includes(filter.field)}
+                  type="checkbox"
+                  onChange={() => toggleFilter(filter.field)}
+                />
+                {filter.label}
+              </label>
+            ))}
+          </div>
+        </div>
       </fieldset>
 
       {loading ? (

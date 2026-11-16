@@ -1969,8 +1969,31 @@ td textarea {
   gap: 12px 18px;
 }
 
-.buy-book-group-by {
-  margin-bottom: 16px;
+.survey-layout-filters.has-extra {
+  display: grid;
+  gap: 16px;
+}
+
+.survey-layout-filter-row {
+  display: grid;
+  gap: 8px;
+}
+
+.survey-layout-filter-label {
+  margin: 0;
+  font-weight: 700;
+}
+
+.survey-layout-filter-note {
+  margin: 0;
+  color: #516074;
+  font-size: 0.9rem;
+}
+
+.survey-layout-filter-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
 }
 
 .buy-book-item-block {

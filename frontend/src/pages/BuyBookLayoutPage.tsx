@@ -86,35 +86,36 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
     <section className="buy-book-layout-page">
       {error && <div className="error">{error}</div>}
 
-      <fieldset className="survey-layout-filters buy-book-group-by">
-        <legend>Group buy book by</legend>
-        <p className="subtitle" style={{ margin: '0 0 0.75rem' }}>
-          Items are sorted by this facet and a page break is added when the group changes.
-          Manual page breaks still apply inside a group.
-        </p>
-        <div className="buy-book-group-options">
-          {BUY_BOOK_GROUP_OPTIONS.map((option) => (
-            <label key={option.field}>
-              <input
-                checked={groupBy === option.field}
-                name="buy-book-group-by"
-                type="radio"
-                value={option.field}
-                onChange={() => setGroupBy(option.field)}
-              />
-              {option.label}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
       <SurveyLayoutEditor
         title="Buy Book Layout"
-        description="Choose catalog items for the Buy Book, set filters, and add optional manual page breaks. Automatic grouping/page breaks follow the setting above."
+        description="Choose catalog items, grouping, public filters, and optional manual page breaks for the Buy Book."
         showSurvey={false}
         showBuyBook
         showResponseWidth={false}
-        filterLegend="Buy book filters"
+        filterLegend="Buy book options"
+        filterExtra={(
+          <div className="survey-layout-filter-row">
+            <p className="survey-layout-filter-label">Group by</p>
+            <p className="survey-layout-filter-note">
+              Items are sorted by this facet and a page break is added when the group changes.
+              Manual page breaks still apply inside a group.
+            </p>
+            <div className="buy-book-group-options">
+              {BUY_BOOK_GROUP_OPTIONS.map((option) => (
+                <label key={option.field}>
+                  <input
+                    checked={groupBy === option.field}
+                    name="buy-book-group-by"
+                    type="radio"
+                    value={option.field}
+                    onChange={() => setGroupBy(option.field)}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </div>
+        )}
         includeLabel="In Buy Book"
         saveLabel="Save Buy Book Layout"
         filterFields={filterFields}
