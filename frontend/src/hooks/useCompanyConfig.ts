@@ -29,10 +29,25 @@ function toConfig(source: CompanyInfo | CompanyConfig | null | undefined): Compa
   }
 }
 
-export function useCompanyConfig(userCompany?: CompanyInfo | null) {
+export function useCompanyConfig(
+  userCompany?: CompanyInfo | null,
+  companySlug?: string | null,
+) {
   const [config, setConfig] = useState<CompanyConfig>(() => toConfig(userCompany) || DEFAULT_CONFIG)
 
   useEffect(() => {
+    const slug = companySlug?.trim()
+    if (slug) {
+      fetch(`${API_BASE}/public/${encodeURIComponent(slug)}/config`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const next = toConfig(data)
+          if (next) setConfig(next)
+        })
+        .catch(() => {/* keep current config */})
+      return
+    }
+
     const fromUser = toConfig(userCompany)
     if (fromUser) {
       setConfig(fromUser)
@@ -47,7 +62,7 @@ export function useCompanyConfig(userCompany?: CompanyInfo | null) {
         }
       })
       .catch(() => {/* silently fall back to defaults */})
-  }, [userCompany])
+  }, [companySlug, userCompany])
 
   return config
 }

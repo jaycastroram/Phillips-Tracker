@@ -1280,6 +1280,19 @@ td textarea {
   object-position: center;
 }
 
+.public-brand-art.is-company-brand {
+  display: flex;
+  justify-content: center;
+  padding-top: 18px;
+  padding-bottom: 8px;
+}
+
+.public-brand-art.is-company-brand img {
+  width: auto;
+  max-width: min(100%, 520px);
+  max-height: 96px;
+}
+
 .public-page-footer {
   display: flex;
   align-items: center;

@@ -25,7 +25,13 @@ type PublicKanbanColumn = {
   items: TrackerItem[]
 }
 
-type BuyBookPageProps = {
+type PublicBrandProps = {
+  companyName?: string
+  companyLogoUrl?: string
+  companyBannerUrl?: string
+}
+
+type BuyBookPageProps = PublicBrandProps & {
   surveyItems: SurveyItem[]
   surveyFilterFields: SurveyFilterField[]
   surveyLoading: boolean
@@ -37,7 +43,7 @@ type BuyBookPageProps = {
   printSurveyBuyBook: () => void
 }
 
-type SurveyPageProps = {
+type SurveyPageProps = PublicBrandProps & {
   surveyItems: SurveyItem[]
   surveyFilterFields: SurveyFilterField[]
   surveyLoading: boolean
@@ -58,7 +64,7 @@ type SurveyPageProps = {
   updateSurveyResponse: (itemId: number, updates: Partial<SurveyResponseDraft>) => void
 }
 
-type ViewerPageProps = {
+type ViewerPageProps = PublicBrandProps & {
   isPublicKanbanPath: boolean
   gridPath: string
   kanbanPath: string
@@ -138,12 +144,38 @@ function PublicCard({
   )
 }
 
-function PublicBrandHeader({ src }: { src: string }) {
+function PublicBrandHeader({
+  src,
+  alt,
+  isCompanyBrand = false,
+}: {
+  src: string
+  alt: string
+  isCompanyBrand?: boolean
+}) {
   return (
-    <header className="public-brand-art">
-      <img src={src} alt="Tito's and SmartBuy" />
+    <header className={`public-brand-art${isCompanyBrand ? ' is-company-brand' : ''}`}>
+      <img src={src} alt={alt} />
     </header>
   )
+}
+
+function resolvePublicBrandHeader(
+  companyBannerUrl: string | undefined,
+  companyLogoUrl: string | undefined,
+  companyName: string | undefined,
+  fallbackSrc: string,
+  fallbackAlt: string,
+) {
+  const banner = companyBannerUrl?.trim() || ''
+  const logo = companyLogoUrl?.trim() || ''
+  if (banner) {
+    return { src: banner, alt: companyName || fallbackAlt, isCompanyBrand: true }
+  }
+  if (logo) {
+    return { src: logo, alt: companyName || fallbackAlt, isCompanyBrand: true }
+  }
+  return { src: fallbackSrc, alt: fallbackAlt, isCompanyBrand: false }
 }
 
 function PublicFooter() {
@@ -315,6 +347,9 @@ function SurveyFilterControls({
 }
 
 export function BuyBookPage({
+  companyName,
+  companyLogoUrl,
+  companyBannerUrl,
   surveyItems,
   surveyFilterFields,
   surveyLoading,
@@ -330,6 +365,13 @@ export function BuyBookPage({
   const [currentPage, setCurrentPage] = useState(0)
   const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
   const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+  const brandHeader = resolvePublicBrandHeader(
+    companyBannerUrl,
+    companyLogoUrl,
+    companyName,
+    BUY_BOOK_HEADER_LOGO,
+    'SmartBuy Buy Book',
+  )
   useEffect(() => {
     setCurrentPage(0)
   }, [surveyFilters.filteredItems])
@@ -346,7 +388,7 @@ export function BuyBookPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <PublicBrandHeader src={BUY_BOOK_HEADER_LOGO} />
+      <PublicBrandHeader {...brandHeader} />
 
       <section className="viewer-toolbar buy-book-toolbar">
         <div className="buy-book-filter-group">
@@ -481,6 +523,9 @@ export function BuyBookPage({
 }
 
 export function SurveyPage({
+  companyName,
+  companyLogoUrl,
+  companyBannerUrl,
   surveyItems,
   surveyFilterFields,
   surveyLoading,
@@ -505,6 +550,13 @@ export function SurveyPage({
   const [currentPage, setCurrentPage] = useState(0)
   const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
   const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+  const brandHeader = resolvePublicBrandHeader(
+    companyBannerUrl,
+    companyLogoUrl,
+    companyName,
+    PRE_BUY_SURVEY_HEADER_LOGO,
+    'SmartBuy Pre Buy Survey',
+  )
   useEffect(() => {
     setCurrentPage(0)
   }, [surveyFilters.filteredItems])
@@ -522,7 +574,7 @@ export function SurveyPage({
   if (!surveyLoading && !surveyOpen) {
     return (
       <main className="app-shell viewer-shell survey-shell">
-        <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
+        <PublicBrandHeader {...brandHeader} />
         <div className="empty-state survey-closed-state">{surveyClosedMessage}</div>
         <PublicFooter />
       </main>
@@ -531,7 +583,7 @@ export function SurveyPage({
 
   return (
     <main className="app-shell viewer-shell survey-shell">
-      <PublicBrandHeader src={PRE_BUY_SURVEY_HEADER_LOGO} />
+      <PublicBrandHeader {...brandHeader} />
 
       <section className="survey-toolbar">
         {/* Row 1: Search + Filters */}
@@ -722,6 +774,9 @@ export function SurveyPage({
 }
 
 export function ViewerPage({
+  companyName,
+  companyLogoUrl,
+  companyBannerUrl,
   isPublicKanbanPath,
   gridPath,
   kanbanPath,
@@ -738,10 +793,17 @@ export function ViewerPage({
   goToPath,
 }: ViewerPageProps) {
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+  const brandHeader = resolvePublicBrandHeader(
+    companyBannerUrl,
+    companyLogoUrl,
+    companyName,
+    STATUS_TRACKER_HEADER_LOGO,
+    'SmartBuy Status Tracker',
+  )
 
   return (
     <main className="app-shell viewer-shell public-viewer-shell">
-      <PublicBrandHeader src={STATUS_TRACKER_HEADER_LOGO} />
+      <PublicBrandHeader {...brandHeader} />
 
       <section className="viewer-toolbar">
         <label>

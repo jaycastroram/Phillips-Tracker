@@ -109,13 +109,17 @@ function App() {
     readAdminCompanyFilter('all'),
   )
 
-  const companyConfig = useCompanyConfig(currentUser?.role === 'admin' ? null : currentUser?.company)
-
   const publicRoute = useMemo(() => parsePublicRoute(currentPath), [currentPath])
   const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
   const isPublicViewerPath = publicPage === 'viewer'
   const isPublicSurveyPath = publicPage === 'survey'
   const isPublicBuyBookPath = publicPage === 'buy-book'
+  const isPublicSurface = isPublicViewerPath || isPublicSurveyPath || isPublicBuyBookPath
+
+  const companyConfig = useCompanyConfig(
+    isPublicSurface || currentUser?.role === 'admin' ? null : currentUser?.company,
+    isPublicSurface ? companySlug : null,
+  )
 
   useEffect(() => {
     function handlePop() { setCurrentPath(window.location.pathname) }
@@ -538,14 +542,20 @@ function App() {
   }
 
   // ---- Public pages ----
+  const publicBrandProps = {
+    companyName: companyConfig.company_name,
+    companyLogoUrl: companyConfig.logo_url,
+    companyBannerUrl: companyConfig.banner_url,
+  }
+
   if (isPublicBuyBookPath) {
-    return <BuyBookPage surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
+    return <BuyBookPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
       surveyLoading={surveyLoading} surveyError={surveyError}
       surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
       setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook} />
   }
   if (isPublicSurveyPath) {
-    return <SurveyPage surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
+    return <SurveyPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
       surveyLoading={surveyLoading} surveyError={surveyError} surveyMessage={surveyMessage}
       surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
       isSubmittingSurvey={isSubmittingSurvey} setSurveyQuery={setSurveyQuery}
@@ -556,7 +566,7 @@ function App() {
       updateSurveyResponse={updateSurveyResponse} />
   }
   if (isPublicViewerPath) {
-    return <ViewerPage isPublicKanbanPath={isPublicKanbanPath}
+    return <ViewerPage {...publicBrandProps} isPublicKanbanPath={isPublicKanbanPath}
       gridPath={publicPagePath(publicRoute, '/viewer')} kanbanPath={publicPagePath(publicRoute, '/viewer/kanban')}
       publicQuery={publicQuery} publicStatusFilter={publicStatusFilter} publicStatusOptions={publicStatusOptions}
       publicLoading={publicLoading} publicError={publicError} publicItems={publicItems}
