@@ -88,10 +88,11 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
 
       <SurveyLayoutEditor
         title="Buy Book Layout"
-        description="Choose catalog items, grouping, public filters, and optional manual page breaks for the Buy Book."
+        description="Choose catalog items, grouping, and public filters. Use the dashed bars between items for manual page breaks, and drag the image slider to preview print size."
         showSurvey={false}
         showBuyBook
         showResponseWidth={false}
+        showImageControls
         filterLegend="Buy book options"
         filterExtra={(
           <div className="survey-layout-filter-row">
