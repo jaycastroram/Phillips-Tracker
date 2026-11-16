@@ -127,16 +127,61 @@ def row_to_item(row: sqlite3.Row) -> dict:
 # Serializers
 # ---------------------------------------------------------------------------
 
-def user_to_public(row: sqlite3.Row) -> dict:
+def _row_get(row: Any, key: str, default: Any = None) -> Any:
+    try:
+        keys = row.keys()
+    except Exception:
+        keys = []
+    if key in keys:
+        value = row[key]
+        return default if value is None else value
+    return default
+
+
+def company_to_public(row: Any) -> dict:
+    from config import COMPANY_BANNER_URL, COMPANY_LOGO_URL, DEFAULT_COMPANY_SLUG
+
+    logo_url = str(_row_get(row, "logo_url", "") or "").strip()
+    banner_url = str(_row_get(row, "banner_url", "") or "").strip()
+    slug = row["slug"]
+    if slug == DEFAULT_COMPANY_SLUG:
+        logo_url = logo_url or COMPANY_LOGO_URL
+        banner_url = banner_url or COMPANY_BANNER_URL
     return {
+        "id": row["id"],
+        "company_slug": slug,
+        "company_name": row["name"],
+        "slug": slug,
+        "name": row["name"],
+        "logo_url": logo_url,
+        "banner_url": banner_url,
+        "is_active": bool(row["is_active"]),
+        "created_at": _row_get(row, "created_at"),
+        "updated_at": _row_get(row, "updated_at"),
+    }
+
+
+def user_to_public(row: sqlite3.Row, company: Any | None = None) -> dict:
+    company_id = _row_get(row, "company_id")
+    payload = {
         "id": row["id"],
         "email": row["email"],
         "name": row["name"],
         "role": row["role"],
         "is_active": bool(row["is_active"]),
+        "company_id": int(company_id) if company_id is not None else None,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+    if company is not None:
+        payload["company"] = company_to_public(company)
+    return payload
+
+
+def serialize_user(conn: Any, row: sqlite3.Row) -> dict:
+    company_id = _row_get(row, "company_id")
+    company = fetch_company_by_id(conn, int(company_id)) if company_id is not None else None
+    return user_to_public(row, company)
 
 
 def audit_log_to_public(row: sqlite3.Row) -> dict:
@@ -266,22 +311,41 @@ def fetch_company_by_slug(conn: Any, slug: str) -> Any:
     ).fetchone()
 
 
+def fetch_company_by_id(conn: Any, company_id: int) -> Any:
+    return execute(conn, "SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+
+
 def ensure_default_company(conn: Any) -> Any:
+    from config import COMPANY_BANNER_URL, COMPANY_LOGO_URL
+
     existing = fetch_company_by_slug(conn, DEFAULT_COMPANY_SLUG)
     if existing is not None:
         return existing
 
-    values = (DEFAULT_COMPANY_SLUG, DEFAULT_COMPANY_NAME, True)
+    values = (
+        DEFAULT_COMPANY_SLUG,
+        DEFAULT_COMPANY_NAME,
+        COMPANY_LOGO_URL,
+        COMPANY_BANNER_URL,
+        True,
+    )
     if IS_POSTGRES:
         return execute(
             conn,
-            "INSERT INTO companies (slug, name, is_active) VALUES (?, ?, ?) RETURNING *",
+            """
+            INSERT INTO companies (slug, name, logo_url, banner_url, is_active)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING *
+            """,
             values,
         ).fetchone()
 
     cursor = execute(
         conn,
-        "INSERT INTO companies (slug, name, is_active) VALUES (?, ?, ?)",
+        """
+        INSERT INTO companies (slug, name, logo_url, banner_url, is_active)
+        VALUES (?, ?, ?, ?, ?)
+        """,
         values,
     )
     return execute(conn, "SELECT * FROM companies WHERE id = ?", (cursor.lastrowid,)).fetchone()
@@ -293,6 +357,13 @@ def default_company_id() -> int:
     if company is None:
         raise RuntimeError("Default company not found — run init_db() first")
     return company["id"]
+
+
+def company_id_for_user(user: Any) -> int:
+    company_id = _row_get(user, "company_id")
+    if company_id is not None:
+        return int(company_id)
+    return default_company_id()
 
 
 def get_default_company() -> Any:

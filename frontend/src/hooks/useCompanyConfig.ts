@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { API_BASE } from '../constants'
+import type { CompanyInfo } from '../types'
 
 export type CompanyConfig = {
   company_slug: string
@@ -15,10 +16,29 @@ const DEFAULT_CONFIG: CompanyConfig = {
   banner_url: '',
 }
 
-export function useCompanyConfig() {
-  const [config, setConfig] = useState<CompanyConfig>(DEFAULT_CONFIG)
+function toConfig(source: CompanyInfo | CompanyConfig | null | undefined): CompanyConfig | null {
+  if (!source) return null
+  const company_slug = 'company_slug' in source ? source.company_slug : ''
+  const company_name = 'company_name' in source ? source.company_name : ''
+  if (!company_slug && !company_name) return null
+  return {
+    company_slug,
+    company_name,
+    logo_url: source.logo_url || '',
+    banner_url: source.banner_url || '',
+  }
+}
+
+export function useCompanyConfig(userCompany?: CompanyInfo | null) {
+  const [config, setConfig] = useState<CompanyConfig>(() => toConfig(userCompany) || DEFAULT_CONFIG)
 
   useEffect(() => {
+    const fromUser = toConfig(userCompany)
+    if (fromUser) {
+      setConfig(fromUser)
+      return
+    }
+
     fetch(`${API_BASE}/public/config`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -27,7 +47,7 @@ export function useCompanyConfig() {
         }
       })
       .catch(() => {/* silently fall back to defaults */})
-  }, [])
+  }, [userCompany])
 
   return config
 }

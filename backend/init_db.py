@@ -13,6 +13,7 @@ from database import (
 )
 from seed import (
     backfill_survey_sort_order,
+    seed_demo_companies,
     seed_kanban_columns_if_empty,
     seed_sheet_statuses_if_empty,
     seed_tracker_items_if_empty,
@@ -28,6 +29,8 @@ def _create_companies_table(conn) -> None:
                 id SERIAL PRIMARY KEY,
                 slug TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
+                logo_url TEXT NOT NULL DEFAULT '',
+                banner_url TEXT NOT NULL DEFAULT '',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -39,6 +42,8 @@ def _create_companies_table(conn) -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 slug TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
+                logo_url TEXT NOT NULL DEFAULT '',
+                banner_url TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -311,6 +316,9 @@ def _create_core_tables(conn) -> None:
 def _ensure_company_columns(conn) -> None:
     for table_name in COMPANY_SCOPED_TABLES:
         ensure_column(conn, table_name, "company_id", "INTEGER")
+    ensure_column(conn, "companies", "logo_url", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "companies", "banner_url", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "users", "company_id", "INTEGER")
 
 
 def _ensure_company_indexes(conn) -> None:
@@ -324,6 +332,7 @@ def _ensure_company_indexes(conn) -> None:
 def _backfill_company_ids(conn, company_id: int) -> None:
     for table_name in COMPANY_SCOPED_TABLES:
         execute(conn, f"UPDATE {table_name} SET company_id = ? WHERE company_id IS NULL", (company_id,))
+    execute(conn, "UPDATE users SET company_id = ? WHERE company_id IS NULL", (company_id,))
 
 
 def _scope_sheet_status_uniqueness(conn) -> None:
@@ -424,8 +433,17 @@ def init_db() -> None:
         if existing_admin is None:
             execute(
                 conn,
-                "INSERT INTO users (email, name, password_hash, role) VALUES (?, ?, ?, 'admin')",
-                (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD)),
+                """
+                INSERT INTO users (email, name, password_hash, role, company_id)
+                VALUES (?, ?, ?, 'admin', ?)
+                """,
+                (ADMIN_EMAIL, ADMIN_NAME, hash_password(ADMIN_PASSWORD), company["id"]),
+            )
+        else:
+            execute(
+                conn,
+                "UPDATE users SET company_id = ? WHERE id = ? AND company_id IS NULL",
+                (company["id"], existing_admin["id"]),
             )
 
         seed_tracker_items_if_empty(conn, company["id"])
@@ -435,3 +453,4 @@ def init_db() -> None:
         sync_default_survey_items(conn, company["id"])
         backfill_survey_sort_order(conn)
         ensure_legacy_survey_period(conn, company["id"])
+        seed_demo_companies(conn)

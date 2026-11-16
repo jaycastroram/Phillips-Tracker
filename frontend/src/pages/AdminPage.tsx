@@ -5,6 +5,7 @@ import { SHEET_ORDER } from '../constants'
 import type {
   AdminSettingsTab,
   AppUser,
+  CompanyInfo,
   KanbanColumn,
   Role,
   SheetKey,
@@ -26,11 +27,22 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   const [kanbanMessage, setKanbanMessage] = useState('')
   const [error, setError] = useState('')
 
+  // --- Companies ---
+  const [companies, setCompanies] = useState<CompanyInfo[]>([])
+  const [companiesLoading, setCompaniesLoading] = useState(false)
+
   // --- Users ---
   const [users, setUsers] = useState<AppUser[]>([])
   const [usersLoading, setUsersLoading] = useState(false)
   const [showNewUserPassword, setShowNewUserPassword] = useState(false)
-  const [newUser, setNewUser] = useState({ email: '', name: '', password: '', role: 'editor' as Role, is_active: true })
+  const [newUser, setNewUser] = useState({
+    email: '',
+    name: '',
+    password: '',
+    role: 'editor' as Role,
+    is_active: true,
+    company_id: _currentUser.company_id,
+  })
   const [resetPasswordUserId, setResetPasswordUserId] = useState<number | null>(null)
 
   // --- Statuses ---
@@ -51,6 +63,21 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
   })()
 
   // --- Loaders ---
+  const loadCompanies = useCallback(async () => {
+    setCompaniesLoading(true)
+    try {
+      const res = await apiFetch('/admin/companies')
+      if (!res.ok) throw new Error('Unable to load companies.')
+      const data = await res.json()
+      setCompanies(data.companies)
+      setNewUser((u) => ({
+        ...u,
+        company_id: u.company_id ?? data.companies[0]?.id ?? _currentUser.company_id,
+      }))
+    } catch (err) { setError(err instanceof Error ? err.message : 'Unable to load companies.') }
+    finally { setCompaniesLoading(false) }
+  }, [apiFetch, _currentUser.company_id])
+
   const loadUsers = useCallback(async () => {
     setUsersLoading(true)
     try {
@@ -83,10 +110,21 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
 
   useEffect(() => {
     setError(''); setAdminMessage(''); setKanbanMessage('')
-    if (tab === 'users') loadUsers()
+    if (tab === 'users') { loadUsers(); loadCompanies() }
+    else if (tab === 'companies') loadCompanies()
     else if (tab === 'statuses') loadSheetStatuses()
     else if (tab === 'kanban') { loadKanbanColumns(); loadSheetStatuses() }
-  }, [tab, loadUsers, loadSheetStatuses, loadKanbanColumns])
+  }, [tab, loadUsers, loadCompanies, loadSheetStatuses, loadKanbanColumns])
+
+  // --- Company actions ---
+  async function updateCompany(companyId: number, updates: Partial<CompanyInfo>) {
+    setAdminMessage(''); setError('')
+    const res = await apiFetch(`/admin/companies/${companyId}`, { method: 'PATCH', body: JSON.stringify(updates) })
+    if (!res.ok) { setError('Unable to update company.'); return }
+    const data = await res.json()
+    setCompanies((rows) => rows.map((row) => row.id === companyId ? data.company : row))
+    setAdminMessage('Company updated.')
+  }
 
   // --- User actions ---
   async function createUser(e: FormEvent<HTMLFormElement>) {
@@ -95,7 +133,14 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
     if (!res.ok) { setError(res.status === 409 ? 'A user with that email already exists.' : 'Unable to create user.'); return }
     const data = await res.json()
     setUsers((u) => [data.user, ...u])
-    setNewUser({ email: '', name: '', password: '', role: 'editor', is_active: true })
+    setNewUser({
+      email: '',
+      name: '',
+      password: '',
+      role: 'editor',
+      is_active: true,
+      company_id: newUser.company_id ?? companies[0]?.id ?? _currentUser.company_id,
+    })
     setAdminMessage('User created.')
   }
 
@@ -182,14 +227,50 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
       {kanbanMessage && <div className="success">{kanbanMessage}</div>}
 
       <div className="admin-tabs" role="tablist" aria-label="Admin settings sections">
-        {(['users', 'statuses', 'kanban'] as AdminSettingsTab[]).map((t) => (
+        {(['users', 'companies', 'statuses', 'kanban'] as AdminSettingsTab[]).map((t) => (
           <button key={t} className={tab === t ? 'active' : ''} type="button" onClick={() => setTab(t)}>
             {t === 'users' ? 'Manage Users'
+              : t === 'companies' ? 'Companies'
               : t === 'statuses' ? 'Manage Statuses'
               : 'Kanban Settings'}
           </button>
         ))}
       </div>
+
+      {tab === 'companies' && (
+        <section className="table-card admin-users-card">
+          <div className="table-tools">
+            <span>{companiesLoading ? 'Loading companies...' : `${companies.length} companies`}</span>
+            <button type="button" onClick={loadCompanies}>Refresh</button>
+          </div>
+          <div className="table-scroll">
+            <table>
+              <thead><tr><th>Name</th><th>Slug</th><th>Logo URL</th><th>Banner URL</th><th>Active</th></tr></thead>
+              <tbody>
+                {companies.map((company) => (
+                  <tr key={company.id}>
+                    <td><input value={company.company_name || company.name || ''}
+                      onBlur={(e) => updateCompany(company.id, { name: e.target.value })}
+                      onChange={(e) => setCompanies((rows) => rows.map((r) => r.id === company.id
+                        ? { ...r, company_name: e.target.value, name: e.target.value } : r))} /></td>
+                    <td>{company.company_slug || company.slug}</td>
+                    <td><input value={company.logo_url || ''}
+                      onBlur={(e) => updateCompany(company.id, { logo_url: e.target.value })}
+                      onChange={(e) => setCompanies((rows) => rows.map((r) => r.id === company.id
+                        ? { ...r, logo_url: e.target.value } : r))} /></td>
+                    <td><input value={company.banner_url || ''}
+                      onBlur={(e) => updateCompany(company.id, { banner_url: e.target.value })}
+                      onChange={(e) => setCompanies((rows) => rows.map((r) => r.id === company.id
+                        ? { ...r, banner_url: e.target.value } : r))} /></td>
+                    <td className="actions"><input checked={company.is_active !== false} type="checkbox"
+                      onChange={(e) => updateCompany(company.id, { is_active: e.target.checked })} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {tab === 'users' && (
         <>
@@ -210,6 +291,17 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
                 </button>
               </div>
             </label>
+            <label>Company
+              <select
+                required
+                value={newUser.company_id ?? ''}
+                onChange={(e) => setNewUser((u) => ({ ...u, company_id: Number(e.target.value) }))}
+              >
+                {companies.map((company) => (
+                  <option key={company.id} value={company.id}>{company.company_name || company.name}</option>
+                ))}
+              </select>
+            </label>
             <label>Role
               <select value={newUser.role} onChange={(e) => setNewUser((u) => ({ ...u, role: e.target.value as Role }))}>
                 <option value="editor">Editor</option>
@@ -227,7 +319,7 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
             </div>
             <div className="table-scroll">
               <table>
-                <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Active</th><th>Actions</th></tr></thead>
+                <thead><tr><th>Name</th><th>Email</th><th>Company</th><th>Role</th><th>Active</th><th>Actions</th></tr></thead>
                 <tbody>
                   {users.map((user) => (
                     <tr key={user.id}>
@@ -237,6 +329,16 @@ export function AdminPage({ currentUser: _currentUser, sheets, apiFetch, onSheet
                       <td><input type="email" value={user.email}
                         onBlur={(e) => updateUser(user.id, { email: e.target.value })}
                         onChange={(e) => setUsers((u) => u.map((r) => r.id === user.id ? { ...r, email: e.target.value } : r))} /></td>
+                      <td>
+                        <select
+                          value={user.company_id ?? ''}
+                          onChange={(e) => updateUser(user.id, { company_id: Number(e.target.value) })}
+                        >
+                          {companies.map((company) => (
+                            <option key={company.id} value={company.id}>{company.company_name || company.name}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td><select value={user.role} onChange={(e) => updateUser(user.id, { role: e.target.value as Role })}>
                         <option value="editor">Editor</option><option value="admin">Admin</option>
                       </select></td>

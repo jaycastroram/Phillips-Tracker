@@ -15,7 +15,9 @@ from database import (
     connect,
     copy_catalog_items_into_period,
     count_period_items,
-    default_company_id,
+    company_id_for_user,
+    company_to_public,
+    serialize_user,
     ensure_legacy_survey_period,
     ensure_survey_layout,
     execute,
@@ -31,12 +33,12 @@ from database import (
     survey_filter_fields,
     survey_item_to_public,
     survey_period_to_public,
-    user_to_public,
     utc_now,
     with_returning,
     audit_log_to_public,
 )
 from models import (
+    CompanyUpdate,
     KanbanColumnCreate,
     KanbanColumnUpdate,
     PasswordReset,
@@ -59,8 +61,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.get("/survey-results")
 def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         period = None
@@ -267,8 +268,7 @@ def get_survey_results(period_id: int | None = None, user: sqlite3.Row = Depends
 
 @router.get("/survey-layout")
 def get_survey_layout(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         rows = execute(
             conn,
@@ -281,8 +281,7 @@ def get_survey_layout(user: sqlite3.Row = Depends(require_admin)) -> dict:
 
 @router.put("/survey-layout")
 def update_survey_layout(payload: SurveyLayoutUpdate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     filter_fields = normalize_filter_fields(payload.filter_fields)
     with connect() as conn:
         ensure_survey_layout(conn, company_id)
@@ -330,8 +329,7 @@ def update_survey_layout(payload: SurveyLayoutUpdate, user: sqlite3.Row = Depend
 
 @router.get("/survey-periods")
 def list_survey_periods(user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         rows = execute(
@@ -352,8 +350,7 @@ def list_survey_periods(user: sqlite3.Row = Depends(get_current_user)) -> dict:
 
 @router.post("/survey-periods", status_code=status.HTTP_201_CREATED)
 def create_survey_period(payload: SurveyPeriodCreate, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Survey name is required")
@@ -410,8 +407,7 @@ def create_survey_period(payload: SurveyPeriodCreate, user: sqlite3.Row = Depend
 
 @router.get("/survey-periods/{period_id}")
 def get_survey_period_detail(period_id: int, user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -464,8 +460,7 @@ def update_survey_period(
     payload: SurveyPeriodUpdate,
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -507,8 +502,7 @@ def update_survey_period_layout(
     payload: SurveyPeriodLayoutUpdate,
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     filter_fields = normalize_filter_fields(payload.filter_fields)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
@@ -600,8 +594,7 @@ def update_survey_period_layout(
 
 @router.delete("/survey-periods/{period_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_survey_period(period_id: int, user: sqlite3.Row = Depends(get_current_user)) -> Response:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -628,8 +621,7 @@ def delete_survey_period(period_id: int, user: sqlite3.Row = Depends(get_current
 
 @router.get("/survey-responses/export")
 def export_survey_responses(period_id: int | None = None, user: sqlite3.Row = Depends(get_current_user)) -> Response:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
         args: list[Any] = [company_id]
@@ -698,6 +690,45 @@ def export_survey_responses(period_id: int | None = None, user: sqlite3.Row = De
 
 
 # ---------------------------------------------------------------------------
+# Companies
+# ---------------------------------------------------------------------------
+
+@router.get("/companies")
+def list_companies(user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    with connect() as conn:
+        rows = execute(conn, "SELECT * FROM companies ORDER BY name ASC, id ASC").fetchall()
+    return {"companies": [company_to_public(row) for row in rows]}
+
+
+@router.patch("/companies/{company_id}")
+def update_company(company_id: int, payload: CompanyUpdate, user: sqlite3.Row = Depends(require_admin)) -> dict:
+    del user
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates and updates["name"] is not None:
+        updates["name"] = updates["name"].strip()
+    if "logo_url" in updates and updates["logo_url"] is not None:
+        updates["logo_url"] = updates["logo_url"].strip()
+    if "banner_url" in updates and updates["banner_url"] is not None:
+        updates["banner_url"] = updates["banner_url"].strip()
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No company fields supplied")
+
+    assignments = ", ".join(f"{field} = ?" for field in updates)
+    values = list(updates.values()) + [company_id]
+    with connect() as conn:
+        cursor = execute(
+            conn,
+            f"UPDATE companies SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            values,
+        )
+        if cursor.rowcount == 0:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+        row = execute(conn, "SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+    return {"company": company_to_public(row)}
+
+
+# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
@@ -706,27 +737,41 @@ def list_users(user: sqlite3.Row = Depends(require_admin)) -> dict:
     del user
     with connect() as conn:
         rows = execute(conn, "SELECT * FROM users ORDER BY created_at DESC, id DESC").fetchall()
-    return {"users": [user_to_public(row) for row in rows]}
+        return {"users": [serialize_user(conn, row) for row in rows]}
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_user(payload: UserCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
+    company_id = payload.company_id if payload.company_id is not None else company_id_for_user(user)
     try:
         with connect() as conn:
-            values = (str(payload.email).lower(), payload.name, hash_password(payload.password),
-                      payload.role, payload.is_active)
-            sql = "INSERT INTO users (email, name, password_hash, role, is_active) VALUES (?, ?, ?, ?, ?)"
+            company = execute(conn, "SELECT id FROM companies WHERE id = ?", (company_id,)).fetchone()
+            if company is None:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Company not found")
+            values = (
+                str(payload.email).lower(),
+                payload.name,
+                hash_password(payload.password),
+                payload.role,
+                payload.is_active,
+                company_id,
+            )
+            sql = (
+                "INSERT INTO users (email, name, password_hash, role, is_active, company_id) "
+                "VALUES (?, ?, ?, ?, ?, ?)"
+            )
             if IS_POSTGRES:
                 row = execute(conn, with_returning(sql), values).fetchone()
             else:
                 cursor = execute(conn, sql, values)
                 row = execute(conn, "SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            return {"user": serialize_user(conn, row)}
+    except HTTPException:
+        raise
     except Exception as exc:
         if "UNIQUE" in str(exc) or "unique" in str(exc) or "duplicate" in str(exc).lower():
             raise HTTPException(status.HTTP_409_CONFLICT, "A user with that email already exists")
         raise
-    return {"user": user_to_public(row)}
 
 
 @router.patch("/users/{user_id}")
@@ -744,6 +789,14 @@ def update_user(user_id: int, payload: UserUpdate, user: sqlite3.Row = Depends(r
     values = list(updates.values()) + [user_id]
     try:
         with connect() as conn:
+            if "company_id" in updates and updates["company_id"] is not None:
+                company = execute(
+                    conn,
+                    "SELECT id FROM companies WHERE id = ?",
+                    (updates["company_id"],),
+                ).fetchone()
+                if company is None:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Company not found")
             cursor = execute(
                 conn,
                 f"UPDATE users SET {assignments}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
@@ -752,13 +805,13 @@ def update_user(user_id: int, payload: UserUpdate, user: sqlite3.Row = Depends(r
             if cursor.rowcount == 0:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
             row = execute(conn, "SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+            return {"user": serialize_user(conn, row)}
     except HTTPException:
         raise
     except Exception as exc:
         if "UNIQUE" in str(exc) or "unique" in str(exc) or "duplicate" in str(exc).lower():
             raise HTTPException(status.HTTP_409_CONFLICT, "A user with that email already exists")
         raise
-    return {"user": user_to_public(row)}
 
 
 @router.post("/users/{user_id}/reset-password")
@@ -782,8 +835,7 @@ def reset_password(user_id: int, payload: PasswordReset, user: sqlite3.Row = Dep
 
 @router.get("/kanban-columns")
 def list_admin_kanban_columns(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         rows = execute(
             conn,
@@ -795,8 +847,7 @@ def list_admin_kanban_columns(user: sqlite3.Row = Depends(require_admin)) -> dic
 
 @router.post("/kanban-columns", status_code=status.HTTP_201_CREATED)
 def create_kanban_column(payload: KanbanColumnCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     values = (company_id, payload.title.strip(), json.dumps(payload.statuses), payload.sort_order, payload.is_visible)
     sql = "INSERT INTO kanban_columns (company_id, title, statuses_json, sort_order, is_visible) VALUES (?, ?, ?, ?, ?)"
     with connect() as conn:
@@ -810,7 +861,6 @@ def create_kanban_column(payload: KanbanColumnCreate, user: sqlite3.Row = Depend
 
 @router.patch("/kanban-columns/{column_id}")
 def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
     updates = payload.model_dump(exclude_unset=True)
     if "title" in updates and updates["title"] is not None:
         updates["title"] = updates["title"].strip()
@@ -819,7 +869,7 @@ def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqli
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No kanban column fields supplied")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     assignments = ", ".join(f"{field} = ?" for field in updates)
     values = list(updates.values()) + [column_id, company_id]
     with connect() as conn:
@@ -837,8 +887,7 @@ def update_kanban_column(column_id: int, payload: KanbanColumnUpdate, user: sqli
 
 @router.delete("/kanban-columns/{column_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_kanban_column(column_id: int, response: Response, user: sqlite3.Row = Depends(require_admin)) -> Response:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         cursor = execute(conn, "DELETE FROM kanban_columns WHERE id = ? AND company_id = ?",
                          (column_id, company_id))
@@ -854,8 +903,7 @@ def delete_kanban_column(column_id: int, response: Response, user: sqlite3.Row =
 
 @router.get("/sheet-statuses")
 def list_sheet_statuses(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         rows = execute(
             conn,
@@ -867,14 +915,13 @@ def list_sheet_statuses(user: sqlite3.Row = Depends(require_admin)) -> dict:
 
 @router.post("/sheet-statuses", status_code=status.HTTP_201_CREATED)
 def create_sheet_status(payload: SheetStatusCreate, user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
     if payload.sheet not in SHEETS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
     status_label = payload.status.strip()
     if not status_label:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Status is required")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     try:
         with connect() as conn:
             max_sort = execute(
@@ -898,8 +945,7 @@ def create_sheet_status(payload: SheetStatusCreate, user: sqlite3.Row = Depends(
 
 @router.delete("/sheet-statuses/{status_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_sheet_status(status_id: int, response: Response, user: sqlite3.Row = Depends(require_admin)) -> Response:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         cursor = execute(conn, "DELETE FROM sheet_statuses WHERE id = ? AND company_id = ?",
                          (status_id, company_id))
@@ -915,8 +961,7 @@ def delete_sheet_status(status_id: int, response: Response, user: sqlite3.Row = 
 
 @router.get("/audit-logs")
 def list_audit_logs(user: sqlite3.Row = Depends(require_admin)) -> dict:
-    del user
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         rows = execute(
             conn,

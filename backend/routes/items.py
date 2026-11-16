@@ -12,7 +12,7 @@ from openpyxl.styles import Font
 from config import IS_POSTGRES, SHEETS
 from database import (
     connect,
-    default_company_id,
+    company_id_for_user,
     execute,
     row_to_item,
     utc_now,
@@ -47,11 +47,10 @@ def list_items(
     status_filter: str = Query("", alias="status"),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
-    del user
     if sheet not in SHEETS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     clauses = ["company_id = ?", "sheet = ?"]
     args: list[Any] = [company_id, sheet]
     if status_filter:
@@ -82,11 +81,10 @@ def export_items(
     status_filter: str = Query("", alias="status"),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> Response:
-    del user
     if sheet not in SHEETS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     clauses = ["company_id = ?", "sheet = ?"]
     args: list[Any] = [company_id, sheet]
     if status_filter:
@@ -141,7 +139,7 @@ def create_item(payload: ItemCreate, user: sqlite3.Row = Depends(get_current_use
     if payload.sheet not in SHEETS:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown sheet")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         max_sort_row = execute(
             conn,
@@ -179,7 +177,7 @@ def update_item(item_id: int, payload: ItemUpdate, user: sqlite3.Row = Depends(g
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No editable fields supplied")
 
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     assignments = ", ".join(f"{field} = ?" for field in updates)
     values = list(updates.values()) + [item_id, company_id]
 
@@ -204,7 +202,7 @@ def update_item(item_id: int, payload: ItemUpdate, user: sqlite3.Row = Depends(g
 
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_item(item_id: int, response: Response, user: sqlite3.Row = Depends(require_admin)) -> Response:
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
     with connect() as conn:
         before_row = execute(conn, "SELECT * FROM tracker_items WHERE id = ? AND company_id = ?",
                              (item_id, company_id)).fetchone()
@@ -223,7 +221,7 @@ def delete_item(item_id: int, response: Response, user: sqlite3.Row = Depends(re
 @router.post("/changes")
 def submit_item_changes(payload: ItemChangeBatch, user: sqlite3.Row = Depends(get_current_user)) -> dict:
     created = updated = deleted = 0
-    company_id = default_company_id()
+    company_id = company_id_for_user(user)
 
     with connect() as conn:
         for cp in payload.creates:

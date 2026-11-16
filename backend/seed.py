@@ -3,8 +3,15 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from config import DEFAULT_KANBAN_COLUMNS, SEED_ITEMS_PATH, SHEETS
-from database import execute, IS_POSTGRES
+from config import DEFAULT_KANBAN_COLUMNS, DEFAULT_COMPANY_SLUG, SEED_ITEMS_PATH, SHEETS
+from database import (
+    IS_POSTGRES,
+    ensure_legacy_survey_period,
+    ensure_survey_layout,
+    execute,
+    fetch_company_by_slug,
+    hash_password,
+)
 
 DEFAULT_SURVEY_ITEMS = [
     {
@@ -424,3 +431,382 @@ def backfill_survey_sort_order(conn: Any) -> None:
         WHERE survey_sort_order = 0 AND sort_order <> 0
         """,
     )
+
+
+DEMO_COMPANY_SEEDS = [
+    {
+        "slug": "demo-spirits",
+        "name": "Demo Spirits Co",
+        "logo_url": "https://placehold.co/220x64/1e3a5f/ffffff?text=Demo+Spirits",
+        "banner_url": "https://placehold.co/960x120/1e3a5f/ffffff?text=Demo+Spirits+Tracker",
+        "user": {
+            "email": "demo@example.com",
+            "name": "Demo Spirits User",
+            "password": "Demo1234",
+            "role": "editor",
+        },
+        "survey_items": [
+            {
+                "item_name": "Harbor Gin Bar Mat",
+                "brand": "Harbor Gin",
+                "channel": "On Premise",
+                "product_type": "Barware",
+                "key_program": "Launch",
+                "item_description": "Navy PVC bar mat with Harbor Gin crest and non-slip nibs.",
+                "uom": "1/EA",
+                "price": "$8.25",
+                "image_url": "https://placehold.co/400x400/1e3a5f/ffffff?text=Harbor+Mat",
+                "sort_order": 1,
+                "in_survey": True,
+                "in_buy_book": True,
+            },
+            {
+                "item_name": "Harbor Gin Neon Sign",
+                "brand": "Harbor Gin",
+                "channel": "On Premise",
+                "product_type": "Displays",
+                "key_program": "Launch",
+                "item_description": "LED neon bottle silhouette for back-bar placement.",
+                "uom": "1/EA",
+                "price": "$145.00",
+                "image_url": "https://placehold.co/400x400/0f2744/ffffff?text=Neon+Sign",
+                "sort_order": 2,
+                "in_survey": True,
+                "in_buy_book": True,
+            },
+            {
+                "item_name": "Coastal Rum Cap",
+                "brand": "Coastal Rum",
+                "channel": "Off Premise",
+                "product_type": "Wearables",
+                "key_program": "Summer",
+                "item_description": "Structured cotton cap with embroidered Coastal Rum mark.",
+                "uom": "1/EA",
+                "price": "$14.50",
+                "image_url": "https://placehold.co/400x400/245b7a/ffffff?text=Rum+Cap",
+                "sort_order": 3,
+                "in_survey": True,
+                "in_buy_book": False,
+            },
+            {
+                "item_name": "Coastal Rum Cooler Bag",
+                "brand": "Coastal Rum",
+                "channel": "Off Premise",
+                "product_type": "Soft Goods",
+                "key_program": "Summer",
+                "item_description": "Insulated tote holding six bottles with Coastal Rum print.",
+                "uom": "1/EA",
+                "price": "$22.90",
+                "image_url": "https://placehold.co/400x400/1c4d66/ffffff?text=Cooler+Bag",
+                "sort_order": 4,
+                "in_survey": False,
+                "in_buy_book": True,
+            },
+        ],
+        "tracker_items": [
+            {
+                "sheet": "ad-hoc",
+                "date_or_buy": "2026-03",
+                "current_status": "In Production",
+                "brand": "Harbor Gin",
+                "program_name": "Launch Kit",
+                "item_name": "Harbor Gin Neon Sign",
+                "qty": "250",
+                "important_notes": "Demo Spirits inventory sample",
+                "mrl_order_number": "DS-1001",
+            },
+            {
+                "sheet": "buys",
+                "date_or_buy": "Buy 1",
+                "current_status": "Approved",
+                "brand": "Coastal Rum",
+                "program_name": "Summer",
+                "item_name": "Coastal Rum Cooler Bag",
+                "qty": "500",
+                "important_notes": "Distinct from Phillips buys",
+                "mrl_order_number": "DS-1002",
+            },
+        ],
+    },
+    {
+        "slug": "acme",
+        "name": "Acme Retail",
+        "logo_url": "https://placehold.co/220x64/9a3412/ffffff?text=Acme+Retail",
+        "banner_url": "https://placehold.co/960x120/9a3412/ffffff?text=Acme+Retail+Tracker",
+        "user": {
+            "email": "acme@example.com",
+            "name": "Acme Retail User",
+            "password": "Demo1234",
+            "role": "editor",
+        },
+        "survey_items": [
+            {
+                "item_name": "Acme Floor Shipper",
+                "brand": "Acme",
+                "channel": "Off Premise",
+                "product_type": "Displays",
+                "key_program": "Q2 Push",
+                "item_description": "Corrugated floor shipper with Acme header card.",
+                "uom": "1/EA",
+                "price": "$48.00",
+                "image_url": "https://placehold.co/400x400/9a3412/ffffff?text=Floor+Shipper",
+                "sort_order": 1,
+                "in_survey": True,
+                "in_buy_book": True,
+            },
+            {
+                "item_name": "Acme Shelf Talker Pack",
+                "brand": "Acme",
+                "channel": "Off Premise",
+                "product_type": "Print",
+                "key_program": "Q2 Push",
+                "item_description": "Pack of 25 shelf talkers with seasonal offer.",
+                "uom": "25/PK",
+                "price": "$12.40",
+                "image_url": "https://placehold.co/400x400/c2410c/ffffff?text=Shelf+Talker",
+                "sort_order": 2,
+                "in_survey": True,
+                "in_buy_book": True,
+            },
+            {
+                "item_name": "Acme Apron",
+                "brand": "Acme",
+                "channel": "On Premise",
+                "product_type": "Wearables",
+                "key_program": "Staff Kit",
+                "item_description": "Canvas apron with Acme logo chest print.",
+                "uom": "1/EA",
+                "price": "$18.75",
+                "image_url": "https://placehold.co/400x400/7c2d12/ffffff?text=Acme+Apron",
+                "sort_order": 3,
+                "in_survey": True,
+                "in_buy_book": False,
+            },
+            {
+                "item_name": "Acme Window Cling",
+                "brand": "Acme",
+                "channel": "Off Premise",
+                "product_type": "Print",
+                "key_program": "Q2 Push",
+                "item_description": "Static window cling for storefront promotions.",
+                "uom": "10/PK",
+                "price": "$9.95",
+                "image_url": "https://placehold.co/400x400/b45309/ffffff?text=Window+Cling",
+                "sort_order": 4,
+                "in_survey": False,
+                "in_buy_book": True,
+            },
+        ],
+        "tracker_items": [
+            {
+                "sheet": "ad-hoc",
+                "date_or_buy": "2026-04",
+                "current_status": "Artwork Review",
+                "brand": "Acme",
+                "program_name": "Q2 Push",
+                "item_name": "Acme Floor Shipper",
+                "qty": "120",
+                "important_notes": "Acme-only demo row",
+                "mrl_order_number": "AC-2001",
+            },
+            {
+                "sheet": "buys",
+                "date_or_buy": "Buy A",
+                "current_status": "Ordered",
+                "brand": "Acme",
+                "program_name": "Staff Kit",
+                "item_name": "Acme Apron",
+                "qty": "300",
+                "important_notes": "Different inventory from Phillips/Demo",
+                "mrl_order_number": "AC-2002",
+            },
+        ],
+    },
+]
+
+
+def _ensure_company_record(conn: Any, seed: dict[str, Any]) -> Any:
+    existing = fetch_company_by_slug(conn, seed["slug"])
+    if existing is not None:
+        execute(
+            conn,
+            """
+            UPDATE companies
+            SET name = ?, logo_url = ?, banner_url = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (seed["name"], seed["logo_url"], seed["banner_url"], True, existing["id"]),
+        )
+        return execute(conn, "SELECT * FROM companies WHERE id = ?", (existing["id"],)).fetchone()
+
+    values = (seed["slug"], seed["name"], seed["logo_url"], seed["banner_url"], True)
+    if IS_POSTGRES:
+        return execute(
+            conn,
+            """
+            INSERT INTO companies (slug, name, logo_url, banner_url, is_active)
+            VALUES (?, ?, ?, ?, ?)
+            RETURNING *
+            """,
+            values,
+        ).fetchone()
+
+    cursor = execute(
+        conn,
+        """
+        INSERT INTO companies (slug, name, logo_url, banner_url, is_active)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+    return execute(conn, "SELECT * FROM companies WHERE id = ?", (cursor.lastrowid,)).fetchone()
+
+
+def _ensure_demo_user(conn: Any, company_id: int, user_seed: dict[str, Any]) -> None:
+    existing = execute(
+        conn,
+        "SELECT id FROM users WHERE lower(email) = lower(?)",
+        (user_seed["email"],),
+    ).fetchone()
+    if existing is not None:
+        execute(
+            conn,
+            """
+            UPDATE users
+            SET name = ?, role = ?, company_id = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (user_seed["name"], user_seed["role"], company_id, True, existing["id"]),
+        )
+        return
+
+    execute(
+        conn,
+        """
+        INSERT INTO users (email, name, password_hash, role, is_active, company_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_seed["email"].lower(),
+            user_seed["name"],
+            hash_password(user_seed["password"]),
+            user_seed["role"],
+            True,
+            company_id,
+        ),
+    )
+
+
+def _seed_company_survey_items(conn: Any, company_id: int, items: list[dict[str, Any]]) -> None:
+    row_count = execute(
+        conn,
+        "SELECT COUNT(*) AS row_count FROM survey_items WHERE company_id = ?",
+        (company_id,),
+    ).fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    for item in items:
+        execute(
+            conn,
+            """
+            INSERT INTO survey_items (
+                company_id, item_name, brand, channel, product_type, key_program,
+                item_description, uom, price, image_url, sort_order, survey_sort_order,
+                is_active, in_survey, in_buy_book
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                company_id,
+                item["item_name"],
+                item["brand"],
+                item["channel"],
+                item["product_type"],
+                item["key_program"],
+                item["item_description"],
+                item["uom"],
+                item["price"],
+                item["image_url"],
+                item["sort_order"],
+                item["sort_order"],
+                True,
+                1 if item.get("in_survey", True) else 0,
+                1 if item.get("in_buy_book", True) else 0,
+            ),
+        )
+
+
+def _seed_company_tracker_items(conn: Any, company_id: int, items: list[dict[str, Any]]) -> None:
+    row_count = execute(
+        conn,
+        "SELECT COUNT(*) AS row_count FROM tracker_items WHERE company_id = ?",
+        (company_id,),
+    ).fetchone()
+    if row_count["row_count"] > 0:
+        return
+
+    for index, item in enumerate(items, start=1):
+        execute(
+            conn,
+            """
+            INSERT INTO tracker_items (
+                company_id, sheet, source_row, sort_order, date_or_buy, current_status,
+                visual_reference, brand, program_name, item_name, qty,
+                important_notes, mrl_order_number, estimated_ship_date,
+                estimated_ihd, tracking, extra_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                company_id,
+                item.get("sheet", "ad-hoc"),
+                index,
+                index,
+                item.get("date_or_buy", ""),
+                item.get("current_status", ""),
+                item.get("visual_reference", ""),
+                item.get("brand", ""),
+                item.get("program_name", ""),
+                item.get("item_name", ""),
+                item.get("qty", ""),
+                item.get("important_notes", ""),
+                item.get("mrl_order_number", ""),
+                item.get("estimated_ship_date", ""),
+                item.get("estimated_ihd", ""),
+                item.get("tracking", ""),
+                "{}",
+            ),
+        )
+
+
+def seed_demo_companies(conn: Any) -> None:
+    """Ensure demo companies, users, and distinct inventory exist for multi-tenant demos."""
+    phillips = fetch_company_by_slug(conn, DEFAULT_COMPANY_SLUG)
+    if phillips is not None:
+        _ensure_demo_user(
+            conn,
+            phillips["id"],
+            {
+                "email": "phillips@example.com",
+                "name": "Phillips Demo User",
+                "password": "Demo1234",
+                "role": "editor",
+            },
+        )
+        execute(
+            conn,
+            "UPDATE users SET company_id = ? WHERE company_id IS NULL",
+            (phillips["id"],),
+        )
+
+    for seed in DEMO_COMPANY_SEEDS:
+        company = _ensure_company_record(conn, seed)
+        company_id = company["id"]
+        ensure_survey_layout(conn, company_id)
+        seed_kanban_columns_if_empty(conn, company_id)
+        seed_sheet_statuses_if_empty(conn, company_id)
+        _seed_company_survey_items(conn, company_id, seed["survey_items"])
+        _seed_company_tracker_items(conn, company_id, seed["tracker_items"])
+        ensure_legacy_survey_period(conn, company_id)
+        _ensure_demo_user(conn, company_id, seed["user"])

@@ -60,12 +60,21 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6)
     role: Role = "editor"
     is_active: bool = True
+    company_id: int | None = None
 
 
 class UserUpdate(BaseModel):
     email: EmailStr | None = None
     name: str | None = None
     role: Role | None = None
+    is_active: bool | None = None
+    company_id: int | None = None
+
+
+class CompanyUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1)
+    logo_url: str | None = None
+    banner_url: str | None = None
     is_active: bool | None = None
 
 

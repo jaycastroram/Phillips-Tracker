@@ -9,6 +9,7 @@ import smartBuyLogo from './assets/SmartBuy Logo Transparent.png'
 import {
   API_BASE,
   AUTH_STORAGE_KEY,
+  DEFAULT_COMPANY_SLUG,
   EMPTY_SURVEY_RESPONSE,
   SURVEY_FILTER_FIELDS,
   DEFAULT_SURVEY_FILTER_FIELDS,
@@ -87,7 +88,7 @@ function App() {
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [, setCurrentTablePage] = useState(1)
 
-  const companyConfig = useCompanyConfig()
+  const companyConfig = useCompanyConfig(currentUser?.company)
 
   const publicRoute = useMemo(() => parsePublicRoute(currentPath), [currentPath])
   const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
@@ -364,7 +365,10 @@ function App() {
 
   // --- Navigation helpers ---
   function goToPath(path: string) { window.history.pushState({}, '', path); setCurrentPath(path) }
-  function openPublicPath(path: string) { window.open(path, '_blank', 'noopener') }
+  function openPublicPath(path: string) {
+    const slug = currentUser?.company?.company_slug || companyConfig.company_slug || DEFAULT_COMPANY_SLUG
+    window.open(`/${slug}${path}`, '_blank', 'noopener')
+  }
 
   // --- Derived values ---
   const isAdmin = currentUser?.role === 'admin'
@@ -459,6 +463,9 @@ function App() {
           </label>
           {authError && <div className="error">{authError}</div>}
           <button className="primary-action" type="submit">Log In</button>
+          <p className="subtitle" style={{ marginTop: '1rem', fontSize: '0.85rem' }}>
+            Demo users (password <code>Demo1234</code>): phillips@example.com, demo@example.com, acme@example.com
+          </p>
         </form>
       </main>
     )

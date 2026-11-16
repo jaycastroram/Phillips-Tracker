@@ -8,10 +8,9 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 
 from database import (
     connect,
-    ensure_default_company,
     execute,
     hash_password,
-    user_to_public,
+    serialize_user,
     utc_now,
     verify_password,
 )
@@ -70,7 +69,9 @@ def login(payload: LoginRequest) -> dict:
             (token, user["id"], expires_at),
         )
 
-    return {"token": token, "user": user_to_public(user)}
+        public_user = serialize_user(conn, user)
+
+    return {"token": token, "user": public_user}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
@@ -90,4 +91,5 @@ def logout(
 
 @router.get("/me")
 def me(user: sqlite3.Row = Depends(get_current_user)) -> dict:
-    return {"user": user_to_public(user)}
+    with connect() as conn:
+        return {"user": serialize_user(conn, user)}

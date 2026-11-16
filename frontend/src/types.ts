@@ -2,7 +2,7 @@ export type SheetKey = 'ad-hoc' | 'buys' | 'completed'
 export type StatusTargetSheet = SheetKey | 'all'
 export type Role = 'admin' | 'editor'
 export type Page = 'tracker' | 'admin-users' | 'system-log' | 'surveys'
-export type AdminSettingsTab = 'users' | 'statuses' | 'kanban'
+export type AdminSettingsTab = 'users' | 'companies' | 'statuses' | 'kanban'
 export type SurveyFilterField = 'brand' | 'channel' | 'product_type' | 'key_program'
 export type RowPageSize = 10 | 20 | 30 | 'all'
 export type SortDirection = 'asc' | 'desc'
@@ -121,12 +121,25 @@ export type SurveyResponseDraft = {
   notes: string
 }
 
+export type CompanyInfo = {
+  id: number
+  company_slug: string
+  company_name: string
+  slug?: string
+  name?: string
+  logo_url: string
+  banner_url: string
+  is_active?: boolean
+}
+
 export type AppUser = {
   id: number
   email: string
   name: string
   role: Role
   is_active: boolean
+  company_id: number | null
+  company?: CompanyInfo | null
   created_at: string
   updated_at: string
 }

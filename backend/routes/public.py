@@ -6,13 +6,15 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
-from config import COMPANY_BANNER_URL, COMPANY_LOGO_URL, DEFAULT_COMPANY_NAME, DEFAULT_COMPANY_SLUG, IS_POSTGRES
+from config import IS_POSTGRES
 from database import (
+    company_to_public,
     connect,
     ensure_default_company,
     ensure_legacy_survey_period,
     execute,
     fetch_company_by_slug,
+    get_default_company,
     get_open_survey_period,
     kanban_column_to_public,
     list_period_items,
@@ -50,23 +52,12 @@ def _default_company_id() -> int:
 
 @router.get("/config")
 def get_public_config() -> dict:
-    return {
-        "company_slug": DEFAULT_COMPANY_SLUG,
-        "company_name": DEFAULT_COMPANY_NAME,
-        "logo_url": COMPANY_LOGO_URL,
-        "banner_url": COMPANY_BANNER_URL,
-    }
+    return company_to_public(get_default_company())
 
 
 @router.get("/{company_slug}/config")
 def get_company_config(company_slug: str) -> dict:
-    company = _get_company(company_slug)
-    return {
-        "company_slug": company["slug"],
-        "company_name": company["name"],
-        "logo_url": COMPANY_LOGO_URL,
-        "banner_url": COMPANY_BANNER_URL,
-    }
+    return company_to_public(_get_company(company_slug))
 
 
 # ---------------------------------------------------------------------------
