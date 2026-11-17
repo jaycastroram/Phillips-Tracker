@@ -17,6 +17,7 @@ class ItemCreate(BaseModel):
     date_or_buy: str = ""
     current_status: str = ""
     visual_reference: str = ""
+    netsuite_item_id: str = ""
     brand: str = ""
     program_name: str = ""
     item_name: str = ""
@@ -32,6 +33,7 @@ class ItemUpdate(BaseModel):
     date_or_buy: str | None = None
     current_status: str | None = None
     visual_reference: str | None = None
+    netsuite_item_id: str | None = None
     brand: str | None = None
     program_name: str | None = None
     item_name: str | None = None

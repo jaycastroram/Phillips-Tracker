@@ -20,6 +20,7 @@ from database import (
     with_returning,
     write_audit_log,
 )
+from item_images import normalize_item_id, record_image_url
 from models import ItemChangeBatch, ItemCreate, ItemUpdate
 from routes.auth import get_current_user, require_admin
 
@@ -30,6 +31,7 @@ EXPORT_COLUMNS = [
     ("date_or_buy", "Date/Buy"),
     ("current_status", "Status"),
     ("visual_reference", "Visual Reference"),
+    ("netsuite_item_id", "NetSuite ID"),
     ("brand", "Brand"),
     ("program_name", "Program Name"),
     ("item_name", "Item Name"),
@@ -49,6 +51,48 @@ def _serialize_item(row: Any) -> dict:
     if "company_slug" not in item:
         item["company_slug"] = ""
     return item
+
+
+def _apply_netsuite_image(conn: Any, row: Any, *, resolve: bool = True) -> Any:
+    """Fill a blank ``visual_reference`` from this row's imported item record.
+
+    No network call and no URL building: the URL is whatever
+    ``netsuite_item_images`` holds for this company and internal id (imported
+    from a NetSuite record set). A row whose id has no record stays blank rather
+    than holding a guess, and an existing URL — a Cloudinary upload or a
+    hand-pasted one — is never overwritten.
+
+    ``resolve=False`` stores nothing but the id — that is the bulk path. A paste
+    of many rows should not fill image fields from a store that may still be
+    partial, and one script (``scripts/backfill_netsuite_ids.py``) is the only
+    writer of image URLs from records. ``resolve=True`` is for a single-row save,
+    where the person can see the result immediately.
+
+    Returns the refreshed row so the audit entry and the response carry what the
+    public pages will read.
+    """
+    if row is None:
+        return row
+    try:
+        keys = row.keys()
+    except AttributeError:
+        return row
+    if "visual_reference" not in keys or "netsuite_item_id" not in keys:
+        return row
+    if str(row["visual_reference"] or "").strip():
+        return row
+    if not resolve:
+        return row
+    item_id = normalize_item_id(row["netsuite_item_id"])
+    if not item_id or row["company_id"] in (None, ""):
+        return row
+
+    url = record_image_url(conn, row["company_id"], item_id)
+    if not url:
+        return row
+
+    execute(conn, "UPDATE tracker_items SET visual_reference = ? WHERE id = ?", (url, row["id"]))
+    return execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (row["id"],)).fetchone()
 
 
 def _item_query(
@@ -174,22 +218,23 @@ def create_item(
         values = (
             write_company_id, payload.sheet, max_sort_row["max_sort"] + 1,
             payload.date_or_buy, payload.current_status, payload.visual_reference,
-            payload.brand, payload.program_name, payload.item_name, payload.qty,
+            payload.netsuite_item_id, payload.brand, payload.program_name, payload.item_name, payload.qty,
             payload.important_notes, payload.mrl_order_number, payload.estimated_ship_date,
             payload.estimated_ihd, payload.tracking,
         )
         sql = """
             INSERT INTO tracker_items (
                 company_id, sheet, sort_order, date_or_buy, current_status, visual_reference,
-                brand, program_name, item_name, qty, important_notes,
+                netsuite_item_id, brand, program_name, item_name, qty, important_notes,
                 mrl_order_number, estimated_ship_date, estimated_ihd, tracking
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if IS_POSTGRES:
             row = execute(conn, with_returning(sql), values).fetchone()
         else:
             cursor = execute(conn, sql, values)
             row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
+        row = _apply_netsuite_image(conn, row)
         write_audit_log(conn, user, "create", sheet=payload.sheet, item_id=row["id"],
                         after=row_to_item(row), company_id=write_company_id)
         enriched = execute(
@@ -241,6 +286,9 @@ def update_item(
         )
         if cursor.rowcount == 0:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Item not found")
+        _apply_netsuite_image(conn, execute(
+            conn, "SELECT * FROM tracker_items WHERE id = ?", (item_id,)
+        ).fetchone())
         row = execute(
             conn,
             """
@@ -331,22 +379,23 @@ def submit_item_changes(
             ).fetchone()["max_sort"]
             values = (
                 write_company_id, cp.sheet, max_sort + 1, cp.date_or_buy, cp.current_status,
-                cp.visual_reference, cp.brand, cp.program_name, cp.item_name, cp.qty,
+                cp.visual_reference, cp.netsuite_item_id, cp.brand, cp.program_name, cp.item_name, cp.qty,
                 cp.important_notes, cp.mrl_order_number, cp.estimated_ship_date,
                 cp.estimated_ihd, cp.tracking,
             )
             sql = """
                 INSERT INTO tracker_items (
                     company_id, sheet, sort_order, date_or_buy, current_status, visual_reference,
-                    brand, program_name, item_name, qty, important_notes,
+                    netsuite_item_id, brand, program_name, item_name, qty, important_notes,
                     mrl_order_number, estimated_ship_date, estimated_ihd, tracking
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             if IS_POSTGRES:
                 row = execute(conn, with_returning(sql), values).fetchone()
             else:
                 cursor = execute(conn, sql, values)
                 row = execute(conn, "SELECT * FROM tracker_items WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            row = _apply_netsuite_image(conn, row, resolve=False)
             created += 1
             write_audit_log(conn, user, "create", sheet=cp.sheet, item_id=row["id"],
                             after=row_to_item(row), company_id=write_company_id)
@@ -378,6 +427,7 @@ def submit_item_changes(
                 "SELECT * FROM tracker_items WHERE id = ? AND company_id = ?",
                 (up.id, item_company_id),
             ).fetchone()
+            after_row = _apply_netsuite_image(conn, after_row, resolve=False)
             updated += 1
             write_audit_log(conn, user, "update", sheet=after_row["sheet"], item_id=up.id,
                             before=row_to_item(before_row), after=row_to_item(after_row),

@@ -1,0 +1,30 @@
+{
+  "_note": "Example of the record set scripts/import_item_image_records.py accepts — replace it with Jon's export. The media files are real files on demo.mrlsmartbuy.com (verified 200); the internal ids are placeholders, because the export is what supplies real ones. Shape 1 is the flat form, shape 2 is a raw itemimages_detail blob, shape 3 is a bare /images/ path.",
+  "buyInItems": [
+    {
+      "internalid": "10001",
+      "itemid": "TITOS-BAR-MAT",
+      "storedisplayname": "Tito's Bar Mat",
+      "image_url": "/core/media/media.nl?id=4006_10001_1.png&resizeid=11&resizew=225&resizeh=255"
+    },
+    {
+      "internalid": "53553",
+      "itemid": "LALO-SALES-BOOKLET",
+      "storedisplayname": "LALO Sales Booklet",
+      "itemimages_detail": {
+        "urls": [
+          {
+            "url": "/core/media/media.nl?id=4006_53553_1.jpg&resizeid=11&resizew=225&resizeh=255",
+            "altimagetext": "LALO Sales Booklet"
+          }
+        ]
+      }
+    },
+    {
+      "internalid": "60047",
+      "itemid": "LALO-RAIL-MAT",
+      "storedisplayname": "LALO Rail Mat",
+      "image_url": "/images/4006_60047-RAIL_3_1.png"
+    }
+  ]
+}

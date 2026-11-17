@@ -25,6 +25,7 @@ export type TrackerItem = {
   date_or_buy: string
   current_status: string
   visual_reference: string
+  netsuite_item_id?: string
   brand: string
   program_name: string
   item_name: string

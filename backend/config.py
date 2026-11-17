@@ -66,6 +66,18 @@ CLOUDINARY_CLOUD_NAME = os.getenv("CLOUDINARY_CLOUD_NAME", "").strip()
 CLOUDINARY_API_KEY = os.getenv("CLOUDINARY_API_KEY", "").strip()
 CLOUDINARY_API_SECRET = os.getenv("CLOUDINARY_API_SECRET", "").strip()
 
+# NetSuite item images. No URL is built here: the media file name cannot be
+# derived from an item id, so every image URL comes from a NetSuite item record
+# imported into netsuite_item_images (scripts/import_item_image_records.py).
+# NETSUITE_IMAGE_BASE is only the host that makes a record's relative path
+# absolute, and it is per company dataset — companies.netsuite_image_base
+# overrides this env default. Without it a record keeps its file name and no
+# URL, and no image field is written.
+NETSUITE_IMAGE_BASE = os.getenv("NETSUITE_IMAGE_BASE", "").strip()
+# One HEAD per ingested URL, so a wrong host is caught at import rather than in
+# the UI. --verify only; nothing on a request path does network I/O.
+NETSUITE_IMAGE_VERIFY_TIMEOUT = float(os.getenv("NETSUITE_IMAGE_VERIFY_TIMEOUT", "2.0"))
+
 # Zoho Analytics — fill these in backend/.env (Self Client OAuth)
 ZOHO_ANALYTICS_CLIENT_ID = os.getenv("ZOHO_ANALYTICS_CLIENT_ID", "").strip()
 ZOHO_ANALYTICS_CLIENT_SECRET = os.getenv("ZOHO_ANALYTICS_CLIENT_SECRET", "").strip()

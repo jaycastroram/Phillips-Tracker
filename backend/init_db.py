@@ -32,6 +32,7 @@ def _create_companies_table(conn) -> None:
                 name TEXT NOT NULL,
                 logo_url TEXT NOT NULL DEFAULT '',
                 banner_url TEXT NOT NULL DEFAULT '',
+                netsuite_image_base TEXT NOT NULL DEFAULT '',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -45,6 +46,7 @@ def _create_companies_table(conn) -> None:
                 name TEXT NOT NULL,
                 logo_url TEXT NOT NULL DEFAULT '',
                 banner_url TEXT NOT NULL DEFAULT '',
+                netsuite_image_base TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -334,11 +336,50 @@ def _create_core_tables(conn) -> None:
         """)
 
 
+def _create_netsuite_item_images_table(conn) -> None:
+    """Records imported from NetSuite: internal id -> media file / image URL.
+
+    The app never formats an image URL from an item id, so this table is where
+    the URL comes from. One row per company dataset and NetSuite internal id.
+    """
+    if IS_POSTGRES:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS netsuite_item_images (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                internal_id TEXT NOT NULL,
+                media_file TEXT NOT NULL DEFAULT '',
+                image_url TEXT NOT NULL DEFAULT '',
+                item_name TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (company_id, internal_id)
+            )
+        """)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS netsuite_item_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                internal_id TEXT NOT NULL,
+                media_file TEXT NOT NULL DEFAULT '',
+                image_url TEXT NOT NULL DEFAULT '',
+                item_name TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (company_id, internal_id)
+            )
+        """)
+
+
 def _ensure_company_columns(conn) -> None:
     for table_name in COMPANY_SCOPED_TABLES:
         ensure_column(conn, table_name, "company_id", "INTEGER")
     ensure_column(conn, "companies", "logo_url", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "companies", "banner_url", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "companies", "netsuite_image_base", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "users", "company_id", "INTEGER")
 
 
@@ -441,10 +482,15 @@ def init_db() -> None:
         _create_survey_layouts_table(conn)
         _create_core_tables(conn)
         _create_survey_periods_tables(conn)
+        _create_netsuite_item_images_table(conn)
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
         ensure_column(conn, "survey_items", "product_type", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "survey_items", "key_program", "TEXT NOT NULL DEFAULT ''")
+        # NetSuite internal id: the key an image record is looked up by. It is
+        # never derived from an image URL, and never a SKU or an item name.
+        ensure_column(conn, "tracker_items", "netsuite_item_id", "TEXT")
+        ensure_column(conn, "survey_items", "netsuite_item_id", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "survey_responses", "survey_period_id", "INTEGER")
         _ensure_company_columns(conn)
         _ensure_survey_layout_columns(conn)
