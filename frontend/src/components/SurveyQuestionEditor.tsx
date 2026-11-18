@@ -4,6 +4,7 @@ type Props = {
   questions: SurveyQuestion[]
   disabled?: boolean
   onChange: (questions: SurveyQuestion[]) => void
+  note?: string
 }
 
 const TYPE_OPTIONS: { value: SurveyQuestionType; label: string }[] = [
@@ -18,7 +19,7 @@ const TYPE_OPTIONS: { value: SurveyQuestionType; label: string }[] = [
 const CHOICE_TYPES: SurveyQuestionType[] = ['single_choice', 'dropdown', 'checkbox']
 
 function newQuestion(type: SurveyQuestionType = 'yes_no'): SurveyQuestion {
-  const id = `q_${Date.now().toString(36)}`
+  const id = `q_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
   if (type === 'text') {
     return { id, type, label: 'Additional notes', required: false, options: [] }
   }
@@ -52,7 +53,7 @@ function newQuestion(type: SurveyQuestionType = 'yes_no'): SurveyQuestion {
   }
 }
 
-export function SurveyQuestionEditor({ questions, disabled = false, onChange }: Props) {
+export function SurveyQuestionEditor({ questions, disabled = false, onChange, note }: Props) {
   function updateQuestion(index: number, updates: Partial<SurveyQuestion>) {
     onChange(
       questions.map((question, questionIndex) =>
@@ -70,113 +71,166 @@ export function SurveyQuestionEditor({ questions, disabled = false, onChange }: 
     onChange(next)
   }
 
-  return (
-    <fieldset className="survey-layout-filters has-extra survey-question-editor">
-      <legend>Survey questions</legend>
-      <p className="survey-layout-filter-note">
-        These questions appear on every selected item. Save with the survey layout below.
-      </p>
+  function addQuestion() {
+    onChange([...questions, newQuestion()])
+  }
 
-      <div className="survey-question-list">
-        {questions.map((question, index) => (
-          <div key={question.id} className="survey-question-card">
-            <div className="survey-question-card-top">
-              <label>
-                Type
-                <select
-                  disabled={disabled}
-                  value={question.type}
-                  onChange={(event) => {
-                    const type = event.target.value as SurveyQuestionType
-                    updateQuestion(index, {
-                      type,
-                      options:
-                        type === 'yes_no'
-                          ? ['Yes', 'No']
-                          : CHOICE_TYPES.includes(type)
-                            ? question.options.length >= 2
-                              ? question.options
-                              : ['Option A', 'Option B']
-                            : [],
-                    })
-                  }}
-                >
-                  {TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="survey-question-required">
-                <input
-                  checked={question.required}
-                  disabled={disabled}
-                  type="checkbox"
-                  onChange={(event) => updateQuestion(index, { required: event.target.checked })}
-                />
-                Required
-              </label>
-              <div className="survey-question-actions">
-                <button disabled={disabled || index === 0} type="button" onClick={() => moveQuestion(index, -1)}>
-                  Up
-                </button>
+  return (
+    <div className="survey-question-block">
+      <div className="survey-question-head">
+        <div>
+          <h3>Questions</h3>
+          <p className="survey-section-note">
+            {note ?? 'Each respondent answers these for every selected item, in this order.'}
+          </p>
+        </div>
+        <span className="survey-question-count">
+          {questions.length} {questions.length === 1 ? 'question' : 'questions'}
+        </span>
+      </div>
+
+      <ol className="survey-question-list">
+        {questions.map((question, index) => {
+          const isChoice = question.type === 'yes_no' || CHOICE_TYPES.includes(question.type)
+          return (
+            <li key={question.id} className="survey-question-row">
+              <div className="survey-question-row-top">
+                <span className="survey-question-handle" aria-hidden="true">
+                  {index + 1}
+                </span>
+                <div className="survey-question-moves">
+                  <button
+                    aria-label={`Move question ${index + 1} up`}
+                    disabled={disabled || index === 0}
+                    type="button"
+                    onClick={() => moveQuestion(index, -1)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    aria-label={`Move question ${index + 1} down`}
+                    disabled={disabled || index === questions.length - 1}
+                    type="button"
+                    onClick={() => moveQuestion(index, 1)}
+                  >
+                    ↓
+                  </button>
+                </div>
+
+                <label className="survey-question-type">
+                  <span className="survey-sr-only">Answer type</span>
+                  <select
+                    disabled={disabled}
+                    value={question.type}
+                    onChange={(event) => {
+                      const type = event.target.value as SurveyQuestionType
+                      updateQuestion(index, {
+                        type,
+                        options:
+                          type === 'yes_no'
+                            ? ['Yes', 'No']
+                            : CHOICE_TYPES.includes(type)
+                              ? // A yes/no question's Yes/No pair is meaningless for a
+                                // multi-choice question, so give it generic options instead.
+                                question.type === 'yes_no' || question.options.length < 2
+                                ? type === 'checkbox'
+                                  ? ['Option A', 'Option B', 'Option C']
+                                  : ['Option A', 'Option B']
+                                : question.options
+                              : [],
+                      })
+                    }}
+                  >
+                    {TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                <label className="survey-question-required">
+                  <input
+                    checked={question.required}
+                    disabled={disabled}
+                    type="checkbox"
+                    onChange={(event) => updateQuestion(index, { required: event.target.checked })}
+                  />
+                  Required
+                </label>
+
                 <button
-                  disabled={disabled || index === questions.length - 1}
-                  type="button"
-                  onClick={() => moveQuestion(index, 1)}
-                >
-                  Down
-                </button>
-                <button
+                  aria-label={`Remove question ${index + 1}`}
+                  className="survey-question-remove"
                   disabled={disabled || questions.length <= 1}
                   type="button"
                   onClick={() => onChange(questions.filter((_, questionIndex) => questionIndex !== index))}
                 >
-                  Remove
+                  ✕
                 </button>
               </div>
-            </div>
 
-            <label>
-              Question
-              <input
-                disabled={disabled}
-                value={question.label}
-                onChange={(event) => updateQuestion(index, { label: event.target.value })}
-              />
-            </label>
-
-            {(question.type === 'yes_no' || CHOICE_TYPES.includes(question.type)) && (
-              <label>
-                Options (one per line)
-                <textarea
+              <label className="survey-question-text">
+                <span className="survey-sr-only">Question</span>
+                <input
                   disabled={disabled}
-                  rows={question.type === 'yes_no' ? 2 : 4}
-                  value={question.options.join('\n')}
-                  onChange={(event) =>
-                    updateQuestion(index, {
-                      options: event.target.value
-                        .split('\n')
-                        .map((line) => line.trim())
-                        .filter(Boolean),
-                    })
-                  }
+                  placeholder="Question text"
+                  value={question.label}
+                  onChange={(event) => updateQuestion(index, { label: event.target.value })}
                 />
               </label>
-            )}
-          </div>
-        ))}
-      </div>
 
-      <button
-        className="secondary-action"
-        disabled={disabled}
-        type="button"
-        onClick={() => onChange([...questions, newQuestion()])}
-      >
-        Add question
+              {isChoice && (
+                <div className="survey-question-options">
+                  <span className="survey-field-label">Answer options</span>
+                  <ul>
+                    {question.options.map((option, optionIndex) => (
+                      <li key={`${question.id}-${optionIndex}`}>
+                        <input
+                          aria-label={`Option ${optionIndex + 1} for question ${index + 1}`}
+                          disabled={disabled}
+                          value={option}
+                          onChange={(event) => {
+                            const next = [...question.options]
+                            next[optionIndex] = event.target.value
+                            updateQuestion(index, { options: next })
+                          }}
+                        />
+                        <button
+                          aria-label={`Remove option ${optionIndex + 1} from question ${index + 1}`}
+                          disabled={disabled || question.options.length <= 1}
+                          type="button"
+                          onClick={() =>
+                            updateQuestion(index, {
+                              options: question.options.filter((_, optionIdx) => optionIdx !== optionIndex),
+                            })
+                          }
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    className="survey-question-add-option"
+                    disabled={disabled}
+                    type="button"
+                    onClick={() =>
+                      updateQuestion(index, { options: [...question.options, `Option ${question.options.length + 1}`] })
+                    }
+                  >
+                    + Add option
+                  </button>
+                </div>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+
+      <button className="survey-question-add" disabled={disabled} type="button" onClick={addQuestion}>
+        + Add question
       </button>
-    </fieldset>
+    </div>
   )
 }

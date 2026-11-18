@@ -79,7 +79,16 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     }
   }, [apiFetch, copyFromId])
 
-  async function createPeriod(event: FormEvent<HTMLFormElement>) {
+  function resetCreateForm() {
+    setNewName('')
+    setCopyFromId('')
+    setOpenImmediately(false)
+    setNewQuestions(DEFAULT_SURVEY_QUESTIONS)
+    setError('')
+    setMessage('')
+  }
+
+  async function createSurvey(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setCreating(true)
     setError('')
@@ -261,55 +270,83 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
 
         {!listCollapsed && (
           <>
-            <form className="admin-create-card survey-create-inline" onSubmit={createPeriod}>
-              <h2>Create Survey</h2>
-              <p>Start a new survey period from the current catalog layout, or copy a past survey.</p>
-              <label>
-                Survey name
-                <input
-                  required
-                  value={newName}
-                  placeholder="Spring 2026 Pre-Buy"
-                  onChange={(event) => setNewName(event.target.value)}
-                />
-              </label>
-              <label>
-                Copy from
-                <select
-                  value={copyFromId}
-                  onChange={(event) =>
-                    setCopyFromId(event.target.value ? Number(event.target.value) : '')
-                  }
-                >
-                  <option value="">Current catalog layout</option>
-                  {periods.map((period) => (
-                    <option key={period.id} value={period.id}>
-                      {period.name} ({period.status})
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="checkbox-label">
-                <input
-                  checked={openImmediately}
-                  type="checkbox"
-                  onChange={(event) => setOpenImmediately(event.target.checked)}
-                />
-                Open immediately (closes any currently open survey)
-              </label>
-              <SurveyQuestionEditor
-                disabled={creating || copyFromId !== ''}
-                questions={newQuestions}
-                onChange={setNewQuestions}
-              />
-              {copyFromId !== '' && (
-                <p className="survey-layout-filter-note">
-                  This survey copies the questions from the selected past survey.
+            <form className="survey-create-card" onSubmit={createSurvey}>
+              <div className="survey-create-heading">
+                <h2>Create survey</h2>
+                <p className="survey-section-subtitle">
+                  Name the survey, set the questions it asks, then save. Items start from the catalog
+                  layout you can fine-tune afterwards.
                 </p>
-              )}
-              <button className="primary-action" disabled={creating} type="submit">
-                {creating ? 'Creating...' : 'Create Survey'}
-              </button>
+              </div>
+
+              <section className="survey-create-section">
+                <h3>Survey details</h3>
+                <div className="survey-create-details">
+                  <label>
+                    <span className="survey-field-label">Survey name</span>
+                    <input
+                      required
+                      value={newName}
+                      placeholder="Spring 2026 Pre-Buy"
+                      onChange={(event) => setNewName(event.target.value)}
+                    />
+                  </label>
+                  <label>
+                    <span className="survey-field-label">Copy from</span>
+                    <select
+                      value={copyFromId}
+                      onChange={(event) =>
+                        setCopyFromId(event.target.value ? Number(event.target.value) : '')
+                      }
+                    >
+                      <option value="">Current catalog layout</option>
+                      {periods.map((period) => (
+                        <option key={period.id} value={period.id}>
+                          {period.name} ({period.status})
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="survey-create-open">
+                    <input
+                      checked={openImmediately}
+                      type="checkbox"
+                      onChange={(event) => setOpenImmediately(event.target.checked)}
+                    />
+                    <span>
+                      Open immediately
+                      <span className="survey-create-hint">Closes any currently open survey</span>
+                    </span>
+                  </label>
+                </div>
+              </section>
+
+              <section className="survey-create-section">
+                <SurveyQuestionEditor
+                  disabled={creating || copyFromId !== ''}
+                  note={
+                    copyFromId !== ''
+                      ? 'This survey copies the questions from the selected past survey.'
+                      : undefined
+                  }
+                  questions={newQuestions}
+                  onChange={setNewQuestions}
+                />
+              </section>
+
+              <div className="survey-create-actions">
+                <button
+                  className="secondary-button"
+                  disabled={creating}
+                  type="button"
+                  onClick={resetCreateForm}
+                >
+                  Cancel
+                </button>
+                <button className="primary-action" disabled={creating} type="submit">
+                  {creating ? 'Saving...' : 'Save survey'}
+                </button>
+              </div>
             </form>
 
             <div className="table-scroll survey-periods-scroll">
