@@ -2051,6 +2051,20 @@ td textarea {
   justify-self: start;
 }
 
+.buy-book-layer-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b7785;
+}
+
+.buy-book-layer-summary {
+  margin: 2px 0 0;
+  font-size: 0.85rem;
+  color: #33404f;
+}
+
 /* Nested group headings: the first layer carries the section, deeper layers
    step down so a book reads Brand > Program > item. */
 .buy-book-group-level + .buy-book-group-level {

@@ -12,12 +12,15 @@ What it proves:
 1. a layout with nothing saved behaves as one Brand layer that breaks pages
 2. Brand -> Key Program, both ticked, gives one page per brand/program pair
 3. unticking New page on the second layer removes the extra breaks
-4. ordering follows the layer values, with blank facets sorted last
+4. layer values keep the catalog's order, with blank facets sorted last
 5. a blank facet forms its own group and still breaks when its layer breaks
 6. the stack round-trips through PUT and GET
 7. a layout saved before layers existed (group_by only) reads as one layer
 8. the public Buy Book carries the derived breaks and nested headings
 9. the manual per-item page break no longer affects the public Buy Book
+10. spellings of one value ("Tito's" / "TITO'S ") stay in one group
+11. a repeated facet and a fifth layer are refused with 400
+12. a layout saved with no grouping stays ungrouped
 """
 
 from __future__ import annotations
@@ -124,7 +127,7 @@ def main() -> None:
         client.put("/api/admin/buy-book-layout", headers=headers, params=params,
                    json={"filter_fields": ["brand", "channel", "product_type"], "page_break_layers": [], "items": []})
         with connect() as conn:
-            execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = '[]', group_by = 'brand' WHERE company_id = ?", (company_id,))
+            execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = NULL, group_by = 'brand' WHERE company_id = ?", (company_id,))
         layout = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("layers read as one Brand layer", layout["page_break_layers"] == [{"field": "brand", "new_page": True}], layout["page_break_layers"])
 
@@ -141,9 +144,10 @@ def main() -> None:
         })
         book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
         mine = [item for item in book["items"] if item["item_name"] in items]
-        # Within a brand the program values sort alphabetically (Fall before
-        # Spring) and a blank program sorts last, so Beta is B2 then B1.
-        expected = [["A3"], ["A1", "A2"], ["B2"], ["B1"], ["Unbranded"]]
+        # Within a brand the program values keep the catalog's order - Spring
+        # before Fall, because A1 comes first - and a blank sorts last, so
+        # Beta is B2 then B1.
+        expected = [["A1", "A2"], ["A3"], ["B2"], ["B1"], ["Unbranded"]]
         check("one page per brand/program pair", pages_of(mine) == expected, pages_of(mine))
         first = next(item for item in mine if item["item_name"].endswith("A3"))
         check("a changed child layer emits its heading", [h["label"] for h in first["group_headers"]] == ["Alpha", "Fall"], first["group_headers"])
@@ -156,14 +160,14 @@ def main() -> None:
         })
         book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
         mine = [item for item in book["items"] if item["item_name"] in items]
-        check("no extra break inside a brand", pages_of(mine) == [["A3", "A1", "A2"], ["B2", "B1"], ["Unbranded"]], pages_of(mine))
-        check("the unticked layer still sorts", [item["item_name"].replace(f"{MARK} ", "") for item in mine][:3] == ["A3", "A1", "A2"], [item["item_name"] for item in mine][:3])
+        check("no extra break inside a brand", pages_of(mine) == [["A1", "A2", "A3"], ["B2", "B1"], ["Unbranded"]], pages_of(mine))
+        check("the unticked layer still sorts", [item["item_name"].replace(f"{MARK} ", "") for item in mine][:3] == ["A1", "A2", "A3"], [item["item_name"] for item in mine][:3])
 
         print("\n4. Stack round-trips and legacy layouts still read")
         saved = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("PUT then GET returns the same stack", saved["page_break_layers"] == [{"field": "brand", "new_page": True}, {"field": "key_program", "new_page": False}], saved["page_break_layers"])
         with connect() as conn:
-            execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = '[]', group_by = 'product_type' WHERE company_id = ?", (company_id,))
+            execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = NULL, group_by = 'product_type' WHERE company_id = ?", (company_id,))
         legacy = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("old single facet loads as one layer", legacy["page_break_layers"] == [{"field": "product_type", "new_page": True}], legacy["page_break_layers"])
 
@@ -175,7 +179,62 @@ def main() -> None:
         mine = [item for item in book["items"] if item["item_name"] in items]
         check("a stored manual flag does not break a page", len(pages_of(mine)) == 1, pages_of(mine))
 
-        print("\n6. Two migrations keep the stored stack")
+        print("\n6. Two spellings of one value are one group")
+        client.put("/api/admin/buy-book-layout", headers=headers, params=params, json={
+            "page_break_layers": [{"field": "brand", "new_page": True}, {"field": "key_program", "new_page": True}],
+        })
+        with connect() as conn:
+            extra = []
+            for brand, program, name in [("ALPHA ", "Spring", "A4"), ("alpha", "Fall", "A5")]:
+                cursor = execute(conn,
+                    """
+                    INSERT INTO survey_items (
+                        company_id, item_name, brand, channel, key_program, product_type,
+                        item_description, uom, price, image_url, is_active, in_survey, in_buy_book,
+                        survey_sort_order, buy_book_sort_order, sort_order
+                    ) VALUES (?, ?, ?, 'On Premise', ?, 'Print', '', '', '', '', 1, 1, 1, ?, ?, ?)
+                    """,
+                    (company_id, f"{MARK} {name}", brand, program, 90, 90, 90))
+                extra.append(int(cursor.lastrowid))
+        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        mine = [item for item in book["items"] if item["item_name"] in items or item["item_name"].endswith(("A4", "A5"))]
+        pages = pages_of(mine)
+        spring_page = next((page for page in pages if "A1" in page), [])
+        fall_page = next((page for page in pages if "A3" in page), [])
+        check("a case/spacing variant adds no page", sorted(spring_page) == ["A1", "A2", "A4"] and sorted(fall_page) == ["A3", "A5"], pages)
+        labels = {item["group_label"] for item in mine}
+        check("the group keeps the first spelling", labels == {"Alpha", "Beta", "Ungrouped"}, labels)
+        with connect() as conn:
+            for item_id in extra:
+                execute(conn, "DELETE FROM survey_items WHERE id = ?", (item_id,))
+
+        print("\n7. A repeated facet and a fifth layer are refused")
+        repeated = client.put("/api/admin/buy-book-layout", headers=headers, params=params, json={
+            "page_break_layers": [{"field": "brand", "new_page": True}, {"field": "brand", "new_page": False}],
+        })
+        check("a repeated facet is a 400 naming the owner", repeated.status_code == 400 and "layer 1" in repeated.text, repeated.text[:120])
+        too_many = client.put("/api/admin/buy-book-layout", headers=headers, params=params, json={
+            "page_break_layers": [
+                {"field": "brand", "new_page": True}, {"field": "channel", "new_page": True},
+                {"field": "key_program", "new_page": True}, {"field": "product_type", "new_page": True},
+                {"field": "brand", "new_page": True},
+            ],
+        })
+        check("a fifth layer is a 400", too_many.status_code == 400, too_many.text[:120])
+
+        print("\n8. A layout saved with no grouping stays ungrouped")
+        with connect() as conn:
+            execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = NULL, group_by = 'none' WHERE company_id = ?", (company_id,))
+        ungrouped = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
+        check("no grouping loads as an empty stack", ungrouped["page_break_layers"] == [], ungrouped["page_break_layers"])
+        init_db()
+        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        check(
+            "an ungrouped book starts no pages",
+            bool(book["items"]) and not any(i["page_break_before"] for i in book["items"]) and not any(i["group_headers"] for i in book["items"]),
+            [(i["item_name"], i["page_break_before"]) for i in book["items"] if i["page_break_before"]],
+        )
+        print("\n9. Two migrations keep the stored stack")
         with connect() as conn:
             execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = ? WHERE company_id = ?",
                     (json.dumps([{"field": "brand", "new_page": True}, {"field": "channel", "new_page": False}]), company_id))

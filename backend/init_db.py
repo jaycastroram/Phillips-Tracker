@@ -467,7 +467,9 @@ def _ensure_survey_layout_columns(conn) -> None:
     ensure_column(conn, "survey_items", "image_display_size", "TEXT NOT NULL DEFAULT 'medium'")
     ensure_column(conn, "survey_items", "image_fit", "TEXT NOT NULL DEFAULT 'contain'")
     ensure_column(conn, "buy_book_layouts", "group_by", "TEXT NOT NULL DEFAULT 'brand'")
-    ensure_column(conn, "buy_book_layouts", "page_break_layers_json", "TEXT NOT NULL DEFAULT '[]'")
+    # No default: NULL means "saved before layers existed" and is backfilled
+    # below, while a saved '[]' is a real choice (no grouping, no breaks).
+    ensure_column(conn, "buy_book_layouts", "page_break_layers_json", "TEXT")
     ensure_column(conn, "survey_layouts", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_periods", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
@@ -478,14 +480,19 @@ def _ensure_survey_layout_columns(conn) -> None:
         "SELECT id, group_by, page_break_layers_json FROM buy_book_layouts",
     ).fetchall()
     for layout in layouts:
-        stored = str(layout["page_break_layers_json"] or "").strip()
-        if stored and stored != "[]":
+        stored = layout["page_break_layers_json"]
+        if stored is not None and str(stored).strip():
             continue
-        field = str(layout["group_by"] or "").strip() or "brand"
+        group_by = str(layout["group_by"] or "").strip()
+        if group_by == "none":
+            # It was saved with no grouping; that is an empty stack, not Brand.
+            migrated = "[]"
+        else:
+            migrated = json.dumps([{"field": group_by or "brand", "new_page": True}])
         execute(
             conn,
             "UPDATE buy_book_layouts SET page_break_layers_json = ? WHERE id = ?",
-            (json.dumps([{"field": field, "new_page": True}]), layout["id"]),
+            (migrated, layout["id"]),
         )
     default_questions = survey_questions_json()
     execute(

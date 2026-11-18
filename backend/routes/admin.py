@@ -11,6 +11,7 @@ from openpyxl.styles import Font
 
 from config import IS_POSTGRES, SHEETS
 from database import (
+    MAX_PAGE_BREAK_LAYERS,
     buy_book_filter_fields,
     buy_book_group_by,
     buy_book_page_break_layers,
@@ -396,13 +397,38 @@ def get_buy_book_layout(
         fields = buy_book_filter_fields(conn, company_id)
         layers = buy_book_page_break_layers(conn, company_id)
     # group_by stays for older clients; the stack is the source of truth.
-    group_by = layers[0]["field"] if layers else buy_book_group_by(conn, company_id)
+    group_by = layers[0]["field"] if layers else "none"
     return {
         "filter_fields": fields,
         "group_by": group_by,
         "page_break_layers": layers,
         "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
     }
+
+
+def validate_page_break_layers(entries: list[dict]) -> list[dict]:
+    """Accept a stack only when it can be rendered: known facets, no repeats, at most four.
+
+    A repeat is refused rather than silently dropped, because dropping it after
+    a save would change the book without telling the person who saved it.
+    """
+    if len(entries) > MAX_PAGE_BREAK_LAYERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A Buy Book has at most {MAX_PAGE_BREAK_LAYERS} layers.",
+        )
+    layers: list[dict] = []
+    owner: dict[str, int] = {}
+    for position, entry in enumerate(entries, start=1):
+        field = str(entry.get("field") or "")
+        if field in owner:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field} is already used in layer {owner[field]}; a facet can only be used once.",
+            )
+        owner[field] = position
+        layers.append({"field": field, "new_page": bool(entry.get("new_page", True))})
+    return layers
 
 
 @router.put("/buy-book-layout")
@@ -413,12 +439,13 @@ def update_buy_book_layout(
 ) -> dict:
     company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
-    layers = (
-        normalize_page_break_layers([layer.model_dump() for layer in payload.page_break_layers])
-        if payload.page_break_layers
-        else [{"field": normalize_buy_book_group_by(payload.group_by), "new_page": True}]
-    )
-    group_by = layers[0]["field"]
+    if payload.page_break_layers is None:
+        # Older clients still send the single Group by field.
+        group_by = normalize_buy_book_group_by(payload.group_by)
+        layers = [] if payload.group_by == "none" else [{"field": group_by, "new_page": True}]
+    else:
+        layers = validate_page_break_layers([layer.model_dump() for layer in payload.page_break_layers])
+    group_by = layers[0]["field"] if layers else "none"
     with connect() as conn:
         ensure_buy_book_layout(conn, company_id)
         execute(

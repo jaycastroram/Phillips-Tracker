@@ -99,9 +99,11 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
   )
 }
 
-/** Old layouts stored a single facet; it loads as one layer that breaks. */
+/** Old layouts stored a single facet; it loads as one layer that breaks.
+ *  An empty stack is a saved choice ("no grouping"), so it stays empty. */
 function normalizeLayers(raw: unknown, legacyGroupBy: unknown): BuyBookLayer[] {
-  if (Array.isArray(raw) && raw.length > 0) {
+  if (Array.isArray(raw)) {
+    if (raw.length === 0 && legacyGroupBy === 'none') return []
     const layers = raw
       .filter((entry): entry is { field: string; new_page?: boolean } => Boolean(entry) && typeof entry === 'object')
       .map((entry) => ({
@@ -110,10 +112,13 @@ function normalizeLayers(raw: unknown, legacyGroupBy: unknown): BuyBookLayer[] {
       }))
       .filter((layer) => BUY_BOOK_LAYER_FIELDS.some((option) => option.field === layer.field))
     if (layers.length > 0) return layers
+    if (raw.length > 0) return DEFAULT_PAGE_BREAK_LAYERS
   }
   const legacy = BUY_BOOK_LAYER_FIELDS.find((option) => option.field === legacyGroupBy)
   return legacy ? [{ field: legacy.field, new_page: true }] : DEFAULT_PAGE_BREAK_LAYERS
 }
+
+const LAYER_LIMIT = 4
 
 function PageBreakLayers({
   layers,
@@ -141,12 +146,25 @@ function PageBreakLayers({
     setLayers(next)
   }
 
+  const ownerByField = new Map<string, number>()
+  layers.forEach((layer, index) => {
+    if (!ownerByField.has(layer.field)) ownerByField.set(layer.field, index)
+  })
+  const freeFields = BUY_BOOK_LAYER_FIELDS.filter((option) => !ownerByField.has(option.field))
+  const canAdd = !saving && freeFields.length > 0 && layers.length < 4
+  const labelOf = (field: string) => BUY_BOOK_LAYER_FIELDS.find((option) => option.field === field)?.label ?? field
+  const sortedLabels = layers.map((layer) => labelOf(layer.field))
+  const breakLabels = layers.filter((layer) => layer.new_page).map((layer) => labelOf(layer.field))
+  const summary = layers.length === 0
+    ? 'No grouping: items print in catalog order, with no page breaks.'
+    : `Items ordered ${sortedLabels.join(' → ')} → item order; ${breakLabels.length > 0 ? `pages start when ${breakLabels.join(' or ')} changes.` : 'no page starts automatically.'}`
+
   return (
     <div className="survey-layout-filter-row">
-      <p className="survey-layout-filter-label">Page breaks</p>
+      <p className="survey-layout-filter-label">Sorting and page breaks</p>
       <p className="survey-layout-filter-note">
-        Items sort by these layers in order. Tick New page to start a page whenever that layer
-        changes; unticked layers group and sort without breaking.
+        Sort by the first layer, then the next. Tick New page to start a page whenever that layer
+        changes; an unticked layer still sorts.
       </p>
       <ol className="buy-book-layers">
         {layers.map((layer, index) => (
@@ -172,6 +190,7 @@ function PageBreakLayers({
                 ↓
               </button>
             </div>
+            <span className="buy-book-layer-label">Sort by</span>
             <select
               aria-label={`Layer ${index + 1} facet`}
               disabled={saving}
@@ -180,11 +199,15 @@ function PageBreakLayers({
                 updateLayer(index, { field: event.target.value as BuyBookLayer['field'] })
               }
             >
-              {BUY_BOOK_LAYER_FIELDS.map((option) => (
-                <option key={option.field} value={option.field}>
-                  {option.label}
-                </option>
-              ))}
+              {BUY_BOOK_LAYER_FIELDS.map((option) => {
+                const usedAt = ownerByField.get(option.field)
+                const usedAbove = usedAt !== undefined && usedAt !== index
+                return (
+                  <option disabled={usedAbove} key={option.field} value={option.field}>
+                    {usedAbove ? `${option.label} (already used in layer ${(usedAt ?? 0) + 1})` : option.label}
+                  </option>
+                )
+              })}
             </select>
             <label className="buy-book-layer-break">
               <input
@@ -193,7 +216,7 @@ function PageBreakLayers({
                 type="checkbox"
                 onChange={(event) => updateLayer(index, { new_page: event.target.checked })}
               />
-              New page
+              Start a new page when this changes
             </label>
             <button
               aria-label={`Remove layer ${index + 1}`}
@@ -209,12 +232,19 @@ function PageBreakLayers({
       </ol>
       <button
         className="secondary-button buy-book-layer-add"
-        disabled={saving}
+        disabled={!canAdd}
         type="button"
-        onClick={() => setLayers([...layers, { field: 'channel', new_page: false }])}
+        onClick={() => freeFields[0] && setLayers([...layers, { field: freeFields[0].field, new_page: false }])}
       >
         + Add layer
       </button>
+      {!canAdd && layers.length < LAYER_LIMIT ? (
+        <p className="survey-layout-filter-note">Every facet is already a layer.</p>
+      ) : null}
+      {layers.length >= LAYER_LIMIT ? (
+        <p className="survey-layout-filter-note">A book has at most four layers.</p>
+      ) : null}
+      <p className="buy-book-layer-summary">{summary}</p>
     </div>
   )
 }

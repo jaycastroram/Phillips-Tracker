@@ -428,17 +428,27 @@ function App() {
     if (currentPage.length) pages.push(currentPage)
 
     const pagesMarkup = pages.map((pageItems, pageIndex) => {
-      const groupLabel = pageItems[0]?.group_label
-      const groupHeading = groupLabel
-        ? `<header class="buy-book-group"><p>${escapePrintValue(
-            pageItems[0]?.group_field === 'key_program'
-              ? 'Program'
-              : pageItems[0]?.group_field === 'product_type'
-                ? 'Type'
-                : pageItems[0]?.group_field === 'channel'
-                  ? 'Channel'
-                  : 'Brand',
-          )}</p><h1>${escapePrintValue(groupLabel)}</h1></header>`
+      // Print the whole layer path a page belongs to, the same headings the
+      // on-screen book draws: first layer as the section, deeper layers below.
+      const first = pageItems[0]
+      const headers = first?.group_headers?.length
+        ? first.group_headers
+        : first?.group_label
+          ? [{ field: first.group_field ?? 'brand', label: first.group_label, level: 0 }]
+          : []
+      const facetName = (field: string) =>
+        field === 'key_program' ? 'Program' : field === 'product_type' ? 'Type' : field === 'channel' ? 'Channel' : 'Brand'
+      const groupHeading = headers.length
+        ? `<header class="buy-book-group">${headers
+            .map((header, depth) => {
+              const level = header.level ?? depth
+              const facet = escapePrintValue(facetName(header.field))
+              const label = escapePrintValue(header.label)
+              return level === 0
+                ? `<p>${facet}</p><h1>${label}</h1>`
+                : `<p class="buy-book-group-sub"><span>${facet}</span>${label}</p>`
+            })
+            .join('')}</header>`
         : ''
       const itemMarkup = pageItems.map((item, i) => {
         const img = isImageReference(item.image_url)
@@ -461,6 +471,8 @@ function App() {
       .buy-book-page-break{break-before:page;page-break-before:always}
       .buy-book-group{margin:0 0 18px} .buy-book-group p{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#666}
       .buy-book-group h1{margin:4px 0 0;font-size:22px}
+      .buy-book-group-sub{margin:4px 0 0;font-size:13px;color:#33404f;font-weight:700}
+      .buy-book-group-sub span{margin-right:6px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#666}
       .buy-book-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 44px}
       .buy-book-item{break-inside:avoid;display:grid;grid-template-columns:116px 1fr;gap:16px;min-height:126px}
       .item-image{min-height:104px;display:grid;place-items:center}
