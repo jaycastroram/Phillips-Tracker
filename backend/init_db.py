@@ -382,6 +382,9 @@ def _ensure_company_columns(conn) -> None:
     ensure_column(conn, "companies", "logo_url", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "companies", "banner_url", "TEXT NOT NULL DEFAULT ''")
     ensure_column(conn, "companies", "netsuite_image_base", "TEXT NOT NULL DEFAULT ''")
+    # The market a company sells into; the Buy Book cover prints it, and a
+    # period's cover_json can override it for one book.
+    ensure_column(conn, "companies", "market_label", "TEXT")
     ensure_column(conn, "users", "company_id", "INTEGER")
 
 
@@ -524,6 +527,9 @@ def _ensure_survey_layout_columns(conn) -> None:
     _allow_null_page_break_layers(conn)
     ensure_column(conn, "survey_layouts", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_periods", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
+    # The Buy Book cover, stored per period. NULL means "nothing overridden",
+    # which is different from '{}' only in that the row was never saved.
+    ensure_column(conn, "survey_periods", "cover_json", "TEXT")
     ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
     # A layout saved before layered page breaks keeps its single Group by as a
     # one-layer stack: same sorting, same break, so nothing regresses on upgrade.

@@ -24,6 +24,7 @@ from database import (
     company_id_for_user,
     company_to_public,
     resolve_scoped_company_id,
+    row_value,
     serialize_user,
     ensure_buy_book_layout,
     ensure_legacy_survey_period,
@@ -37,6 +38,7 @@ from database import (
     normalize_filter_fields,
     normalize_survey_questions,
     parse_answers_json,
+    parse_cover_json,
     parse_survey_questions,
     resolve_interest_question,
     period_item_to_public,
@@ -683,14 +685,27 @@ def update_survey_period(
         elif next_status == "closed" and period["status"] != "closed":
             closes_at = closes_at or utc_now().isoformat()
 
+        # The cover is stored as overrides only: a field the client did not
+        # send keeps what was stored, and a blank it did send means "use the
+        # default" at render time.
+        cover_json = row_value(period, "cover_json", None)
+        if payload.cover is not None:
+            merged = parse_cover_json(cover_json)
+            for field, value in payload.cover.model_dump(exclude_unset=True).items():
+                if value is None:
+                    continue
+                merged[field] = str(value).strip()
+            cover_json = json.dumps(merged)
+
         execute(
             conn,
             """
             UPDATE survey_periods
-            SET name = ?, status = ?, opens_at = ?, closes_at = ?, updated_at = CURRENT_TIMESTAMP
+            SET name = ?, status = ?, opens_at = ?, closes_at = ?, cover_json = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND company_id = ?
             """,
-            (name, next_status, opens_at, closes_at, period_id, company_id),
+            (name, next_status, opens_at, closes_at, cover_json, period_id, company_id),
         )
         period = get_survey_period(conn, company_id, period_id)
         item_count = count_period_items(conn, period_id)

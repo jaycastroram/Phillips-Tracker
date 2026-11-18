@@ -140,6 +140,11 @@ def _row_get(row: Any, key: str, default: Any = None) -> Any:
     return default
 
 
+def row_value(row: Any, key: str, default: Any = None) -> Any:
+    """One column from a sqlite3.Row or a psycopg dict row, without a KeyError."""
+    return _row_get(row, key, default)
+
+
 def company_to_public(row: Any) -> dict:
     from config import COMPANY_BANNER_URL, COMPANY_LOGO_URL, DEFAULT_COMPANY_SLUG
 
@@ -157,6 +162,7 @@ def company_to_public(row: Any) -> dict:
         "name": row["name"],
         "logo_url": logo_url,
         "banner_url": banner_url,
+        "market_label": str(_row_get(row, "market_label", "") or ""),
         "is_active": bool(row["is_active"]),
         "created_at": _row_get(row, "created_at"),
         "updated_at": _row_get(row, "updated_at"),
@@ -518,6 +524,43 @@ def survey_layout_questions(conn: Any, company_id: int) -> list[dict[str, Any]]:
     return parse_survey_questions(_row_get(layout, "questions_json"))
 
 
+COVER_FIELDS = (
+    "title",
+    "subtitle",
+    "market",
+    "buyer",
+    "author",
+    "date_label",
+    "logo_url",
+    "banner_url",
+    "footer_note",
+)
+
+
+def parse_cover_json(cover_json: str | None) -> dict[str, str]:
+    """Read a stored Buy Book cover, keeping only fields a cover can carry.
+
+    Every value is a string; blank means "nothing overridden", so the render
+    fills its own default. Anything unusable (bad JSON, a list, an unknown
+    key) is dropped rather than raised: a cover must never 500 a book.
+    """
+    try:
+        raw = json.loads(cover_json or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    cover: dict[str, str] = {}
+    for field in COVER_FIELDS:
+        if field not in raw:
+            continue
+        value = raw[field]
+        if value is None:
+            continue
+        cover[field] = str(value).strip()
+    return cover
+
+
 def parse_answers_json(raw: str | None) -> dict[str, Any]:
     try:
         data = json.loads(raw or "{}")
@@ -844,6 +887,10 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
         for item in items:
             next_item = dict(item)
             next_item["group_headers"] = []
+            # Every item carries its whole path, carried forward from the last
+            # value change, so a renderer can take the longest common prefix of
+            # a page's paths without replaying the stack itself.
+            next_item["group_path"] = []
             next_item["group_field"] = None
             next_item["group_label"] = None
             next_item["page_break_before"] = False
@@ -863,6 +910,7 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
     indexed = sorted(enumerate(items), key=sort_key)
 
     grouped: list[dict[str, Any]] = []
+    path: list[dict[str, Any]] = []
     previous: tuple[str, ...] | None = None
     for index, (_, item) in enumerate(indexed):
         keys = tuple(_layer_key(item.get(layer["field"])) for layer in layers)
@@ -894,6 +942,8 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
 
         next_item = dict(item)
         next_item["group_headers"] = headers
+        next_item["group_path"] = _carry_group_path(path, headers, len(layers))
+        path = next_item["group_path"]
         next_item["group_field"] = layers[0]["field"]
         next_item["group_label"] = (
             labels[layers[0]["field"]][keys[0]] if keys[0] else "Ungrouped"
@@ -902,6 +952,21 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
         grouped.append(next_item)
         previous = keys
     return grouped
+
+
+def _carry_group_path(
+    previous: list[dict[str, Any]], headers: list[dict[str, Any]], levels: int
+) -> list[dict[str, Any]]:
+    """Merge newly named levels into the path carried from earlier items.
+
+    ``group_headers`` names only the levels that changed, so an item with no
+    heading still needs the brand it sits under: the path keeps every level
+    from the last item that named it.
+    """
+    by_level = {int(entry["level"]): dict(entry) for entry in previous}
+    for header in headers:
+        by_level[int(header["level"])] = dict(header)
+    return [by_level[level] for level in sorted(by_level) if level < levels]
 
 
 def apply_buy_book_grouping(items: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
@@ -956,6 +1021,7 @@ def survey_period_to_public(row: Any, *, item_count: int | None = None) -> dict:
         "closes_at": row["closes_at"],
         "filter_fields": parse_period_filter_fields(row["filter_fields_json"]),
         "questions": parse_survey_questions(_row_get(row, "questions_json")),
+        "cover": parse_cover_json(_row_get(row, "cover_json")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -1191,6 +1257,128 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
         (period["id"], company_id),
     )
     return period
+
+
+# ---------------------------------------------------------------------------
+# Buy Book PDF
+# ---------------------------------------------------------------------------
+
+MONTH_LABELS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def format_book_date(value: datetime) -> str:
+    """The cover's date label: "18 Nov 2026", the same in every locale."""
+    return f"{value.day} {MONTH_LABELS[value.month - 1]} {value.year}"
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def buy_in_window(period: Any) -> str:
+    """The buy-in window line printed in the page band under the heading."""
+    opens = _parse_iso_datetime(_row_get(period, "opens_at", None))
+    closes = _parse_iso_datetime(_row_get(period, "closes_at", None))
+    if opens and closes:
+        return f"Buy-in window: {format_book_date(opens)} – {format_book_date(closes)}"
+    if opens:
+        return f"Buy-in window opens {format_book_date(opens)}"
+    if closes:
+        return f"Buy-in window closes {format_book_date(closes)}"
+    return ""
+
+
+def resolve_buy_book_period(conn: Any, company_id: int, period_id: int | None = None) -> Any:
+    """The period the book is labelled with: the chosen one, else the open one,
+    else the latest, else the legacy period made from the catalog.
+
+    It only labels the cover and the page band - the items are the company's
+    whole Buy Book, so a closed period still prints a book.
+    """
+    if period_id is not None:
+        return get_survey_period(conn, company_id, int(period_id))
+    period = get_open_survey_period(conn, company_id)
+    if period is not None:
+        return period
+    period = execute(
+        conn,
+        "SELECT * FROM survey_periods WHERE company_id = ? ORDER BY id DESC LIMIT 1",
+        (company_id,),
+    ).fetchone()
+    if period is not None:
+        return period
+    return ensure_legacy_survey_period(conn, company_id)
+
+
+def buy_book_pdf_rows(conn: Any, company_id: int, item_ids: list[int] | None = None) -> list[Any]:
+    """The book's items, in catalog order.
+
+    No selection means the whole Buy Book - the admin layout GET returns every
+    active item, so the ``in_buy_book`` filter is applied here rather than
+    inherited from the caller.
+    """
+    if item_ids is not None:
+        ids = sorted({int(item_id) for item_id in item_ids})
+        if not ids:
+            return []
+        placeholders = ", ".join("?" for _ in ids)
+        return execute(
+            conn,
+            f"""
+            SELECT * FROM survey_items
+            WHERE company_id = ? AND is_active = ? AND id IN ({placeholders})
+            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
+            """,
+            (company_id, True, *ids),
+        ).fetchall()
+    return execute(
+        conn,
+        """
+        SELECT * FROM survey_items
+        WHERE company_id = ? AND is_active = ? AND in_buy_book = ?
+        ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
+        """,
+        (company_id, True, 1),
+    ).fetchall()
+
+
+def resolve_buy_book_cover(
+    company: Any,
+    period: Any,
+    user: Any,
+    generated_at: datetime,
+) -> dict[str, str]:
+    """Fill a period's cover overrides out to the whole cover.
+
+    A stored blank means "use the default", except where the default is blank
+    too (the buyer line simply disappears). Only the render ever needs the
+    defaults, so this lives here rather than in the public period payload.
+    """
+    period_name = str(_row_get(period, "name", "") or "").strip()
+    company_name = str(_row_get(company, "name", "") or "").strip()
+    stored = parse_cover_json(_row_get(period, "cover_json", None))
+    defaults = {
+        "title": f"Buy Book — {period_name}" if period_name else "Buy Book",
+        "subtitle": "",
+        "market": str(_row_get(company, "market_label", "") or "").strip(),
+        "buyer": "",
+        "author": str(_row_get(user, "name", "") or "").strip(),
+        "date_label": format_book_date(generated_at),
+        "logo_url": str(_row_get(company, "logo_url", "") or "").strip(),
+        "banner_url": str(_row_get(company, "banner_url", "") or "").strip(),
+        "footer_note": f"MRL Creative · {company_name}" if company_name else "MRL Creative",
+    }
+    cover = {field: stored.get(field, "") or defaults[field] for field in COVER_FIELDS}
+    cover["period_name"] = period_name
+    cover["window_line"] = buy_in_window(period)
+    cover["company_name"] = company_name
+    return cover
 
 
 # ---------------------------------------------------------------------------

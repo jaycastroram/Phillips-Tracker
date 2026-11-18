@@ -77,6 +77,9 @@ class CompanyUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1)
     logo_url: str | None = None
     banner_url: str | None = None
+    # The market a company sells into ("New York Metro"); the Buy Book cover
+    # prints it, and a period can override it.
+    market_label: str | None = None
     is_active: bool | None = None
 
 
@@ -170,11 +173,27 @@ class BuyBookLayoutUpdate(BaseModel):
     items: list[BuyBookLayoutItemUpdate] = []
 
 
+class BuyBookCover(BaseModel):
+    """The Buy Book cover, per period. Every field is optional; blank means
+    "use the default", so a period stores only what it overrides."""
+
+    title: str | None = None
+    subtitle: str | None = None
+    market: str | None = None
+    buyer: str | None = None
+    author: str | None = None
+    date_label: str | None = None
+    logo_url: str | None = None
+    banner_url: str | None = None
+    footer_note: str | None = None
+
+
 class SurveyPeriodUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
     status: Literal["draft", "open", "closed"] | None = None
     opens_at: str | None = None
     closes_at: str | None = None
+    cover: BuyBookCover | None = None
 
 
 class SurveyPeriodItemUpdate(BaseModel):
@@ -190,3 +209,11 @@ class SurveyPeriodLayoutUpdate(BaseModel):
     filter_fields: list[str] = []
     questions: list[SurveyQuestion] = []
     items: list[SurveyPeriodItemUpdate] = []
+
+
+class BuyBookPdfRequest(BaseModel):
+    """What the Buy Book PDF route accepts, and nothing else."""
+
+    company_id: int | None = None
+    period_id: int | None = None
+    item_ids: list[int] | None = None

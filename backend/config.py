@@ -4,7 +4,10 @@ import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "data" / "tracker.db"
+ASSETS_DIR = BASE_DIR / "assets"
+# SMARTBUY_DB_PATH points the whole app (admin, checks) at another SQLite file,
+# so a check can run against a throwaway database without touching the real one.
+DB_PATH = Path(os.environ.get("SMARTBUY_DB_PATH", "") or (BASE_DIR / "data" / "tracker.db"))
 SEED_ITEMS_PATH = BASE_DIR / "data" / "seed_items.json"
 FRONTEND_DIST = BASE_DIR.parent / "frontend" / "dist"
 

@@ -11,7 +11,7 @@ from config import CORS_ORIGINS, FRONTEND_DIST
 from database import get_sheet_config, resolve_optional_company_scope
 from init_db import init_db
 from routes.auth import get_current_user
-from routes import auth, items, admin, public, uploads, zoho_analytics
+from routes import auth, items, admin, buy_book_pdf, public, uploads, zoho_analytics
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -40,6 +40,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(items.router)
 app.include_router(admin.router)
+app.include_router(buy_book_pdf.router)
 app.include_router(public.router)
 app.include_router(uploads.router)
 app.include_router(zoho_analytics.router)
