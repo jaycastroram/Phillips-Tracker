@@ -807,8 +807,12 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
             changed = [position for position, value in enumerate(values) if value != previous[position]]
             first_level = changed[0] if changed else len(layers)
         if first_level < len(layers):
-            for layer, value in list(zip(layers, values))[first_level:]:
-                headers.append({"field": layer["field"], "label": value or "Ungrouped"})
+            for position, (layer, value) in enumerate(zip(layers, values)):
+                if position < first_level:
+                    continue
+                headers.append(
+                    {"field": layer["field"], "label": value or "Ungrouped", "level": position}
+                )
                 if layer["new_page"] and index > 0:
                     breaks = True
 
@@ -842,7 +846,7 @@ def apply_buy_book_grouping(items: list[dict[str, Any]], group_by: str) -> list[
         label = str(next_item.get(field) or "").strip() or "Ungrouped"
         next_item["group_field"] = field
         next_item["group_label"] = label
-        next_item["group_headers"] = [{"field": field, "label": label}]
+        next_item["group_headers"] = [{"field": field, "label": label, "level": 0}]
         if index == 0:
             next_item["page_break_before"] = False
         elif label != previous_label:

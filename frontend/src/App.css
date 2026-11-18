@@ -1940,7 +1940,8 @@ td textarea {
   resize: vertical;
 }
 
-.survey-card.survey-page-hidden {
+.survey-card.survey-page-hidden,
+.buy-book-item-block.survey-page-hidden {
   display: none;
 }
 
@@ -2060,10 +2061,23 @@ td textarea {
   margin: 0;
 }
 
-.buy-book-group-level h3 {
-  margin: 0;
+.buy-book-group-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 6px 0 0;
+  font-family: "Poppins", sans-serif;
   font-size: 0.95rem;
+  font-weight: 700;
   color: #33404f;
+}
+
+.buy-book-group-sub span {
+  color: var(--brand-accent, #ff3b2f);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .survey-layout-filters.has-extra {
@@ -2652,11 +2666,14 @@ td textarea {
     display: none !important;
   }
 
-  .survey-card.survey-page-hidden {
+  /* Printing the book prints every page, not just the one on screen. */
+  .survey-card.survey-page-hidden,
+  .buy-book-item-block.survey-page-hidden {
     display: grid;
   }
 
-  .survey-card.survey-page-break {
+  .survey-card.survey-page-break,
+  .buy-book-group-header.survey-page-break {
     break-before: page;
   }
 }

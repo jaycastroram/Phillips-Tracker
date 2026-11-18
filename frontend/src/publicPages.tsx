@@ -628,20 +628,28 @@ export function BuyBookPage({
             <div key={item.id} className={`buy-book-item-block${isOnPage ? '' : ' survey-page-hidden'}`}>
               {showGroupHeader && (
                 <header className={`buy-book-group-header${item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}>
-                  {headers.map((header, depth) => (
-                    <div key={`${header.field}-${depth}`} className={`buy-book-group-level buy-book-group-level--${depth}`}>
-                      <p className="eyebrow">
-                        {header.field === 'key_program'
-                          ? 'Program'
-                          : header.field === 'product_type'
-                            ? 'Type'
-                            : header.field === 'channel'
-                              ? 'Channel'
-                              : 'Brand'}
+                  {headers.map((header, depth) => {
+                    const facetLabel =
+                      header.field === 'key_program'
+                        ? 'Program'
+                        : header.field === 'product_type'
+                          ? 'Type'
+                          : header.field === 'channel'
+                            ? 'Channel'
+                            : 'Brand'
+                    const level = header.level ?? depth
+                    return level === 0 ? (
+                      <div key={`${header.field}-${level}`} className="buy-book-group-level buy-book-group-level--0">
+                        <p className="eyebrow">{facetLabel}</p>
+                        <h2>{header.label}</h2>
+                      </div>
+                    ) : (
+                      <p key={`${header.field}-${level}`} className="buy-book-group-sub">
+                        <span>{facetLabel}</span>
+                        {header.label}
                       </p>
-                      {depth === 0 ? <h2>{header.label}</h2> : <h3>{header.label}</h3>}
-                    </div>
-                  ))}
+                    )
+                  })}
                 </header>
               )}
               <article
