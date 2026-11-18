@@ -8,19 +8,13 @@ from fastapi import APIRouter, HTTPException, status
 
 from config import IS_POSTGRES
 from database import (
-    apply_buy_book_grouping,
-    apply_buy_book_layers,
-    buy_book_filter_fields,
-    buy_book_group_by,
-    buy_book_page_break_layers,
     company_to_public,
     connect,
     ensure_default_company,
-    ensure_legacy_survey_period,
     execute,
     fetch_company_by_slug,
     get_default_company,
-    get_open_survey_period,
+    get_survey_period_by_token,
     kanban_column_to_public,
     list_period_items,
     mirror_legacy_response_fields,
@@ -31,6 +25,7 @@ from database import (
     row_to_item,
     survey_filter_fields,
     survey_item_to_public,
+    survey_period_is_closed,
     survey_period_to_public,
     survey_response_to_public,
     with_returning,
@@ -130,115 +125,104 @@ def list_public_company_kanban_columns(company_slug: str) -> dict:
 # Survey items
 # ---------------------------------------------------------------------------
 
-def _survey_items_response(company_id: int, q: str, surface: str) -> dict:
-    if surface not in {"", "survey", "buy-book"}:
+def _resolve_survey_period(conn: Any, company_id: int, token: str) -> Any:
+    """The period this token names inside this company, or the right refusal.
+
+    No token is 401 — the caller has no credential at all. A token that names
+    nothing here is 404, and unknown, rotated and another company's token get
+    the same answer so a bad guess learns nothing about other tenants.
+    """
+    text = str(token or "").strip()
+    if not text:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "survey_token_required")
+    period = get_survey_period_by_token(conn, company_id, text)
+    if period is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey not found")
+    return period
+
+
+def _survey_item_matches(item: dict, needle: str) -> bool:
+    return any(
+        needle in str(item.get(key) or "").lower()
+        for key in ("item_name", "brand", "channel", "product_type", "key_program", "item_description")
+    )
+
+
+def _survey_items_response(company_id: int, q: str, surface: str, token: str = "") -> dict:
+    if surface not in {"", "survey"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown survey surface")
 
-    # Public survey surface reads the currently open period snapshot.
-    if surface == "survey":
-        with connect() as conn:
-            ensure_legacy_survey_period(conn, company_id)
-            period = get_open_survey_period(conn, company_id)
-            if period is None:
-                return {
-                    "items": [],
-                    "filter_fields": [],
-                    "questions": [],
-                    "period": None,
-                    "survey_open": False,
-                    "message": "No survey is open right now.",
-                }
+    with connect() as conn:
+        # A page view never creates a period: nothing a stranger opens mints a
+        # live token. The admin Survey Periods read is where a legacy period
+        # comes from now.
+        period = _resolve_survey_period(conn, company_id, token)
+        questions = parse_survey_questions(period["questions_json"])
+        if survey_period_is_closed(period):
+            return {
+                "items": [],
+                "filter_fields": [],
+                "questions": questions,
+                "period": survey_period_to_public(period),
+                "survey_open": False,
+                "message": "This survey is closed.",
+            }
+        if surface == "survey":
             rows = list_period_items(conn, period["id"])
             fields = parse_period_filter_fields(period["filter_fields_json"])
-            questions = parse_survey_questions(period["questions_json"])
+            items = [period_item_to_public(row) for row in rows]
+        else:
+            # The bare form stays, behind the same token: the SPA does not call
+            # it, and a caller that does should fail loudly rather than read
+            # the whole active catalog anonymously.
+            rows = execute(
+                conn,
+                """
+                SELECT * FROM survey_items
+                WHERE company_id = ? AND is_active = ?
+                ORDER BY survey_sort_order ASC, sort_order ASC, id ASC
+                """,
+                (company_id, True),
+            ).fetchall()
+            fields = survey_filter_fields(conn, company_id)
+            items = [survey_item_to_public(row) for row in rows]
 
-        items = [period_item_to_public(row) for row in rows]
-        if q.strip():
-            like = q.strip().lower()
-            items = [
-                item
-                for item in items
-                if like in item["item_name"].lower()
-                or like in item["brand"].lower()
-                or like in item["channel"].lower()
-                or like in item["product_type"].lower()
-                or like in item["key_program"].lower()
-                or like in item["item_description"].lower()
-            ]
-        return {
-            "items": items,
-            "filter_fields": fields,
-            "questions": questions,
-            "period": survey_period_to_public(period),
-            "survey_open": True,
-        }
-
-    clauses = ["company_id = ?", "is_active = ?"]
-    args: list[Any] = [company_id, True]
-    if surface == "buy-book":
-        clauses.append("in_buy_book = ?")
-        args.append(1)
-    if q.strip():
-        like = f"%{q.strip().lower()}%"
-        clauses.append(
-            "(lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ? OR "
-            "lower(product_type) LIKE ? OR lower(key_program) LIKE ? OR lower(item_description) LIKE ?)"
-        )
-        args.extend([like] * 6)
-
-    order_by = (
-        "buy_book_sort_order ASC, sort_order ASC, id ASC"
-        if surface == "buy-book"
-        else "sort_order ASC, id ASC"
-    )
-    with connect() as conn:
-        rows = execute(
-            conn,
-            f"SELECT * FROM survey_items WHERE {' AND '.join(clauses)} ORDER BY {order_by}",
-            args,
-        ).fetchall()
-        if surface == "buy-book":
-            fields = buy_book_filter_fields(conn, company_id)
-            layers = buy_book_page_break_layers(conn, company_id)
-            group_by = layers[0]["field"] if layers else "brand"
-            items = apply_buy_book_layers(
-                [survey_item_to_public(row, surface="buy-book") for row in rows],
-                layers,
-            )
-            return {
-                "items": items,
-                "filter_fields": fields,
-                "group_by": group_by,
-                "page_break_layers": layers,
-            }
-
-        fields = survey_filter_fields(conn, company_id)
+    needle = q.strip().lower()
+    if needle:
+        items = [item for item in items if _survey_item_matches(item, needle)]
     return {
-        "items": [survey_item_to_public(row, surface=surface or None) for row in rows],
+        "items": items,
         "filter_fields": fields,
+        "questions": questions,
+        "period": survey_period_to_public(period),
+        "survey_open": True,
     }
 
 
 @router.get("/survey-items")
-def list_public_survey_items(q: str = "", surface: str = "") -> dict:
-    return _survey_items_response(_default_company_id(), q, surface)
+def list_public_survey_items(q: str = "", surface: str = "", t: str = "") -> dict:
+    return _survey_items_response(_default_company_id(), q, surface, t)
 
 
 @router.get("/{company_slug}/survey-items")
-def list_public_company_survey_items(company_slug: str, q: str = "", surface: str = "") -> dict:
-    return _survey_items_response(_get_company(company_slug)["id"], q, surface)
+def list_public_company_survey_items(
+    company_slug: str,
+    q: str = "",
+    surface: str = "",
+    t: str = "",
+) -> dict:
+    return _survey_items_response(_get_company(company_slug)["id"], q, surface, t)
 
 
 # ---------------------------------------------------------------------------
 # Survey responses
 # ---------------------------------------------------------------------------
 
-def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> dict:
+def _create_survey_response(company_id: int, payload: SurveyResponseCreate, token: str) -> dict:
     with connect() as conn:
-        ensure_legacy_survey_period(conn, company_id)
-        period = get_open_survey_period(conn, company_id)
-        if period is None:
-            raise HTTPException(status.HTTP_403_FORBIDDEN, "No survey is open right now")
+        period = _resolve_survey_period(conn, company_id, token)
+        if survey_period_is_closed(period):
+            raise HTTPException(status.HTTP_410_GONE, "survey_closed")
 
         period_item = execute(
             conn,
@@ -283,16 +267,16 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
                 picked = raw if isinstance(raw, list) else ([] if raw in (None, "") else [raw])
                 selected: list[str] = []
                 for value in picked:
-                    text = str(value).strip()
-                    if not text:
+                    value_text = str(value).strip()
+                    if not value_text:
                         continue
-                    if question["options"] and text not in question["options"]:
+                    if question["options"] and value_text not in question["options"]:
                         raise HTTPException(
                             status.HTTP_400_BAD_REQUEST,
-                            f"Invalid option for {question['label']}: {text}",
+                            f"Invalid option for {question['label']}: {value_text}",
                         )
-                    if text not in selected:
-                        selected.append(text)
+                    if value_text not in selected:
+                        selected.append(value_text)
                 if question["required"] and not selected:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
@@ -322,13 +306,13 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Scale must be 1-5 for {question['label']}")
                 answers[question["id"]] = scale
             elif question["type"] in {"yes_no", "single_choice", "dropdown"}:
-                text = str(raw).strip()
-                if question["options"] and text not in question["options"]:
+                option_text = str(raw).strip()
+                if question["options"] and option_text not in question["options"]:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
                         f"Invalid option for {question['label']}",
                     )
-                answers[question["id"]] = text
+                answers[question["id"]] = option_text
             elif question["type"] == "text":
                 answers[question["id"]] = str(raw).strip()
 
@@ -339,38 +323,80 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
         if payload.feedback.strip() and not feedback:
             feedback = payload.feedback.strip()
 
-        values = (
-            company_id,
-            period["id"],
-            payload.survey_item_id,
-            str(payload.email).lower(),
-            attention,
-            recommend,
-            retail,
-            stands_out,
-            price_reasonable,
-            feedback,
-            json.dumps(answers),
-        )
-        sql = """
-            INSERT INTO survey_responses (
-                company_id, survey_period_id, survey_item_id, email, attention_effectiveness, recommend_rollout,
-                retail_engagement, stands_out, price_reasonable, feedback, answers_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """
-        if IS_POSTGRES:
-            row = execute(conn, with_returning(sql), values).fetchone()
+        email = str(payload.email).lower()
+        answers_json = json.dumps(answers)
+        # Last write wins: the unique index is on (company, period, item,
+        # lower(email)), so a second answer for the same shopper is an update
+        # of the one row, never a second row.
+        key_args = (company_id, period["id"], payload.survey_item_id, email)
+        existing = execute(
+            conn,
+            """
+            SELECT id FROM survey_responses
+            WHERE company_id = ? AND survey_period_id = ? AND survey_item_id = ? AND lower(email) = ?
+            """,
+            key_args,
+        ).fetchone()
+        if existing is not None:
+            execute(
+                conn,
+                """
+                UPDATE survey_responses
+                SET email = ?, attention_effectiveness = ?, recommend_rollout = ?,
+                    retail_engagement = ?, stands_out = ?, price_reasonable = ?,
+                    feedback = ?, answers_json = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (email, attention, recommend, retail, stands_out, price_reasonable, feedback, answers_json, existing["id"]),
+            )
+            row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (existing["id"],)).fetchone()
         else:
-            cursor = execute(conn, sql, values)
-            row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            values = (
+                company_id,
+                period["id"],
+                payload.survey_item_id,
+                email,
+                attention,
+                recommend,
+                retail,
+                stands_out,
+                price_reasonable,
+                feedback,
+                answers_json,
+            )
+            sql = """
+                INSERT INTO survey_responses (
+                    company_id, survey_period_id, survey_item_id, email, attention_effectiveness, recommend_rollout,
+                    retail_engagement, stands_out, price_reasonable, feedback, answers_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """
+            try:
+                if IS_POSTGRES:
+                    row = execute(conn, with_returning(sql), values).fetchone()
+                else:
+                    cursor = execute(conn, sql, values)
+                    row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            except Exception:
+                # A parallel submit from the same shopper won the insert; take
+                # it as an update rather than a 500.
+                row = execute(
+                    conn,
+                    """
+                    SELECT * FROM survey_responses
+                    WHERE company_id = ? AND survey_period_id = ? AND survey_item_id = ? AND lower(email) = ?
+                    """,
+                    key_args,
+                ).fetchone()
+                if row is None:
+                    raise
     return {"response": survey_response_to_public(row)}
 
 
-@router.post("/survey-responses", status_code=status.HTTP_201_CREATED)
-def create_public_survey_response(payload: SurveyResponseCreate) -> dict:
-    return _create_survey_response(_default_company_id(), payload)
+@router.post("/survey-responses")
+def create_public_survey_response(payload: SurveyResponseCreate, t: str = "") -> dict:
+    return _create_survey_response(_default_company_id(), payload, t)
 
 
-@router.post("/{company_slug}/survey-responses", status_code=status.HTTP_201_CREATED)
-def create_public_company_survey_response(company_slug: str, payload: SurveyResponseCreate) -> dict:
-    return _create_survey_response(_get_company(company_slug)["id"], payload)
+@router.post("/{company_slug}/survey-responses")
+def create_public_company_survey_response(company_slug: str, payload: SurveyResponseCreate, t: str = "") -> dict:
+    return _create_survey_response(_get_company(company_slug)["id"], payload, t)

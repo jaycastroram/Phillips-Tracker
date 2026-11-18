@@ -34,6 +34,7 @@ from database import (
     hash_password,
     kanban_column_to_public,
     list_period_items,
+    mint_survey_token,
     normalize_buy_book_group_by,
     normalize_filter_fields,
     normalize_survey_questions,
@@ -568,13 +569,16 @@ def create_survey_period(
         if payload.open_immediately:
             close_open_survey_periods(conn, company_id)
 
-        values = (company_id, name, status_value, opens_at, filter_fields_json, questions_json)
+        values = (
+            company_id, name, status_value, opens_at, mint_survey_token(), filter_fields_json, questions_json,
+        )
         if IS_POSTGRES:
             period = execute(
                 conn,
                 """
-                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO survey_periods
+                    (company_id, name, status, opens_at, survey_token, filter_fields_json, questions_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 RETURNING *
                 """,
                 values,
@@ -583,8 +587,9 @@ def create_survey_period(
             cursor = execute(
                 conn,
                 """
-                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO survey_periods
+                    (company_id, name, status, opens_at, survey_token, filter_fields_json, questions_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -599,7 +604,11 @@ def create_survey_period(
         )
         item_count = count_period_items(conn, period["id"])
 
-    return {"period": survey_period_to_public(period, item_count=item_count)}
+    created_public = survey_period_to_public(period, item_count=item_count)
+    # An admin response, so the create screen can hand out the link at once.
+    # survey_period_to_public() itself stays token-free for public payloads.
+    created_public["survey_token"] = str(period["survey_token"] or "")
+    return {"period": created_public}
 
 
 @router.get("/survey-periods/{period_id}")
@@ -649,12 +658,41 @@ def get_survey_period_detail(
 
     editor_items.sort(key=lambda item: (0 if item["in_survey"] else 1, item["survey_sort_order"], item["id"]))
     period_public = survey_period_to_public(period, item_count=len(items))
+    # The token is read-only here: this is the screen an editor copies the
+    # survey link from. It stays out of survey_period_to_public() so the public
+    # payload can never carry it.
+    period_public["survey_token"] = str(period["survey_token"] or "")
     return {
         "period": period_public,
         "filter_fields": period_public["filter_fields"],
         "questions": period_public["questions"],
         "items": editor_items,
     }
+
+
+@router.post("/survey-periods/{period_id}/rotate-token")
+def rotate_survey_period_token(
+    period_id: int,
+    user: sqlite3.Row = Depends(get_current_user),
+    company_id: int | None = Query(default=None),
+) -> dict:
+    """Replace the period's link credential. The old token stops resolving at once."""
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        period = get_survey_period(conn, company_id, period_id)
+        if period is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
+        token = mint_survey_token()
+        execute(
+            conn,
+            "UPDATE survey_periods SET survey_token = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND company_id = ?",
+            (token, period_id, company_id),
+        )
+        period = get_survey_period(conn, company_id, period_id)
+        item_count = count_period_items(conn, period_id)
+    period_public = survey_period_to_public(period, item_count=item_count)
+    period_public["survey_token"] = token
+    return {"period": period_public}
 
 
 @router.patch("/survey-periods/{period_id}")

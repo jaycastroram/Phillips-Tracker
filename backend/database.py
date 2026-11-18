@@ -278,6 +278,7 @@ def survey_response_to_public(row: sqlite3.Row) -> dict:
         "feedback": row["feedback"],
         "answers": parse_answers_json(_row_get(row, "answers_json")),
         "created_at": row["created_at"],
+        "updated_at": _row_get(row, "updated_at"),
     }
 
 
@@ -1060,17 +1061,67 @@ def period_item_to_public(row: Any) -> dict:
     }
 
 
+def mint_survey_token() -> str:
+    """A survey link credential: 24 random bytes, url-safe, unique per period."""
+    return secrets.token_urlsafe(24)
+
+
 def get_open_survey_period(conn: Any, company_id: int) -> Any:
+    """The period a shopper may submit into: open *and* not past its close time.
+
+    Status alone is not enough — a period whose ``closes_at`` has passed is
+    closed even if nobody flipped the status, and submission is the whole point
+    of this lookup.
+    """
     return execute(
         conn,
         """
         SELECT * FROM survey_periods
         WHERE company_id = ? AND status = 'open'
+          AND (closes_at IS NULL OR closes_at = '' OR closes_at > ?)
         ORDER BY id DESC
         LIMIT 1
         """,
-        (company_id,),
+        (company_id, utc_now().isoformat()),
     ).fetchone()
+
+
+def get_survey_period_by_token(conn: Any, company_id: int, token: Any) -> Any:
+    """The period this token belongs to inside this company, or None.
+
+    Scoping by company is what makes another company's token a 404 rather than
+    a cross-tenant read: the token is looked up, never trusted on its own.
+    """
+    text = str(token or "").strip()
+    if not text:
+        return None
+    return execute(
+        conn,
+        "SELECT * FROM survey_periods WHERE company_id = ? AND survey_token = ?",
+        (company_id, text),
+    ).fetchone()
+
+
+def survey_period_is_closed(period: Any) -> bool:
+    """Closed means status closed OR ``closes_at`` already passed.
+
+    An unreadable timestamp fails closed: a survey whose window cannot be
+    evaluated is not one to accept answers into.
+    """
+    if period is None:
+        return True
+    if str(_row_get(period, "status", "") or "") != "open":
+        return True
+    closes_at = str(_row_get(period, "closes_at", "") or "").strip()
+    if not closes_at:
+        return False
+    try:
+        parsed = datetime.fromisoformat(closes_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed <= utc_now()
 
 
 def get_survey_period(conn: Any, company_id: int, period_id: int) -> Any:
@@ -1224,13 +1275,22 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
 
     filter_fields_json = json.dumps(survey_filter_fields(conn, company_id))
     questions_json = survey_questions_json(survey_layout_questions(conn, company_id))
-    values = (company_id, "Current Survey", "open", utc_now().isoformat(), filter_fields_json, questions_json)
+    values = (
+        company_id,
+        "Current Survey",
+        "open",
+        utc_now().isoformat(),
+        mint_survey_token(),
+        filter_fields_json,
+        questions_json,
+    )
     if IS_POSTGRES:
         period = execute(
             conn,
             """
-            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO survey_periods
+                (company_id, name, status, opens_at, survey_token, filter_fields_json, questions_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             RETURNING *
             """,
             values,
@@ -1239,8 +1299,9 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
         cursor = execute(
             conn,
             """
-            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO survey_periods
+                (company_id, name, status, opens_at, survey_token, filter_fields_json, questions_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             values,
         )

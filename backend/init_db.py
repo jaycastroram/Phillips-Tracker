@@ -12,6 +12,7 @@ from database import (
     ensure_survey_layout,
     execute,
     hash_password,
+    mint_survey_token,
     utc_now,
 )
 from seed import (
@@ -110,6 +111,7 @@ def _create_survey_periods_tables(conn) -> None:
                     CHECK (status IN ('draft', 'open', 'closed')),
                 opens_at TIMESTAMPTZ,
                 closes_at TIMESTAMPTZ,
+                survey_token TEXT,
                 filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -148,6 +150,7 @@ def _create_survey_periods_tables(conn) -> None:
                     CHECK (status IN ('draft', 'open', 'closed')),
                 opens_at TEXT,
                 closes_at TEXT,
+                survey_token TEXT,
                 filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -584,6 +587,57 @@ def _ensure_survey_layout_columns(conn) -> None:
     )
 
 
+def _migrate_survey_access(conn) -> None:
+    """One token per period, one answer per shopper per item.
+
+    Both halves are idempotent: a second run finds every period tokenised (so
+    mints nothing) and no duplicate answer rows to drop. The unique indexes are
+    what make rotation and last-write-wins holds at the database, not only in
+    the route.
+    """
+    ensure_column(conn, "survey_periods", "survey_token", "TEXT")
+    ensure_column(conn, "survey_responses", "updated_at", "TEXT")
+
+    # Mint once per period. Existing rows keep the token they already have —
+    # re-minting on boot would rotate every live link on every deploy.
+    rows = execute(
+        conn,
+        "SELECT id FROM survey_periods WHERE survey_token IS NULL OR survey_token = ''",
+    ).fetchall()
+    for row in rows:
+        execute(
+            conn,
+            "UPDATE survey_periods SET survey_token = ? WHERE id = ?",
+            (mint_survey_token(), row["id"]),
+        )
+    # NULLs are distinct in both engines, so a period that predates the column
+    # and has not been minted yet cannot block this index.
+    execute(
+        conn,
+        "CREATE UNIQUE INDEX IF NOT EXISTS survey_periods_token_idx ON survey_periods (survey_token)",
+    )
+
+    # Last write wins: the highest id of a duplicate set is the answer the
+    # shopper meant, so the older rows go before the index can exist.
+    execute(
+        conn,
+        """
+        DELETE FROM survey_responses
+        WHERE id NOT IN (
+            SELECT MAX(id) FROM survey_responses
+            GROUP BY company_id, survey_period_id, survey_item_id, lower(email)
+        )
+        """,
+    )
+    execute(
+        conn,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS survey_responses_unique_answer_idx
+        ON survey_responses (company_id, survey_period_id, survey_item_id, lower(email))
+        """,
+    )
+
+
 def init_db() -> None:
     with connect() as conn:
         _create_companies_table(conn)
@@ -605,6 +659,7 @@ def init_db() -> None:
 
         company = ensure_default_company(conn)
         _backfill_company_ids(conn, company["id"])
+        _migrate_survey_access(conn)
         ensure_survey_layout(conn, company["id"])
         ensure_buy_book_layout(conn, company["id"])
         _scope_sheet_status_uniqueness(conn)
