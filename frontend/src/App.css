@@ -1899,7 +1899,7 @@ td textarea {
   font-weight: 700;
 }
 
-.survey-inline-response fieldset {
+.survey-inline-response > fieldset {
   grid-column: 1;
   grid-row: 2;
   align-self: stretch;
@@ -1918,7 +1918,9 @@ td textarea {
   font-weight: 600;
 }
 
-.survey-feedback-field {
+/* Only the legacy single-question markup sits directly in the grid; the
+   configured questions render inside .survey-dynamic-questions, one per row. */
+.survey-inline-response > .survey-feedback-field {
   grid-column: 2;
   grid-row: 2;
   align-self: stretch;
@@ -2028,7 +2030,9 @@ td textarea {
 
 .survey-dynamic-questions {
   display: grid;
-  gap: 12px;
+  grid-column: 1 / -1;
+  grid-row: 2;
+  gap: 14px;
 }
 
 .survey-dynamic-questions fieldset {
@@ -2040,6 +2044,30 @@ td textarea {
 .survey-dynamic-questions legend {
   margin-bottom: 6px;
   font-weight: 700;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 0.82rem;
+}
+
+.survey-dynamic-questions fieldset > label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0;
+  color: var(--brand-ink);
+  font-family: "Poppins", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.survey-dynamic-questions .survey-feedback-field,
+.survey-dynamic-questions .survey-dropdown-field {
+  display: grid;
+  gap: 6px;
+  font-family: "Poppins", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--brand-ink);
 }
 
 .survey-scale-options {
