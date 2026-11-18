@@ -9,7 +9,7 @@ row. All geometry lives in ``buy_book_pdf``; all image fetching in
 from __future__ import annotations
 
 import sqlite3
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 
@@ -45,6 +45,10 @@ def create_buy_book_pdf(
     request = payload or BuyBookPdfRequest()
     company_id = resolve_scoped_company_id(user, request.company_id)
     generated_at = datetime.now(UTC)
+    # The cover's date is the admin's day, not UTC's: 8 PM in New York is still
+    # today there, and the buyer only sees the paper. The filename keeps the
+    # generation instant, so it stays unique to the render.
+    admin_clock = generated_at + timedelta(minutes=request.tz_offset_minutes)
 
     with connect() as conn:
         company = fetch_company_by_id(conn, company_id)
@@ -64,7 +68,7 @@ def create_buy_book_pdf(
         layers = buy_book_page_break_layers(conn, company_id)
         items = [survey_item_to_public(row, surface="buy-book") for row in rows]
         book_items = apply_buy_book_layers(items, layers)
-        cover = resolve_buy_book_cover(company, period, user, generated_at)
+        cover = resolve_buy_book_cover(company, period, user, admin_clock)
         period_name = str(cover.get("period_name") or "")
 
     pdf_bytes = render_buy_book_pdf(items=book_items, cover=cover, generated_at=generated_at)

@@ -115,7 +115,7 @@ function DownloadBookButton({ apiFetch, companyId }: Props) {
     setBusy(true)
     setError('')
     try {
-      const body = companyId == null ? {} : { company_id: companyId }
+      const body = { ...(companyId == null ? {} : { company_id: companyId }), tz_offset_minutes: -new Date().getTimezoneOffset() }
       const res = await apiFetch('/admin/buy-book/pdf', { method: 'POST', body: JSON.stringify(body) })
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}))

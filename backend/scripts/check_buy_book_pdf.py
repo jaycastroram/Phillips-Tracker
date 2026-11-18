@@ -39,9 +39,11 @@ from PIL import Image, ImageDraw  # noqa: E402
 from pypdf import PdfReader  # noqa: E402
 
 from app import app  # noqa: E402
+import buy_book_images  # noqa: E402
 from config import IS_POSTGRES  # noqa: E402
 from database import connect, execute, fetch_company_by_slug, hash_password  # noqa: E402
 from init_db import init_db  # noqa: E402
+from routes import buy_book_pdf as pdf_route  # noqa: E402
 
 FAILURES: list[str] = []
 SLUG = "check-pdf"
@@ -129,6 +131,8 @@ class ImageHandler(BaseHTTPRequestHandler):
             body, kind = self.png_a, "image/png"
         elif self.path == "/image-b.png":
             body, kind = self.png_b, "image/png"
+        elif self.path == "/ok1.png":
+            body, kind = self.png_a, "image/png"
         elif self.path == "/image-html.png":
             body, kind = b"<!doctype html><html><body>Sign in</body></html>", "text/html; charset=utf-8"
         else:
@@ -143,6 +147,30 @@ class ImageHandler(BaseHTTPRequestHandler):
 
     def log_message(self, *args):  # noqa: D401
         return
+
+
+_REAL_HOST_ALLOWED = buy_book_images._host_allowed
+
+
+def allow_fixture_images(allowed: bool) -> None:
+    """Point the fetch guard at this check's loopback fixture, or take it away.
+
+    The guard refuses loopback by design - that is the point of it - and the
+    pictures this check serves live on 127.0.0.1. So the sections that assert a
+    picture really appears swap in a permissive address check, and the guard
+    section below swaps the real one back.
+    """
+    buy_book_images._host_allowed = (lambda url: True) if allowed else _REAL_HOST_ALLOWED
+
+
+class _FixedClock(datetime):
+    """The route's ``datetime``, frozen, so a cover date is assertable."""
+
+    frozen = datetime(2026, 11, 19, 1, 30, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.frozen.astimezone(tz) if tz is not None else cls.frozen.replace(tzinfo=None)
 
 
 def start_image_server() -> tuple[ThreadingHTTPServer, str]:
@@ -336,6 +364,7 @@ def restore_brands(conn, company_id: int) -> None:
 def main() -> None:
     init_db()
     server, base_url = start_image_server()
+    allow_fixture_images(True)
     client = TestClient(app)
     db_file = os.environ.get("SMARTBUY_DB_PATH", "")
 
@@ -435,6 +464,48 @@ def main() -> None:
               page_texts(reader)[1][:160])
         check("the file still parses", len(reader.pages) == 4, len(reader.pages))
 
+        print("\n7b. The fetch refuses an address that is not public")
+        local_url = f"{base_url}/ok1.png"
+        with connect() as conn:
+            execute(
+                conn,
+                "UPDATE survey_items SET image_url = ? WHERE company_id = ? AND item_name = ?",
+                (local_url, company_id, "LALO 01"),
+            )
+        allow_fixture_images(False)
+        try:
+            guarded, caught_guard = render(client, headers)
+            check("a refused picture never fails the download",
+                  guarded.status_code == 200 and not caught_guard, (guarded.status_code, caught_guard))
+            guarded_texts = page_texts(read_pdf(guarded.content))
+            guarded_reader = read_pdf(guarded.content)
+            lalo_page = next(
+                index for index, text in enumerate(guarded_texts[1:], start=1) if "LALO 01" in text
+            )
+            check(
+                "a loopback image_url draws the initials, not the picture",
+                not image_xobjects(guarded_reader.pages[lalo_page]) and "LA" in guarded_texts[lalo_page],
+                (len(image_xobjects(guarded_reader.pages[lalo_page])), guarded_texts[lalo_page][:200]),
+            )
+            check(
+                "no picture anywhere while the real guard is on",
+                not [image for page in guarded_reader.pages[1:] for image in image_xobjects(page)],
+                [len(image_xobjects(page)) for page in guarded_reader.pages[1:]],
+            )
+            refused = (
+                ("http://127.0.0.1:1/x.png", "loopback"),
+                ("http://[::1]:8000/x.png", "IPv6 loopback"),
+                ("http://localhost:8000/x.png", "localhost"),
+                ("http://169.254.169.254/latest/meta-data/", "a link-local metadata address"),
+                ("http://10.0.0.5/x.png", "a private address"),
+                ("file:///etc/passwd", "a file URL"),
+                ("ftp://example.com/x.png", "ftp"),
+            )
+            for url, label in refused:
+                check(f"the guard refuses {label}", buy_book_images._host_allowed(url) is False, url)
+        finally:
+            allow_fixture_images(True)
+
         print("\n8. The cover")
         cover_text = page_texts(reader)[0]
         today = datetime.now(UTC)
@@ -443,6 +514,59 @@ def main() -> None:
                          "MRL Creative · SmartBuy"):
             check(f"cover text contains {expected!r}", expected in cover_text, cover_text[:400])
         check("a broken logo_url still renders the book", reader.pages[0] is not None, "")
+
+        print("\n8b. The cover date is the admin's day, not UTC's")
+        real_clock = pdf_route.datetime
+        pdf_route.datetime = _FixedClock
+        try:
+            evening, _ = render(client, headers, {"tz_offset_minutes": -300})
+            evening_text = page_texts(read_pdf(evening.content))[0]
+            check("01:30 UTC on 19 Nov is still 18 Nov in New York",
+                  "18 Nov 2026" in evening_text, evening_text[:300])
+            utc_render, _ = render(client, headers, {"tz_offset_minutes": 0})
+            check("a UTC admin prints 19 Nov 2026",
+                  "19 Nov 2026" in page_texts(read_pdf(utc_render.content))[0], "")
+            default_render, _ = render(client, headers)
+            check("the field defaults to zero",
+                  "19 Nov 2026" in page_texts(read_pdf(default_render.content))[0], "")
+            far_east, _ = render(client, headers, {"tz_offset_minutes": 840})
+            check("+840 is accepted",
+                  "19 Nov 2026" in page_texts(read_pdf(far_east.content))[0], far_east.status_code)
+            far_west, _ = render(client, headers, {"tz_offset_minutes": -720})
+            check("-720 is accepted", far_west.status_code == 200, far_west.status_code)
+            too_far, _ = render(client, headers, {"tz_offset_minutes": 900})
+            check("+900 is refused", too_far.status_code == 422, too_far.status_code)
+            too_west, _ = render(client, headers, {"tz_offset_minutes": -721})
+            check("-721 is refused", too_west.status_code == 422, too_west.status_code)
+
+            pinned = client.patch(
+                f"/api/admin/survey-periods/{period_id}",
+                headers=headers,
+                params={"company_id": company_id},
+                json={"cover": {"date_label": "Holiday 2026"}},
+            )
+            check("PATCH accepts a stored date", pinned.status_code == 200, pinned.status_code)
+            stored_render, _ = render(client, headers, {"tz_offset_minutes": -300})
+            stored_text = page_texts(read_pdf(stored_render.content))[0]
+            check("a stored date_label beats the clock hint",
+                  "Holiday 2026" in stored_text and "18 Nov 2026" not in stored_text, stored_text[:300])
+            client.patch(
+                f"/api/admin/survey-periods/{period_id}",
+                headers=headers,
+                params={"company_id": company_id},
+                json={"cover": {"date_label": ""}},
+            )
+            blank_render, _ = render(client, headers, {"tz_offset_minutes": -300})
+            check("a blank date_label falls back to the clock",
+                  "18 Nov 2026" in page_texts(read_pdf(blank_render.content))[0], "")
+            with connect() as conn:
+                raw = execute(
+                    conn, "SELECT cover_json FROM survey_periods WHERE id = ?", (period_id,)
+                ).fetchone()
+            raw_cover = dict(raw).get("cover_json")
+            check("the clock hint is never stored", "tz_offset" not in str(raw_cover), str(raw_cover)[:200])
+        finally:
+            pdf_route.datetime = real_clock
 
         print("\n9. Unicode round-trips")
         jalapeno_page = next(text for text in page_texts(reader) if "Jalapeño" in text)

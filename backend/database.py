@@ -1352,13 +1352,15 @@ def resolve_buy_book_cover(
     company: Any,
     period: Any,
     user: Any,
-    generated_at: datetime,
+    clock_at: datetime,
 ) -> dict[str, str]:
     """Fill a period's cover overrides out to the whole cover.
 
     A stored blank means "use the default", except where the default is blank
     too (the buyer line simply disappears). Only the render ever needs the
     defaults, so this lives here rather than in the public period payload.
+    ``clock_at`` is the admin's local clock, which only the default date label
+    reads; a stored ``date_label`` still wins.
     """
     period_name = str(_row_get(period, "name", "") or "").strip()
     company_name = str(_row_get(company, "name", "") or "").strip()
@@ -1369,7 +1371,7 @@ def resolve_buy_book_cover(
         "market": str(_row_get(company, "market_label", "") or "").strip(),
         "buyer": "",
         "author": str(_row_get(user, "name", "") or "").strip(),
-        "date_label": format_book_date(generated_at),
+        "date_label": format_book_date(clock_at),
         "logo_url": str(_row_get(company, "logo_url", "") or "").strip(),
         "banner_url": str(_row_get(company, "banner_url", "") or "").strip(),
         "footer_note": f"MRL Creative · {company_name}" if company_name else "MRL Creative",

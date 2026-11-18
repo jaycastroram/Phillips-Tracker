@@ -217,3 +217,7 @@ class BuyBookPdfRequest(BaseModel):
     company_id: int | None = None
     period_id: int | None = None
     item_ids: list[int] | None = None
+    # A clock hint, not cover content: the browser sends
+    # -Date.getTimezoneOffset(), so a book built at 8 PM in New York prints
+    # today's date rather than tomorrow's. It is never stored.
+    tz_offset_minutes: int = Field(default=0, ge=-720, le=840)

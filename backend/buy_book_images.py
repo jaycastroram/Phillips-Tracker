@@ -5,6 +5,11 @@ media file). It can answer with a picture, with the storefront's login page, or
 not at all, so every failure here is expected and produces ``None`` - the
 renderer draws a brand-initial circle instead.
 
+Each hop is checked before it is fetched (``_host_allowed``): http/https only,
+and no loopback, private, link-local, unique-local or multicast address, so a
+pasted URL cannot point the server at its own metadata service or an internal
+host. A refused URL is just another missing picture, never an error.
+
 Nothing in this module raises, and nothing is cached across renders: the cache
 lives for one book, so a fixed id shows its picture the moment it is fixed.
 """
@@ -12,6 +17,8 @@ lives for one book, so a fixed id shows its picture the moment it is fixed.
 from __future__ import annotations
 
 import io
+import ipaddress
+import socket
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -37,12 +44,50 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def _host_allowed(url: str) -> bool:
+    """False when the URL points where the server must not fetch.
+
+    The admin writes ``image_url``, but the server is what follows it, so a
+    pasted address would otherwise reach anything the host can: a cloud
+    metadata service, an internal admin panel, a loopback port. The scheme
+    must be http/https and every address the hostname resolves to must be
+    globally routable - loopback, private, link-local, unique-local,
+    multicast, reserved and unspecified addresses are all refused, and a name
+    that does not resolve is refused too.
+
+    This blocks the obvious cases; it is not an egress proxy. A public name
+    that then proxies the request, or a name that answers one address for
+    this lookup and another for the fetch (DNS rebinding), still gets through.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    hostname = parsed.hostname
+    if not hostname:
+        return False
+    try:
+        resolved = socket.getaddrinfo(hostname, None, type=socket.SOCK_STREAM)
+    except (OSError, UnicodeError):
+        return False
+    if not resolved:
+        return False
+    for entry in resolved:
+        try:
+            address = ipaddress.ip_address(str(entry[4][0]).split("%", 1)[0])
+        except ValueError:
+            return False
+        if address.is_multicast or not address.is_global:
+            return False
+    return True
+
+
 def _fetch_bytes(url: str) -> bytes | None:
     """One image body, or None. Redirects are followed at most twice."""
-    if urllib.parse.urlsplit(url).scheme not in {"http", "https"}:
-        return None
     current = url
     for _ in range(MAX_REDIRECTS + 1):
+        # Every hop is checked, so a redirect cannot walk the fetch inbound.
+        if not _host_allowed(current):
+            return None
         request = urllib.request.Request(
             current,
             headers={"Accept": "image/*", "User-Agent": "SmartBuy-BuyBook/1.0"},
