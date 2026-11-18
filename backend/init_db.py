@@ -453,6 +453,57 @@ def _scope_sheet_status_uniqueness(conn) -> None:
     execute(conn, "PRAGMA foreign_keys = ON")
 
 
+def _allow_null_page_break_layers(conn) -> None:
+    """Make page_break_layers_json nullable on databases that got it with a default.
+
+    "Never saved" (NULL) and "saved empty" ('[]') are different books, so the
+    column cannot default to '[]'. A database that ran an earlier build of the
+    layer stack has it NOT NULL DEFAULT '[]'; relax it here so every install
+    ends up with the same column.
+    """
+    if IS_POSTGRES:
+        column = execute(
+            conn,
+            """
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_name = 'buy_book_layouts' AND column_name = 'page_break_layers_json'
+            """,
+        ).fetchone()
+        if column is not None and str(column["is_nullable"]).upper() == "NO":
+            execute(conn, "ALTER TABLE buy_book_layouts ALTER COLUMN page_break_layers_json DROP NOT NULL")
+        return
+
+    columns = execute(conn, "PRAGMA table_info(buy_book_layouts)").fetchall()
+    column = next((row for row in columns if row["name"] == "page_break_layers_json"), None)
+    if column is None or not int(column["notnull"]):
+        return
+    execute(conn, "PRAGMA foreign_keys = OFF")
+    execute(conn, "DROP TABLE IF EXISTS buy_book_layouts_layers_nullable")
+    execute(conn, """
+        CREATE TABLE buy_book_layouts_layers_nullable (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL UNIQUE,
+            filter_fields_json TEXT NOT NULL DEFAULT '["brand","channel","product_type"]',
+            group_by TEXT NOT NULL DEFAULT 'brand',
+            page_break_layers_json TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    execute(
+        conn,
+        """
+        INSERT INTO buy_book_layouts_layers_nullable
+            (id, company_id, filter_fields_json, group_by, page_break_layers_json, created_at, updated_at)
+        SELECT id, company_id, filter_fields_json, group_by, page_break_layers_json, created_at, updated_at
+        FROM buy_book_layouts
+        """,
+    )
+    execute(conn, "DROP TABLE buy_book_layouts")
+    execute(conn, "ALTER TABLE buy_book_layouts_layers_nullable RENAME TO buy_book_layouts")
+    execute(conn, "PRAGMA foreign_keys = ON")
+
+
 def _ensure_survey_layout_columns(conn) -> None:
     from config import DEFAULT_RESPONSE_WIDTH
     from database import survey_questions_json
@@ -470,6 +521,7 @@ def _ensure_survey_layout_columns(conn) -> None:
     # No default: NULL means "saved before layers existed" and is backfilled
     # below, while a saved '[]' is a real choice (no grouping, no breaks).
     ensure_column(conn, "buy_book_layouts", "page_break_layers_json", "TEXT")
+    _allow_null_page_break_layers(conn)
     ensure_column(conn, "survey_layouts", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_periods", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
