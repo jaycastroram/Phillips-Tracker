@@ -111,7 +111,7 @@ export type SurveyItem = {
 
 export type SurveyPeriodStatus = 'draft' | 'open' | 'closed'
 
-export type SurveyQuestionType = 'yes_no' | 'single_choice' | 'text' | 'scale'
+export type SurveyQuestionType = 'yes_no' | 'single_choice' | 'dropdown' | 'checkbox' | 'text' | 'scale'
 
 export type SurveyQuestion = {
   id: string
@@ -135,10 +135,12 @@ export type SurveyPeriod = {
   updated_at: string
 }
 
+export type SurveyAnswerValue = string | number | string[]
+
 export type SurveyResponseDraft = {
   interest: SurveyInterest
   notes: string
-  answers: Record<string, string | number>
+  answers: Record<string, SurveyAnswerValue>
 }
 
 export type CompanyInfo = {

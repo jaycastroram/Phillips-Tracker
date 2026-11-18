@@ -8,10 +8,14 @@ type Props = {
 
 const TYPE_OPTIONS: { value: SurveyQuestionType; label: string }[] = [
   { value: 'yes_no', label: 'Yes / No' },
-  { value: 'single_choice', label: 'Single choice' },
+  { value: 'single_choice', label: 'Single choice (radio)' },
+  { value: 'dropdown', label: 'Dropdown' },
+  { value: 'checkbox', label: 'Checkboxes (multi)' },
   { value: 'text', label: 'Text' },
   { value: 'scale', label: 'Scale 1–5' },
 ]
+
+const CHOICE_TYPES: SurveyQuestionType[] = ['single_choice', 'dropdown', 'checkbox']
 
 function newQuestion(type: SurveyQuestionType = 'yes_no'): SurveyQuestion {
   const id = `q_${Date.now().toString(36)}`
@@ -21,13 +25,22 @@ function newQuestion(type: SurveyQuestionType = 'yes_no'): SurveyQuestion {
   if (type === 'scale') {
     return { id, type, label: 'How effective is this item?', required: false, options: [] }
   }
-  if (type === 'single_choice') {
+  if (type === 'single_choice' || type === 'dropdown') {
     return {
       id,
       type,
-      label: 'Choose one option',
+      label: type === 'dropdown' ? 'Choose one from the list' : 'Choose one option',
       required: true,
       options: ['Option A', 'Option B'],
+    }
+  }
+  if (type === 'checkbox') {
+    return {
+      id,
+      type,
+      label: 'Choose all that apply',
+      required: false,
+      options: ['Option A', 'Option B', 'Option C'],
     }
   }
   return {
@@ -80,7 +93,7 @@ export function SurveyQuestionEditor({ questions, disabled = false, onChange }: 
                       options:
                         type === 'yes_no'
                           ? ['Yes', 'No']
-                          : type === 'single_choice'
+                          : CHOICE_TYPES.includes(type)
                             ? question.options.length >= 2
                               ? question.options
                               : ['Option A', 'Option B']
@@ -134,12 +147,12 @@ export function SurveyQuestionEditor({ questions, disabled = false, onChange }: 
               />
             </label>
 
-            {(question.type === 'yes_no' || question.type === 'single_choice') && (
+            {(question.type === 'yes_no' || CHOICE_TYPES.includes(question.type)) && (
               <label>
                 Options (one per line)
                 <textarea
                   disabled={disabled}
-                  rows={question.type === 'yes_no' ? 2 : 3}
+                  rows={question.type === 'yes_no' ? 2 : 4}
                   value={question.options.join('\n')}
                   onChange={(event) =>
                     updateQuestion(index, {

@@ -13,6 +13,7 @@ from config import IS_POSTGRES, SHEETS
 from database import (
     buy_book_filter_fields,
     buy_book_group_by,
+    classify_interest_answer,
     close_open_survey_periods,
     connect,
     copy_catalog_items_into_period,
@@ -34,10 +35,9 @@ from database import (
     normalize_survey_questions,
     parse_answers_json,
     parse_survey_questions,
+    resolve_interest_question,
     period_item_to_public,
     sheet_status_to_public,
-    sql_group_concat_distinct,
-    sql_round_avg,
     survey_filter_fields,
     survey_item_to_public,
     survey_layout_questions,
@@ -106,96 +106,109 @@ def get_survey_results(
             total_args.append(period["id"])
             response_args.append(period["id"])
 
-        email_agg = sql_group_concat_distinct("sr.email", "respondent_emails")
-        avg_attention = sql_round_avg(
-            "CASE WHEN sr.id IS NOT NULL THEN sr.attention_effectiveness END",
-            "avg_attention",
-        )
-        avg_engagement = sql_round_avg(
-            "CASE WHEN sr.id IS NOT NULL THEN sr.retail_engagement END",
-            "avg_engagement",
+        # Counts come from the survey's own interest question whenever a response
+        # carries answers; the legacy column is the fallback for responses written
+        # before questions existed, or by an old client that sends no answers.
+        questions_by_period: dict[int, list[dict[str, Any]]] = {
+            int(row["id"]): parse_survey_questions(row["questions_json"])
+            for row in execute(
+                conn,
+                "SELECT id, questions_json FROM survey_periods WHERE company_id = ?",
+                (company_id,),
+            ).fetchall()
+        }
+        period_questions = (
+            questions_by_period.get(int(period["id"]), parse_survey_questions(period["questions_json"]))
+            if period is not None
+            else []
         )
 
-        # Prefer period snapshot items when a period is selected; fall back to catalog.
         if period is not None:
             item_rows = execute(
                 conn,
-                f"""
-                SELECT
-                    spi.catalog_item_id AS id,
-                    spi.item_name,
-                    spi.brand,
-                    spi.channel,
-                    spi.product_type,
-                    spi.key_program,
-                    spi.image_url,
-                    spi.price,
-                    spi.uom,
-                    COUNT(sr.id) AS total_responses,
-                    SUM(CASE WHEN sr.recommend_rollout = 'Yes' THEN 1 ELSE 0 END) AS interested,
-                    SUM(CASE WHEN sr.recommend_rollout = 'No' THEN 1 ELSE 0 END) AS not_interested,
-                    SUM(CASE WHEN sr.recommend_rollout = 'Maybe' THEN 1 ELSE 0 END) AS maybe,
-                    {avg_attention},
-                    {avg_engagement},
-                    {email_agg}
+                """
+                SELECT spi.catalog_item_id AS id, spi.item_name, spi.brand, spi.channel,
+                       spi.product_type, spi.key_program, spi.image_url, spi.price, spi.uom,
+                       spi.sort_order
                 FROM survey_period_items spi
-                LEFT JOIN survey_responses sr
-                    ON sr.survey_item_id = spi.catalog_item_id
-                    AND sr.company_id = ?
-                    AND sr.survey_period_id = spi.survey_period_id
                 WHERE spi.survey_period_id = ?
-                GROUP BY
-                    spi.id, spi.catalog_item_id, spi.item_name, spi.brand, spi.channel,
-                    spi.product_type, spi.key_program, spi.image_url, spi.price, spi.uom, spi.sort_order
-                ORDER BY interested DESC, total_responses DESC, spi.sort_order ASC
+                ORDER BY spi.sort_order ASC
                 """,
-                (company_id, period["id"]),
+                (period["id"],),
             ).fetchall()
         else:
             item_rows = execute(
                 conn,
-                f"""
-                SELECT
-                    si.id,
-                    si.item_name,
-                    si.brand,
-                    si.channel,
-                    si.product_type,
-                    si.key_program,
-                    si.image_url,
-                    si.price,
-                    si.uom,
-                    COUNT(sr.id) AS total_responses,
-                    SUM(CASE WHEN sr.recommend_rollout = 'Yes' THEN 1 ELSE 0 END) AS interested,
-                    SUM(CASE WHEN sr.recommend_rollout = 'No' THEN 1 ELSE 0 END) AS not_interested,
-                    SUM(CASE WHEN sr.recommend_rollout = 'Maybe' THEN 1 ELSE 0 END) AS maybe,
-                    {avg_attention},
-                    {avg_engagement},
-                    {email_agg}
+                """
+                SELECT si.id, si.item_name, si.brand, si.channel, si.product_type,
+                       si.key_program, si.image_url, si.price, si.uom, si.sort_order
                 FROM survey_items si
-                LEFT JOIN survey_responses sr ON sr.survey_item_id = si.id AND sr.company_id = ?{period_clause}
                 WHERE si.company_id = ? AND si.is_active = ?
-                GROUP BY
-                    si.id, si.item_name, si.brand, si.channel, si.product_type, si.key_program,
-                    si.image_url, si.price, si.uom, si.sort_order
-                ORDER BY interested DESC, total_responses DESC, si.sort_order ASC
+                ORDER BY si.sort_order ASC
                 """,
-                (*item_args, company_id, True),
+                (company_id, True),
             ).fetchall()
 
-        totals = execute(
+        answer_rows = execute(
             conn,
             f"""
-            SELECT
-                COUNT(DISTINCT email) AS unique_respondents,
-                COUNT(*) AS total_responses,
-                SUM(CASE WHEN recommend_rollout = 'Yes' THEN 1 ELSE 0 END) AS total_interested,
-                SUM(CASE WHEN recommend_rollout = 'No' THEN 1 ELSE 0 END) AS total_not_interested
-            FROM survey_responses
-            WHERE company_id = ?{" AND survey_period_id = ?" if period is not None else ""}
+            SELECT sr.id, sr.survey_item_id, sr.survey_period_id, sr.email,
+                   sr.recommend_rollout, sr.answers_json, sr.created_at
+            FROM survey_responses sr
+            WHERE sr.company_id = ?{period_clause}
+            ORDER BY sr.created_at ASC
             """,
             tuple(total_args),
-        ).fetchone()
+        ).fetchall()
+
+        tally: dict[int, dict[str, Any]] = {}
+        for row in answer_rows:
+            answers = parse_answers_json(row["answers_json"])
+            row_period_id = row["survey_period_id"]
+            row_questions = questions_by_period.get(int(row_period_id)) if row_period_id else None
+            if not row_questions:
+                row_questions = period_questions
+            interest = classify_interest_answer(resolve_interest_question(row_questions), answers)
+            if not interest:
+                interest = {"Yes": "interested", "No": "not_interested"}.get(
+                    str(row["recommend_rollout"] or ""), ""
+                )
+            stats = tally.setdefault(
+                int(row["survey_item_id"]),
+                {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
+                 "emails": [], "scale": []},
+            )
+            stats["total"] += 1
+            if interest == "interested":
+                stats["interested"] += 1
+            elif interest == "not_interested":
+                stats["not_interested"] += 1
+            else:
+                stats["maybe"] += 1
+            email = str(row["email"] or "").strip()
+            if email and email not in stats["emails"]:
+                stats["emails"].append(email)
+
+            # A scale answer is the only honest source for these two figures; with
+            # no scale question they stay null and the dashboard hides them instead
+            # of printing a drop derived from a yes/no.
+            scale_question = next((q for q in row_questions if q["type"] == "scale"), None)
+            if scale_question is not None:
+                try:
+                    scale_value = int(answers.get(scale_question["id"]))
+                except (TypeError, ValueError):
+                    scale_value = 0
+                if 1 <= scale_value <= 5:
+                    stats["scale"].append(scale_value)
+
+        unique_respondents = len({str(row["email"] or "").strip().lower() for row in answer_rows if str(row["email"] or "").strip()})
+        summary = {
+            "unique_respondents": unique_respondents,
+            "total_responses": len(answer_rows),
+            "total_interested": sum(stats["interested"] for stats in tally.values()),
+            "total_not_interested": sum(stats["not_interested"] for stats in tally.values()),
+            "has_scale_question": any(q["type"] == "scale" for q in period_questions),
+        }
 
         response_rows = execute(
             conn,
@@ -228,8 +241,11 @@ def get_survey_results(
         ).fetchall()
 
     items = []
+    empty_stats = {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0, "emails": [], "scale": []}
     for row in item_rows:
-        emails = [e for e in (row["respondent_emails"] or "").split(",") if e.strip()] if row["respondent_emails"] else []
+        stats = tally.get(int(row["id"]), empty_stats)
+        total_responses = stats["total"]
+        scale_average = round(sum(stats["scale"]) / len(stats["scale"]), 2) if stats["scale"] else None
         items.append({
             "id": row["id"],
             "item_name": row["item_name"],
@@ -240,15 +256,17 @@ def get_survey_results(
             "image_url": row["image_url"],
             "price": row["price"],
             "uom": row["uom"],
-            "total_responses": row["total_responses"] or 0,
-            "interested": row["interested"] or 0,
-            "not_interested": row["not_interested"] or 0,
-            "maybe": row["maybe"] or 0,
-            "avg_attention": float(row["avg_attention"]) if row["avg_attention"] is not None else None,
-            "avg_engagement": float(row["avg_engagement"]) if row["avg_engagement"] is not None else None,
-            "interest_pct": round((row["interested"] or 0) / row["total_responses"] * 100) if row["total_responses"] else 0,
-            "respondent_emails": emails,
+            "sort_order": row["sort_order"] or 0,
+            "total_responses": total_responses,
+            "interested": stats["interested"],
+            "not_interested": stats["not_interested"],
+            "maybe": stats["maybe"],
+            "avg_attention": scale_average,
+            "avg_engagement": scale_average,
+            "interest_pct": round(stats["interested"] / total_responses * 100) if total_responses else 0,
+            "respondent_emails": list(stats["emails"]),
         })
+    items.sort(key=lambda item: (-item["interested"], -item["total_responses"], item["sort_order"]))
 
     responses = [
         {
@@ -266,12 +284,7 @@ def get_survey_results(
     return {
         "period": survey_period_to_public(period) if period is not None else None,
         "periods": [survey_period_to_public(row) for row in periods],
-        "summary": {
-            "unique_respondents": totals["unique_respondents"] or 0,
-            "total_responses": totals["total_responses"] or 0,
-            "total_interested": totals["total_interested"] or 0,
-            "total_not_interested": totals["total_not_interested"] or 0,
-        },
+        "summary": summary,
         "items": items,
         "responses": responses,
     }
@@ -294,7 +307,12 @@ def get_survey_layout(
             (company_id, True),
         ).fetchall()
         fields = survey_filter_fields(conn, company_id)
-    return {"filter_fields": fields, "items": [survey_item_to_public(row) for row in rows]}
+        questions = survey_layout_questions(conn, company_id)
+    return {
+        "filter_fields": fields,
+        "questions": questions,
+        "items": [survey_item_to_public(row) for row in rows],
+    }
 
 
 @router.put("/survey-layout")
@@ -480,9 +498,19 @@ def create_survey_period(
             if source_period is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Source survey period not found")
             filter_fields_json = source_period["filter_fields_json"]
-            questions_json = survey_questions_json(parse_survey_questions(source_period["questions_json"]))
         else:
             filter_fields_json = json.dumps(survey_filter_fields(conn, company_id))
+            source_period = None
+
+        # Explicit questions (the create form) win; otherwise a copied period keeps
+        # its own questions, and a fresh period starts from the company template.
+        if payload.questions is not None:
+            questions_json = survey_questions_json(
+                [question.model_dump() for question in payload.questions]
+            )
+        elif source_period is not None:
+            questions_json = survey_questions_json(parse_survey_questions(source_period["questions_json"]))
+        else:
             questions_json = survey_questions_json(survey_layout_questions(conn, company_id))
 
         status_value = "open" if payload.open_immediately else "draft"
@@ -840,8 +868,9 @@ def export_survey_responses(
         answers = parse_answers_json(row["answers_json"])
         answer_cells = []
         for question_id, _label in question_labels:
-            if question_id in answers and answers[question_id] not in (None, ""):
-                answer_cells.append(str(answers[question_id]))
+            if question_id in answers and answers[question_id] not in (None, "", []):
+                value = answers[question_id]
+                answer_cells.append("; ".join(str(part) for part in value) if isinstance(value, list) else str(value))
             elif question_id == "interest":
                 answer_cells.append("Interested" if row["recommend_rollout"] == "Yes" else "Not Interested")
             elif question_id == "feedback":

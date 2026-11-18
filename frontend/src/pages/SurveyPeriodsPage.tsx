@@ -23,6 +23,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
   const [newName, setNewName] = useState('')
   const [copyFromId, setCopyFromId] = useState<number | ''>('')
   const [openImmediately, setOpenImmediately] = useState(false)
+  const [newQuestions, setNewQuestions] = useState<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
   const [creating, setCreating] = useState(false)
   const [editingPeriodId, setEditingPeriodId] = useState<number | null>(null)
   const [editorItems, setEditorItems] = useState<SurveyItem[]>([])
@@ -53,6 +54,29 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     loadPeriods()
   }, [loadPeriods])
 
+  // The create form starts from the company template, so a new survey inherits
+  // the same questions the last saved layout has (interest required by default).
+  useEffect(() => {
+    let cancelled = false
+    async function loadTemplate() {
+      try {
+        const response = await apiFetch('/admin/survey-layout')
+        if (!response.ok) return
+        const data = await response.json()
+        if (cancelled) return
+        if (Array.isArray(data.questions) && data.questions.length > 0) {
+          setNewQuestions(data.questions)
+        }
+      } catch {
+        /* the default template stands in */
+      }
+    }
+    loadTemplate()
+    return () => {
+      cancelled = true
+    }
+  }, [apiFetch])
+
   async function createPeriod(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setCreating(true)
@@ -65,6 +89,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
           name: newName.trim(),
           copy_from_period_id: copyFromId === '' ? null : copyFromId,
           open_immediately: openImmediately,
+          questions: newQuestions,
         }),
       })
       if (!response.ok) {
@@ -268,6 +293,16 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
                 />
                 Open immediately (closes any currently open survey)
               </label>
+              <SurveyQuestionEditor
+                disabled={creating || copyFromId !== ''}
+                questions={newQuestions}
+                onChange={setNewQuestions}
+              />
+              {copyFromId !== '' && (
+                <p className="survey-layout-filter-note">
+                  This survey copies the questions from the selected past survey.
+                </p>
+              )}
               <button className="primary-action" disabled={creating} type="submit">
                 {creating ? 'Creating...' : 'Create Survey'}
               </button>

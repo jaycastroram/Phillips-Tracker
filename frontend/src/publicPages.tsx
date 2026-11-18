@@ -4,6 +4,7 @@ import type {
   SurveyFilterField,
   SurveyInterest,
   SurveyItem,
+  SurveyAnswerValue,
   SurveyQuestion,
   SurveyResponseDraft,
   TrackerItem,
@@ -67,10 +68,12 @@ type SurveyPageProps = PublicBrandProps & {
   updateSurveyResponse: (itemId: number, updates: Partial<SurveyResponseDraft>) => void
 }
 
+const INTEREST_TYPES: SurveyQuestion['type'][] = ['yes_no', 'single_choice', 'dropdown']
+
 function findInterestQuestion(questions: SurveyQuestion[]) {
   return (
-    questions.find((question) => question.type === 'yes_no' && question.id === 'interest') ??
-    questions.find((question) => question.type === 'yes_no') ??
+    questions.find((question) => question.id === 'interest' && INTEREST_TYPES.includes(question.type)) ??
+    questions.find((question) => INTEREST_TYPES.includes(question.type)) ??
     null
   )
 }
@@ -84,7 +87,7 @@ function SurveyQuestionFields({
   itemId: number
   questions: SurveyQuestion[]
   draft: SurveyResponseDraft
-  onAnswer: (questionId: string, value: string | number) => void
+  onAnswer: (questionId: string, value: SurveyAnswerValue) => void
 }) {
   return (
     <div className="survey-dynamic-questions">
@@ -137,6 +140,58 @@ function SurveyQuestionFields({
               ? ['Yes', 'No']
               : []
 
+        if (question.type === 'dropdown') {
+          return (
+            <label key={question.id} className="survey-dropdown-field">
+              <span>
+                {question.label}
+                {question.required ? ' *' : ''}
+              </span>
+              <select
+                value={typeof value === 'string' ? value : ''}
+                onChange={(event) => onAnswer(question.id, event.target.value)}
+              >
+                <option value="">Select an answer…</option>
+                {options.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )
+        }
+
+        if (question.type === 'checkbox') {
+          const selected = Array.isArray(value) ? value : value ? [String(value)] : []
+          return (
+            <fieldset key={question.id}>
+              <legend>
+                {question.label}
+                {question.required ? ' *' : ''}
+              </legend>
+              {options.map((option) => (
+                <label key={option}>
+                  <input
+                    checked={selected.includes(option)}
+                    type="checkbox"
+                    value={option}
+                    onChange={() =>
+                      onAnswer(
+                        question.id,
+                        selected.includes(option)
+                          ? selected.filter((picked) => picked !== option)
+                          : [...selected, option],
+                      )
+                    }
+                  />
+                  {option}
+                </label>
+              ))}
+            </fieldset>
+          )
+        }
+
         return (
           <fieldset key={question.id}>
             <legend>
@@ -147,11 +202,10 @@ function SurveyQuestionFields({
               <label key={option}>
                 <input
                   checked={String(value ?? '') === option}
-                  type="checkbox"
+                  name={`item-${itemId}-${question.id}`}
+                  type="radio"
                   value={option}
-                  onChange={() =>
-                    onAnswer(question.id, String(value ?? '') === option ? '' : option)
-                  }
+                  onChange={() => onAnswer(question.id, option)}
                 />
                 {option}
               </label>
@@ -673,7 +727,7 @@ export function SurveyPage({
     })
   }
 
-  function answerQuestion(itemId: number, questionId: string, value: string | number) {
+  function answerQuestion(itemId: number, questionId: string, value: SurveyAnswerValue) {
     if (!selectedSurveyItemIds.includes(itemId)) toggleSurveyItem(itemId)
     const draft = getSurveyResponse(itemId)
     const nextAnswers = { ...draft.answers, [questionId]: value }

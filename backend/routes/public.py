@@ -24,6 +24,7 @@ from database import (
     mirror_legacy_response_fields,
     parse_period_filter_fields,
     parse_survey_questions,
+    resolve_interest_question,
     period_item_to_public,
     row_to_item,
     survey_filter_fields,
@@ -246,23 +247,65 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
         questions = parse_survey_questions(period["questions_json"])
         answers = {str(key): value for key, value in (payload.answers or {}).items()}
 
-        # Back-compat: older clients only send interest/notes via legacy fields.
+        # Back-compat: an older client sends interest/notes as legacy fields only.
+        # Its Yes/No is translated into the survey's own interest question (first
+        # option = yes, second = no), so a renamed or relabelled question still
+        # accepts it instead of rejecting a value it never offered.
         if not answers:
-            if payload.recommend_rollout == "Yes":
-                answers["interest"] = "Yes"
-            elif payload.recommend_rollout == "No":
-                answers["interest"] = "No"
+            interest_question = resolve_interest_question(questions)
+            if payload.recommend_rollout in {"Yes", "No"}:
+                if interest_question is not None:
+                    options = interest_question.get("options") or []
+                    answers[interest_question["id"]] = (
+                        options[0] if payload.recommend_rollout == "Yes" and options
+                        else options[1] if payload.recommend_rollout == "No" and len(options) > 1
+                        else payload.recommend_rollout
+                    )
+                else:
+                    answers["interest"] = payload.recommend_rollout
             if payload.feedback.strip():
-                answers["feedback"] = payload.feedback.strip()
+                text_question = next((q for q in questions if q["type"] == "text"), None)
+                answers[(text_question or {"id": "feedback"})["id"]] = payload.feedback.strip()
 
         for question in questions:
             raw = answers.get(question["id"])
-            if question["required"] and (raw is None or str(raw).strip() == ""):
+
+            if question["type"] == "checkbox":
+                # Multi-select: a list, validated element by element.
+                picked = raw if isinstance(raw, list) else ([] if raw in (None, "") else [raw])
+                selected: list[str] = []
+                for value in picked:
+                    text = str(value).strip()
+                    if not text:
+                        continue
+                    if question["options"] and text not in question["options"]:
+                        raise HTTPException(
+                            status.HTTP_400_BAD_REQUEST,
+                            f"Invalid option for {question['label']}: {text}",
+                        )
+                    if text not in selected:
+                        selected.append(text)
+                if question["required"] and not selected:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"Please answer: {question['label']}",
+                    )
+                if selected:
+                    answers[question["id"]] = selected
+                else:
+                    answers.pop(question["id"], None)
+                continue
+
+            unanswered = raw is None or isinstance(raw, list) or str(raw).strip() == ""
+            if question["required"] and unanswered:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
                     f"Please answer: {question['label']}",
                 )
-            if question["type"] == "scale" and raw not in (None, ""):
+            if unanswered:
+                continue
+
+            if question["type"] == "scale":
                 try:
                     scale = int(raw)
                 except (TypeError, ValueError):
@@ -270,7 +313,7 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
                 if scale < 1 or scale > 5:
                     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Scale must be 1-5 for {question['label']}")
                 answers[question["id"]] = scale
-            elif question["type"] in {"yes_no", "single_choice"} and raw not in (None, ""):
+            elif question["type"] in {"yes_no", "single_choice", "dropdown"}:
                 text = str(raw).strip()
                 if question["options"] and text not in question["options"]:
                     raise HTTPException(
@@ -278,7 +321,7 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
                         f"Invalid option for {question['label']}",
                     )
                 answers[question["id"]] = text
-            elif question["type"] == "text" and raw not in (None, ""):
+            elif question["type"] == "text":
                 answers[question["id"]] = str(raw).strip()
 
         recommend, feedback, attention, retail, stands_out, price_reasonable = mirror_legacy_response_fields(

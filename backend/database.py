@@ -414,7 +414,13 @@ def get_default_company() -> Any:
 # Survey layout helpers
 # ---------------------------------------------------------------------------
 
-SURVEY_QUESTION_TYPES = {"yes_no", "single_choice", "text", "scale"}
+SURVEY_QUESTION_TYPES = {"yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"}
+
+# Types whose answer can carry "interested / not interested": one option.
+INTEREST_QUESTION_TYPES = ("yes_no", "single_choice", "dropdown")
+
+# Types that need at least two options to be answerable.
+CHOICE_QUESTION_TYPES = {"single_choice", "dropdown", "checkbox"}
 
 DEFAULT_SURVEY_QUESTIONS: list[dict[str, Any]] = [
     {
@@ -476,7 +482,7 @@ def normalize_survey_questions(raw: Any) -> list[dict[str, Any]]:
                     options.append(text)
         if question_type == "yes_no":
             options = options[:2] if len(options) >= 2 else ["Yes", "No"]
-        elif question_type == "single_choice":
+        elif question_type in CHOICE_QUESTION_TYPES:
             if len(options) < 2:
                 continue
         else:
@@ -520,6 +526,57 @@ def parse_answers_json(raw: str | None) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
+INTERESTED_LABELS = {
+    "yes", "y", "interested", "yes please", "im interested", "i'm interested", "want it", "would buy",
+}
+NOT_INTERESTED_LABELS = {
+    "no", "n", "not interested", "not interested.", "no thanks", "pass", "would not buy",
+}
+
+
+def resolve_interest_question(questions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The question a response's interest counts come from.
+
+    The author names it by id when the app created it (``interest``); otherwise a
+    renamed question is still the interest one when it is the first answerable
+    yes/no, single-choice or dropdown question. Returns None when the survey has
+    no such question — the caller then falls back to the stored legacy column.
+    """
+    for question in questions:
+        if question.get("id") == "interest" and question.get("type") in INTEREST_QUESTION_TYPES:
+            return question
+    for question in questions:
+        if question.get("type") in INTEREST_QUESTION_TYPES:
+            return question
+    return None
+
+
+def classify_interest_answer(question: dict[str, Any] | None, answers: dict[str, Any]) -> str:
+    """'interested', 'not_interested', 'maybe' or '' for one response.
+
+    Labels are recognised first (so ``Yes``/``Not interested`` survive a rename),
+    then position: the first option is interested, the second is not.
+    """
+    if not question:
+        return ""
+    raw = (answers or {}).get(question.get("id") or "")
+    if isinstance(raw, list):
+        raw = raw[0] if raw else ""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    if lowered in INTERESTED_LABELS:
+        return "interested"
+    if lowered in NOT_INTERESTED_LABELS:
+        return "not_interested"
+    options = [str(option).strip() for option in question.get("options") or []]
+    for index, option in enumerate(options):
+        if option.lower() == lowered:
+            return "interested" if index == 0 else "not_interested" if index == 1 else "maybe"
+    return ""
+
+
 def mirror_legacy_response_fields(
     questions: list[dict[str, Any]],
     answers: dict[str, Any],
@@ -527,35 +584,27 @@ def mirror_legacy_response_fields(
     """Map custom answers onto legacy survey_responses columns."""
     recommend = "Maybe"
     feedback = ""
+    # 3 is the column default, not a judgement: the dashboard hides these figures
+    # unless the period has a scale question, and only a scale answer sets them.
     attention = 3
     retail = 3
     stands_out = "Neutral"
     price_reasonable = "Yes"
 
-    first_yes_no = next((q for q in questions if q["type"] == "yes_no"), None)
+    interest = classify_interest_answer(resolve_interest_question(questions), answers)
+    if interest == "interested":
+        recommend = "Yes"
+        stands_out = "Yes"
+    elif interest == "not_interested":
+        recommend = "No"
+        stands_out = "No"
+        price_reasonable = "No"
+
     first_text = next((q for q in questions if q["type"] == "text"), None)
-    first_scale = next((q for q in questions if q["type"] == "scale"), None)
-
-    if first_yes_no is not None:
-        value = str(answers.get(first_yes_no["id"], "")).strip()
-        lowered = value.lower()
-        if lowered in {"yes", "interested"} or value in first_yes_no.get("options", [])[:1]:
-            recommend = "Yes"
-            attention = 5
-            retail = 5
-            stands_out = "Yes"
-        elif lowered in {"no", "not interested"} or (
-            len(first_yes_no.get("options", [])) > 1 and value == first_yes_no["options"][1]
-        ):
-            recommend = "No"
-            attention = 1
-            retail = 1
-            stands_out = "No"
-            price_reasonable = "No"
-
     if first_text is not None:
         feedback = str(answers.get(first_text["id"], "") or "").strip()
 
+    first_scale = next((q for q in questions if q["type"] == "scale"), None)
     if first_scale is not None:
         try:
             scale_value = int(answers.get(first_scale["id"]))

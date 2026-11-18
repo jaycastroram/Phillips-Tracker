@@ -105,16 +105,24 @@ class SheetStatusCreate(BaseModel):
 
 class SurveyQuestion(BaseModel):
     id: str = ""
-    type: Literal["yes_no", "single_choice", "text", "scale"]
+    type: Literal["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"]
     label: str = Field(min_length=1, max_length=240)
     required: bool = False
     options: list[str] = []
 
 
+class SurveyPeriodCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    copy_from_period_id: int | None = None
+    open_immediately: bool = False
+    questions: list[SurveyQuestion] | None = None
+
+
 class SurveyResponseCreate(BaseModel):
     survey_item_id: int
     email: EmailStr
-    answers: dict[str, str | int | float] = {}
+    # A checkbox answer is a list; every other type is a scalar.
+    answers: dict[str, str | int | float | list[str]] = {}
     # Legacy fields kept optional for older clients / mirrored answers.
     attention_effectiveness: int = Field(default=3, ge=1, le=5)
     recommend_rollout: Literal["Yes", "No", "Maybe"] = "Maybe"
@@ -151,12 +159,6 @@ class BuyBookLayoutUpdate(BaseModel):
     filter_fields: list[str] = []
     group_by: Literal["brand", "channel", "key_program", "product_type", "none"] = "brand"
     items: list[BuyBookLayoutItemUpdate] = []
-
-
-class SurveyPeriodCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=120)
-    copy_from_period_id: int | None = None
-    open_immediately: bool = False
 
 
 class SurveyPeriodUpdate(BaseModel):
