@@ -162,7 +162,9 @@ export function SurveyLayoutEditor({
                   setDraggingId(null)
                 }}
               >
-                {index > 0 && (
+                {/* The Buy Book breaks pages by its layer stack, so the manual
+                    switch is a survey-only control. */}
+                {showSurvey && index > 0 && (
                   <button
                     className={`survey-layout-page-break ${item.page_break_before ? 'is-active' : ''}`}
                     type="button"

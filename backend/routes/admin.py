@@ -13,6 +13,8 @@ from config import IS_POSTGRES, SHEETS
 from database import (
     buy_book_filter_fields,
     buy_book_group_by,
+    buy_book_page_break_layers,
+    normalize_page_break_layers,
     classify_interest_answer,
     close_open_survey_periods,
     connect,
@@ -392,10 +394,13 @@ def get_buy_book_layout(
             (company_id, True),
         ).fetchall()
         fields = buy_book_filter_fields(conn, company_id)
-        group_by = buy_book_group_by(conn, company_id)
+        layers = buy_book_page_break_layers(conn, company_id)
+    # group_by stays for older clients; the stack is the source of truth.
+    group_by = layers[0]["field"] if layers else buy_book_group_by(conn, company_id)
     return {
         "filter_fields": fields,
         "group_by": group_by,
+        "page_break_layers": layers,
         "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
     }
 
@@ -408,17 +413,23 @@ def update_buy_book_layout(
 ) -> dict:
     company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
-    group_by = normalize_buy_book_group_by(payload.group_by)
+    layers = (
+        normalize_page_break_layers([layer.model_dump() for layer in payload.page_break_layers])
+        if payload.page_break_layers
+        else [{"field": normalize_buy_book_group_by(payload.group_by), "new_page": True}]
+    )
+    group_by = layers[0]["field"]
     with connect() as conn:
         ensure_buy_book_layout(conn, company_id)
         execute(
             conn,
             """
             UPDATE buy_book_layouts
-            SET filter_fields_json = ?, group_by = ?, updated_at = CURRENT_TIMESTAMP
+            SET filter_fields_json = ?, group_by = ?, page_break_layers_json = ?,
+                updated_at = CURRENT_TIMESTAMP
             WHERE company_id = ?
             """,
-            (json.dumps(filter_fields), group_by, company_id),
+            (json.dumps(filter_fields), group_by, json.dumps(layers), company_id),
         )
         for index, item in enumerate(payload.items, start=1):
             cursor = execute(
@@ -454,6 +465,7 @@ def update_buy_book_layout(
     return {
         "filter_fields": filter_fields,
         "group_by": group_by,
+        "page_break_layers": layers,
         "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
     }
 

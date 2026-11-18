@@ -1971,6 +1971,101 @@ td textarea {
   gap: 12px 18px;
 }
 
+/* ---- Layered page breaks in the Buy Book layout ---- */
+.buy-book-layers {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.buy-book-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.buy-book-layer-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: #eef3ff;
+  color: var(--brand-blue);
+  font-weight: 700;
+  font-size: 0.8rem;
+}
+
+.buy-book-layer-moves {
+  display: flex;
+  gap: 4px;
+}
+
+.buy-book-layer-moves button,
+.buy-book-layer-remove {
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 7px;
+  background: #fff;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.buy-book-layer-moves button:disabled,
+.buy-book-layer-remove:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.buy-book-layer-row select {
+  min-width: 160px;
+  height: 32px;
+}
+
+.buy-book-layer-break {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.buy-book-layer-remove {
+  margin-left: auto;
+  color: #b42318;
+  border-color: #f2c8c2;
+  background: #fff7f5;
+}
+
+.buy-book-layer-add {
+  justify-self: start;
+}
+
+/* Nested group headings: the first layer carries the section, deeper layers
+   step down so a book reads Brand > Program > item. */
+.buy-book-group-level + .buy-book-group-level {
+  margin-top: 6px;
+}
+
+.buy-book-group-level--0 h2 {
+  margin: 0;
+}
+
+.buy-book-group-level h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: #33404f;
+}
+
 .survey-layout-filters.has-extra {
   display: grid;
   gap: 16px;

@@ -721,8 +721,109 @@ def buy_book_group_by(conn: Any, company_id: int) -> str:
     return normalize_buy_book_group_by(_row_get(layout, "group_by", DEFAULT_BUY_BOOK_GROUP_BY))
 
 
-def apply_buy_book_grouping(items: list[dict], group_by: str) -> list[dict]:
-    """Sort by selected facet and force page breaks between group changes."""
+# ---------------------------------------------------------------------------
+# Layered page breaks (Buy Book)
+# ---------------------------------------------------------------------------
+#
+# A Buy Book layer is ``{"field": <facet>, "new_page": bool}``. The stack is
+# ordered: items sort by the first layer, then the next, then the catalog order
+# inside the innermost group. A layer with ``new_page`` starts a fresh page
+# whenever its value changes; an unticked layer still groups and sorts, it just
+# does not force a break.
+
+MAX_PAGE_BREAK_LAYERS = 4
+
+
+def normalize_page_break_layers(value: Any) -> list[dict[str, Any]]:
+    """Coerce stored JSON into a usable stack, falling back to one Brand layer."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value or "[]")
+        except json.JSONDecodeError:
+            value = []
+    if not isinstance(value, list):
+        return [{"field": DEFAULT_BUY_BOOK_GROUP_BY, "new_page": True}]
+
+    layers: list[dict[str, Any]] = []
+    for entry in value[:MAX_PAGE_BREAK_LAYERS]:
+        if isinstance(entry, str):
+            field, new_page = entry, True
+        elif isinstance(entry, dict):
+            field = str(entry.get("field") or "").strip()
+            new_page = bool(entry.get("new_page", True))
+        else:
+            continue
+        if field in BUY_BOOK_GROUP_FIELDS and BUY_BOOK_GROUP_FIELDS[field]:
+            layers.append({"field": field, "new_page": new_page})
+    return layers or [{"field": DEFAULT_BUY_BOOK_GROUP_BY, "new_page": True}]
+
+
+def buy_book_page_break_layers(conn: Any, company_id: int) -> list[dict[str, Any]]:
+    layout = ensure_buy_book_layout(conn, company_id)
+    stored = _row_get(layout, "page_break_layers_json", "[]")
+    if not str(stored or "").strip() or str(stored).strip() == "[]":
+        # A layout saved before layers existed keeps its single Group by.
+        return [{"field": normalize_buy_book_group_by(_row_get(layout, "group_by", None)), "new_page": True}]
+    return normalize_page_break_layers(stored)
+
+
+def _layer_value(item: dict[str, Any], field: str) -> str:
+    return str(item.get(field) or "").strip()
+
+
+def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Sort by the layer stack and derive the page breaks it implies.
+
+    Each item carries ``group_headers``: one heading per layer from the first
+    layer whose value changed, so the renderer draws nested group headings
+    without re-deriving them. ``page_break_before`` becomes derived rather than
+    stored — true only when a layer with ``new_page`` changed above it. A blank
+    facet sorts last inside its parent and forms its own group.
+    """
+    if not layers:
+        return items
+
+    indexed = list(enumerate(items))
+
+    def sort_key(pair: tuple[int, dict[str, Any]]) -> tuple:
+        index, item = pair
+        values: list[tuple[int, str]] = []
+        for layer in layers:
+            value = _layer_value(item, layer["field"])
+            values.append((0, value.lower()) if value else (1, ""))
+        return (*values, index)
+
+    indexed.sort(key=sort_key)
+
+    grouped: list[dict[str, Any]] = []
+    previous: tuple[str, ...] | None = None
+    for index, (_, item) in enumerate(indexed):
+        values = tuple(_layer_value(item, layer["field"]) for layer in layers)
+        headers: list[dict[str, str]] = []
+        breaks = False
+        if previous is None:
+            first_level = 0
+        else:
+            changed = [position for position, value in enumerate(values) if value != previous[position]]
+            first_level = changed[0] if changed else len(layers)
+        if first_level < len(layers):
+            for layer, value in list(zip(layers, values))[first_level:]:
+                headers.append({"field": layer["field"], "label": value or "Ungrouped"})
+                if layer["new_page"] and index > 0:
+                    breaks = True
+
+        next_item = dict(item)
+        next_item["group_headers"] = headers
+        next_item["group_field"] = layers[0]["field"]
+        next_item["group_label"] = values[0] or "Ungrouped"
+        next_item["page_break_before"] = breaks
+        grouped.append(next_item)
+        previous = values
+    return grouped
+
+
+def apply_buy_book_grouping(items: list[dict[str, Any]], group_by: str) -> list[dict[str, Any]]:
+    """Single-facet grouping kept for older callers; the Buy Book now uses layers."""
     field = BUY_BOOK_GROUP_FIELDS.get(normalize_buy_book_group_by(group_by))
     if not field:
         return items
@@ -734,13 +835,14 @@ def apply_buy_book_grouping(items: list[dict], group_by: str) -> list[dict]:
             pair[0],
         )
     )
-    grouped: list[dict] = []
+    grouped: list[dict[str, Any]] = []
     previous_label: str | None = None
     for index, (_, item) in enumerate(indexed):
         next_item = dict(item)
         label = str(next_item.get(field) or "").strip() or "Ungrouped"
         next_item["group_field"] = field
         next_item["group_label"] = label
+        next_item["group_headers"] = [{"field": field, "label": label}]
         if index == 0:
             next_item["page_break_before"] = False
         elif label != previous_label:

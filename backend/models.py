@@ -155,9 +155,18 @@ class BuyBookLayoutItemUpdate(BaseModel):
     image_fit: Literal["contain", "cover"] = "contain"
 
 
+class BuyBookLayer(BaseModel):
+    """One level of the Buy Book stack: sort by the facet, break when ticked."""
+
+    field: Literal["brand", "channel", "key_program", "product_type"]
+    new_page: bool = True
+
+
 class BuyBookLayoutUpdate(BaseModel):
     filter_fields: list[str] = []
+    # Legacy single-facet field; ignored when page_break_layers is passed.
     group_by: Literal["brand", "channel", "key_program", "product_type", "none"] = "brand"
+    page_break_layers: list[BuyBookLayer] | None = None
     items: list[BuyBookLayoutItemUpdate] = []
 
 

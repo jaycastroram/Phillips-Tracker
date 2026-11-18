@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from config import ADMIN_EMAIL, ADMIN_NAME, ADMIN_PASSWORD, COMPANY_SCOPED_TABLES, IS_POSTGRES
 from database import (
     connect,
@@ -465,9 +467,26 @@ def _ensure_survey_layout_columns(conn) -> None:
     ensure_column(conn, "survey_items", "image_display_size", "TEXT NOT NULL DEFAULT 'medium'")
     ensure_column(conn, "survey_items", "image_fit", "TEXT NOT NULL DEFAULT 'contain'")
     ensure_column(conn, "buy_book_layouts", "group_by", "TEXT NOT NULL DEFAULT 'brand'")
+    ensure_column(conn, "buy_book_layouts", "page_break_layers_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_layouts", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_periods", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
     ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
+    # A layout saved before layered page breaks keeps its single Group by as a
+    # one-layer stack: same sorting, same break, so nothing regresses on upgrade.
+    layouts = execute(
+        conn,
+        "SELECT id, group_by, page_break_layers_json FROM buy_book_layouts",
+    ).fetchall()
+    for layout in layouts:
+        stored = str(layout["page_break_layers_json"] or "").strip()
+        if stored and stored != "[]":
+            continue
+        field = str(layout["group_by"] or "").strip() or "brand"
+        execute(
+            conn,
+            "UPDATE buy_book_layouts SET page_break_layers_json = ? WHERE id = ?",
+            (json.dumps([{"field": field, "new_page": True}]), layout["id"]),
+        )
     default_questions = survey_questions_json()
     execute(
         conn,

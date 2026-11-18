@@ -107,6 +107,7 @@ export type SurveyItem = {
   image_fit?: 'contain' | 'cover'
   group_field?: SurveyFilterField | null
   group_label?: string | null
+  group_headers?: { field: SurveyFilterField; label: string }[]
 }
 
 export type SurveyPeriodStatus = 'draft' | 'open' | 'closed'

@@ -90,6 +90,15 @@ export const SURVEY_FILTER_FIELDS: { field: SurveyFilterField; label: string }[]
 
 export type BuyBookGroupBy = SurveyFilterField | 'none'
 export const DEFAULT_BUY_BOOK_GROUP_BY: BuyBookGroupBy = 'brand'
+
+export type BuyBookLayer = { field: SurveyFilterField; new_page: boolean }
+export const DEFAULT_PAGE_BREAK_LAYERS: BuyBookLayer[] = [{ field: 'brand', new_page: true }]
+export const BUY_BOOK_LAYER_FIELDS: { field: SurveyFilterField; label: string }[] = [
+  { field: 'brand', label: 'Brand' },
+  { field: 'channel', label: 'Channel' },
+  { field: 'key_program', label: 'Key Program' },
+  { field: 'product_type', label: 'Product Type' },
+]
 export const BUY_BOOK_GROUP_OPTIONS: { field: BuyBookGroupBy; label: string }[] = [
   { field: 'brand', label: 'Brand' },
   { field: 'channel', label: 'Channel' },

@@ -9,8 +9,10 @@ from fastapi import APIRouter, HTTPException, status
 from config import IS_POSTGRES
 from database import (
     apply_buy_book_grouping,
+    apply_buy_book_layers,
     buy_book_filter_fields,
     buy_book_group_by,
+    buy_book_page_break_layers,
     company_to_public,
     connect,
     ensure_default_company,
@@ -197,12 +199,18 @@ def _survey_items_response(company_id: int, q: str, surface: str) -> dict:
         ).fetchall()
         if surface == "buy-book":
             fields = buy_book_filter_fields(conn, company_id)
-            group_by = buy_book_group_by(conn, company_id)
-            items = apply_buy_book_grouping(
+            layers = buy_book_page_break_layers(conn, company_id)
+            group_by = layers[0]["field"] if layers else "brand"
+            items = apply_buy_book_layers(
                 [survey_item_to_public(row, surface="buy-book") for row in rows],
-                group_by,
+                layers,
             )
-            return {"items": items, "filter_fields": fields, "group_by": group_by}
+            return {
+                "items": items,
+                "filter_fields": fields,
+                "group_by": group_by,
+                "page_break_layers": layers,
+            }
 
         fields = survey_filter_fields(conn, company_id)
     return {

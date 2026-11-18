@@ -614,16 +614,34 @@ export function BuyBookPage({
         {surveyFilters.filteredItems.map((item, index) => {
           const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
           const previous = index > 0 ? surveyFilters.filteredItems[index - 1] : null
-          const showGroupHeader =
-            Boolean(item.group_label) &&
-            (!previous || previous.group_label !== item.group_label || item.page_break_before)
+          // The backend derives both the headings and the breaks from the layer
+          // stack; older payloads without them fall back to the single group.
+          const headers =
+            item.group_headers && item.group_headers.length > 0
+              ? item.group_headers
+              : item.group_label && (!previous || previous.group_label !== item.group_label || item.page_break_before)
+                ? [{ field: item.group_field ?? 'brand', label: item.group_label }]
+                : []
+          const showGroupHeader = headers.length > 0
           const isOnPage = pageIndex === safePage
           return (
             <div key={item.id} className={`buy-book-item-block${isOnPage ? '' : ' survey-page-hidden'}`}>
               {showGroupHeader && (
                 <header className={`buy-book-group-header${item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}>
-                  <p className="eyebrow">{item.group_field === 'key_program' ? 'Program' : item.group_field === 'product_type' ? 'Type' : item.group_field === 'channel' ? 'Channel' : 'Brand'}</p>
-                  <h2>{item.group_label}</h2>
+                  {headers.map((header, depth) => (
+                    <div key={`${header.field}-${depth}`} className={`buy-book-group-level buy-book-group-level--${depth}`}>
+                      <p className="eyebrow">
+                        {header.field === 'key_program'
+                          ? 'Program'
+                          : header.field === 'product_type'
+                            ? 'Type'
+                            : header.field === 'channel'
+                              ? 'Channel'
+                              : 'Brand'}
+                      </p>
+                      {depth === 0 ? <h2>{header.label}</h2> : <h3>{header.label}</h3>}
+                    </div>
+                  ))}
                 </header>
               )}
               <article
