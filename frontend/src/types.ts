@@ -111,6 +111,16 @@ export type SurveyItem = {
 
 export type SurveyPeriodStatus = 'draft' | 'open' | 'closed'
 
+export type SurveyQuestionType = 'yes_no' | 'single_choice' | 'text' | 'scale'
+
+export type SurveyQuestion = {
+  id: string
+  type: SurveyQuestionType
+  label: string
+  required: boolean
+  options: string[]
+}
+
 export type SurveyPeriod = {
   id: number
   company_id: number
@@ -119,6 +129,7 @@ export type SurveyPeriod = {
   opens_at: string | null
   closes_at: string | null
   filter_fields: SurveyFilterField[]
+  questions?: SurveyQuestion[]
   item_count?: number
   created_at: string
   updated_at: string
@@ -127,6 +138,7 @@ export type SurveyPeriod = {
 export type SurveyResponseDraft = {
   interest: SurveyInterest
   notes: string
+  answers: Record<string, string | number>
 }
 
 export type CompanyInfo = {

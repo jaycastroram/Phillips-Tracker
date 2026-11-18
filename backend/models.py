@@ -103,14 +103,24 @@ class SheetStatusCreate(BaseModel):
     status: str = Field(min_length=1)
 
 
+class SurveyQuestion(BaseModel):
+    id: str = ""
+    type: Literal["yes_no", "single_choice", "text", "scale"]
+    label: str = Field(min_length=1, max_length=240)
+    required: bool = False
+    options: list[str] = []
+
+
 class SurveyResponseCreate(BaseModel):
     survey_item_id: int
     email: EmailStr
-    attention_effectiveness: int = Field(ge=1, le=5)
-    recommend_rollout: Literal["Yes", "No", "Maybe"]
-    retail_engagement: int = Field(ge=1, le=5)
-    stands_out: Literal["Yes", "No", "Neutral"]
-    price_reasonable: Literal["Yes", "No"]
+    answers: dict[str, str | int | float] = {}
+    # Legacy fields kept optional for older clients / mirrored answers.
+    attention_effectiveness: int = Field(default=3, ge=1, le=5)
+    recommend_rollout: Literal["Yes", "No", "Maybe"] = "Maybe"
+    retail_engagement: int = Field(default=3, ge=1, le=5)
+    stands_out: Literal["Yes", "No", "Neutral"] = "Neutral"
+    price_reasonable: Literal["Yes", "No"] = "Yes"
     feedback: str = ""
 
 
@@ -167,4 +177,5 @@ class SurveyPeriodItemUpdate(BaseModel):
 
 class SurveyPeriodLayoutUpdate(BaseModel):
     filter_fields: list[str] = []
+    questions: list[SurveyQuestion] = []
     items: list[SurveyPeriodItemUpdate] = []

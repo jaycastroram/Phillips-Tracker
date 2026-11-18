@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { SurveyQuestionEditor } from '../components/SurveyQuestionEditor'
+import { DEFAULT_SURVEY_QUESTIONS } from '../constants'
 import { SurveyLayoutEditor } from '../surveyLayout'
-import type { SurveyFilterField, SurveyItem, SurveyPeriod } from '../types'
+import type { SurveyFilterField, SurveyItem, SurveyPeriod, SurveyQuestion } from '../types'
 
 type Props = {
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
@@ -25,6 +27,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
   const [editingPeriodId, setEditingPeriodId] = useState<number | null>(null)
   const [editorItems, setEditorItems] = useState<SurveyItem[]>([])
   const [editorFilters, setEditorFilters] = useState<SurveyFilterField[]>([])
+  const [editorQuestions, setEditorQuestions] = useState<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
   const [editorLoading, setEditorLoading] = useState(false)
   const [editorSaving, setEditorSaving] = useState(false)
   const [editorMessage, setEditorMessage] = useState('')
@@ -94,6 +97,11 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
       const data = await response.json()
       setEditorItems(data.items ?? [])
       setEditorFilters(data.filter_fields ?? [])
+      setEditorQuestions(
+        Array.isArray(data.questions) && data.questions.length > 0
+          ? data.questions
+          : DEFAULT_SURVEY_QUESTIONS,
+      )
       setEditingPeriodId(periodId)
       window.requestAnimationFrame(() => {
         editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -115,6 +123,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
         method: 'PUT',
         body: JSON.stringify({
           filter_fields: filterFields,
+          questions: editorQuestions,
           items: items.map((item) => ({
             catalog_item_id: item.id,
             in_survey: item.in_survey,
@@ -177,6 +186,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
       if (editingPeriodId === period.id) {
         setEditingPeriodId(null)
         setEditorItems([])
+        setEditorQuestions(DEFAULT_SURVEY_QUESTIONS)
       }
       setMessage(`Deleted “${period.name}”.`)
       await loadPeriods()
@@ -327,6 +337,13 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
 
       {editingPeriod && (
         <div className="survey-periods-editor" ref={editorRef}>
+          {!editorLoading && (
+            <SurveyQuestionEditor
+              disabled={editingPeriod.status === 'closed' || editorSaving}
+              questions={editorQuestions}
+              onChange={setEditorQuestions}
+            />
+          )}
           <SurveyLayoutEditor
             title={`Edit “${editingPeriod.name}”`}
             description={

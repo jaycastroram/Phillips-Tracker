@@ -270,6 +270,7 @@ def survey_response_to_public(row: sqlite3.Row) -> dict:
         "stands_out": row["stands_out"],
         "price_reasonable": row["price_reasonable"],
         "feedback": row["feedback"],
+        "answers": parse_answers_json(_row_get(row, "answers_json")),
         "created_at": row["created_at"],
     }
 
@@ -413,12 +414,158 @@ def get_default_company() -> Any:
 # Survey layout helpers
 # ---------------------------------------------------------------------------
 
+SURVEY_QUESTION_TYPES = {"yes_no", "single_choice", "text", "scale"}
+
+DEFAULT_SURVEY_QUESTIONS: list[dict[str, Any]] = [
+    {
+        "id": "interest",
+        "type": "yes_no",
+        "label": "Are you interested in this item?",
+        "required": True,
+        "options": ["Yes", "No"],
+    },
+    {
+        "id": "feedback",
+        "type": "text",
+        "label": "Please provide feedback about the design, size, color, etc. of this item",
+        "required": False,
+        "options": [],
+    },
+]
+
+
 def normalize_filter_fields(fields: list[str]) -> list[str]:
     normalized = []
     for field in fields:
         if field in SURVEY_FILTER_FIELDS and field not in normalized:
             normalized.append(field)
     return normalized
+
+
+def default_survey_questions() -> list[dict[str, Any]]:
+    return [dict(question) for question in DEFAULT_SURVEY_QUESTIONS]
+
+
+def normalize_survey_questions(raw: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw, list) or not raw:
+        return default_survey_questions()
+
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for index, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            continue
+        question_type = str(entry.get("type") or "").strip()
+        if question_type not in SURVEY_QUESTION_TYPES:
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label:
+            continue
+        question_id = str(entry.get("id") or f"q{index + 1}").strip() or f"q{index + 1}"
+        question_id = "".join(ch if ch.isalnum() or ch in {"_", "-"} else "_" for ch in question_id)[:64]
+        if question_id in seen_ids:
+            question_id = f"{question_id}_{index + 1}"
+        seen_ids.add(question_id)
+
+        options_raw = entry.get("options") or []
+        options: list[str] = []
+        if isinstance(options_raw, list):
+            for option in options_raw:
+                text = str(option).strip()
+                if text and text not in options:
+                    options.append(text)
+        if question_type == "yes_no":
+            options = options[:2] if len(options) >= 2 else ["Yes", "No"]
+        elif question_type == "single_choice":
+            if len(options) < 2:
+                continue
+        else:
+            options = []
+
+        normalized.append(
+            {
+                "id": question_id,
+                "type": question_type,
+                "label": label[:240],
+                "required": bool(entry.get("required")),
+                "options": options,
+            }
+        )
+
+    return normalized or default_survey_questions()
+
+
+def parse_survey_questions(questions_json: str | None) -> list[dict[str, Any]]:
+    try:
+        raw = json.loads(questions_json or "[]")
+    except json.JSONDecodeError:
+        return default_survey_questions()
+    return normalize_survey_questions(raw)
+
+
+def survey_questions_json(questions: list[dict[str, Any]] | None = None) -> str:
+    return json.dumps(normalize_survey_questions(questions or default_survey_questions()))
+
+
+def survey_layout_questions(conn: Any, company_id: int) -> list[dict[str, Any]]:
+    layout = ensure_survey_layout(conn, company_id)
+    return parse_survey_questions(_row_get(layout, "questions_json"))
+
+
+def parse_answers_json(raw: str | None) -> dict[str, Any]:
+    try:
+        data = json.loads(raw or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def mirror_legacy_response_fields(
+    questions: list[dict[str, Any]],
+    answers: dict[str, Any],
+) -> tuple[str, str, int, int, str, str]:
+    """Map custom answers onto legacy survey_responses columns."""
+    recommend = "Maybe"
+    feedback = ""
+    attention = 3
+    retail = 3
+    stands_out = "Neutral"
+    price_reasonable = "Yes"
+
+    first_yes_no = next((q for q in questions if q["type"] == "yes_no"), None)
+    first_text = next((q for q in questions if q["type"] == "text"), None)
+    first_scale = next((q for q in questions if q["type"] == "scale"), None)
+
+    if first_yes_no is not None:
+        value = str(answers.get(first_yes_no["id"], "")).strip()
+        lowered = value.lower()
+        if lowered in {"yes", "interested"} or value in first_yes_no.get("options", [])[:1]:
+            recommend = "Yes"
+            attention = 5
+            retail = 5
+            stands_out = "Yes"
+        elif lowered in {"no", "not interested"} or (
+            len(first_yes_no.get("options", [])) > 1 and value == first_yes_no["options"][1]
+        ):
+            recommend = "No"
+            attention = 1
+            retail = 1
+            stands_out = "No"
+            price_reasonable = "No"
+
+    if first_text is not None:
+        feedback = str(answers.get(first_text["id"], "") or "").strip()
+
+    if first_scale is not None:
+        try:
+            scale_value = int(answers.get(first_scale["id"]))
+            if 1 <= scale_value <= 5:
+                attention = scale_value
+                retail = scale_value
+        except (TypeError, ValueError):
+            pass
+
+    return recommend, feedback, attention, retail, stands_out, price_reasonable
 
 
 def ensure_survey_layout(conn: Any, company_id: int) -> Any:
@@ -431,17 +578,25 @@ def ensure_survey_layout(conn: Any, company_id: int) -> Any:
         return existing
 
     filter_fields_json = json.dumps(DEFAULT_SURVEY_FILTER_FIELDS)
+    questions_json = survey_questions_json()
     if IS_POSTGRES:
         return execute(
             conn,
-            "INSERT INTO survey_layouts (company_id, filter_fields_json) VALUES (?, ?) RETURNING *",
-            (company_id, filter_fields_json),
+            """
+            INSERT INTO survey_layouts (company_id, filter_fields_json, questions_json)
+            VALUES (?, ?, ?)
+            RETURNING *
+            """,
+            (company_id, filter_fields_json, questions_json),
         ).fetchone()
 
     cursor = execute(
         conn,
-        "INSERT INTO survey_layouts (company_id, filter_fields_json) VALUES (?, ?)",
-        (company_id, filter_fields_json),
+        """
+        INSERT INTO survey_layouts (company_id, filter_fields_json, questions_json)
+        VALUES (?, ?, ?)
+        """,
+        (company_id, filter_fields_json, questions_json),
     )
     return execute(conn, "SELECT * FROM survey_layouts WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
@@ -562,6 +717,7 @@ def survey_period_to_public(row: Any, *, item_count: int | None = None) -> dict:
         "opens_at": row["opens_at"],
         "closes_at": row["closes_at"],
         "filter_fields": parse_period_filter_fields(row["filter_fields_json"]),
+        "questions": parse_survey_questions(_row_get(row, "questions_json")),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
@@ -763,13 +919,14 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
         return existing
 
     filter_fields_json = json.dumps(survey_filter_fields(conn, company_id))
-    values = (company_id, "Current Survey", "open", utc_now().isoformat(), filter_fields_json)
+    questions_json = survey_questions_json(survey_layout_questions(conn, company_id))
+    values = (company_id, "Current Survey", "open", utc_now().isoformat(), filter_fields_json, questions_json)
     if IS_POSTGRES:
         period = execute(
             conn,
             """
-            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             RETURNING *
             """,
             values,
@@ -778,8 +935,8 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
         cursor = execute(
             conn,
             """
-            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             values,
         )

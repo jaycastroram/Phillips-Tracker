@@ -21,7 +21,9 @@ from database import (
     get_open_survey_period,
     kanban_column_to_public,
     list_period_items,
+    mirror_legacy_response_fields,
     parse_period_filter_fields,
+    parse_survey_questions,
     period_item_to_public,
     row_to_item,
     survey_filter_fields,
@@ -138,12 +140,14 @@ def _survey_items_response(company_id: int, q: str, surface: str) -> dict:
                 return {
                     "items": [],
                     "filter_fields": [],
+                    "questions": [],
                     "period": None,
                     "survey_open": False,
                     "message": "No survey is open right now.",
                 }
             rows = list_period_items(conn, period["id"])
             fields = parse_period_filter_fields(period["filter_fields_json"])
+            questions = parse_survey_questions(period["questions_json"])
 
         items = [period_item_to_public(row) for row in rows]
         if q.strip():
@@ -161,6 +165,7 @@ def _survey_items_response(company_id: int, q: str, surface: str) -> dict:
         return {
             "items": items,
             "filter_fields": fields,
+            "questions": questions,
             "period": survey_period_to_public(period),
             "survey_open": True,
         }
@@ -238,23 +243,69 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate) -> d
         if period_item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey item not found in the open survey")
 
+        questions = parse_survey_questions(period["questions_json"])
+        answers = {str(key): value for key, value in (payload.answers or {}).items()}
+
+        # Back-compat: older clients only send interest/notes via legacy fields.
+        if not answers:
+            if payload.recommend_rollout == "Yes":
+                answers["interest"] = "Yes"
+            elif payload.recommend_rollout == "No":
+                answers["interest"] = "No"
+            if payload.feedback.strip():
+                answers["feedback"] = payload.feedback.strip()
+
+        for question in questions:
+            raw = answers.get(question["id"])
+            if question["required"] and (raw is None or str(raw).strip() == ""):
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Please answer: {question['label']}",
+                )
+            if question["type"] == "scale" and raw not in (None, ""):
+                try:
+                    scale = int(raw)
+                except (TypeError, ValueError):
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid scale for {question['label']}")
+                if scale < 1 or scale > 5:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Scale must be 1-5 for {question['label']}")
+                answers[question["id"]] = scale
+            elif question["type"] in {"yes_no", "single_choice"} and raw not in (None, ""):
+                text = str(raw).strip()
+                if question["options"] and text not in question["options"]:
+                    raise HTTPException(
+                        status.HTTP_400_BAD_REQUEST,
+                        f"Invalid option for {question['label']}",
+                    )
+                answers[question["id"]] = text
+            elif question["type"] == "text" and raw not in (None, ""):
+                answers[question["id"]] = str(raw).strip()
+
+        recommend, feedback, attention, retail, stands_out, price_reasonable = mirror_legacy_response_fields(
+            questions,
+            answers,
+        )
+        if payload.feedback.strip() and not feedback:
+            feedback = payload.feedback.strip()
+
         values = (
             company_id,
             period["id"],
             payload.survey_item_id,
             str(payload.email).lower(),
-            payload.attention_effectiveness,
-            payload.recommend_rollout,
-            payload.retail_engagement,
-            payload.stands_out,
-            payload.price_reasonable,
-            payload.feedback.strip(),
+            attention,
+            recommend,
+            retail,
+            stands_out,
+            price_reasonable,
+            feedback,
+            json.dumps(answers),
         )
         sql = """
             INSERT INTO survey_responses (
                 company_id, survey_period_id, survey_item_id, email, attention_effectiveness, recommend_rollout,
-                retail_engagement, stands_out, price_reasonable, feedback
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                retail_engagement, stands_out, price_reasonable, feedback, answers_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         if IS_POSTGRES:
             row = execute(conn, with_returning(sql), values).fetchone()

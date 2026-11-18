@@ -1974,6 +1974,80 @@ td textarea {
   gap: 16px;
 }
 
+.survey-question-editor {
+  margin-bottom: 16px;
+}
+
+.survey-question-list {
+  display: grid;
+  gap: 12px;
+}
+
+.survey-question-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--brand-gridline);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.survey-question-card-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+}
+
+.survey-question-card label {
+  display: grid;
+  gap: 6px;
+  font-weight: 700;
+}
+
+.survey-question-card input,
+.survey-question-card select,
+.survey-question-card textarea {
+  font-weight: 500;
+}
+
+.survey-question-required {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+}
+
+.survey-question-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.survey-dynamic-questions {
+  display: grid;
+  gap: 12px;
+}
+
+.survey-dynamic-questions fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.survey-dynamic-questions legend {
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.survey-scale-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .survey-layout-filter-row {
   display: grid;
   gap: 8px;

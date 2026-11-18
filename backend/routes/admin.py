@@ -31,13 +31,18 @@ from database import (
     list_period_items,
     normalize_buy_book_group_by,
     normalize_filter_fields,
+    normalize_survey_questions,
+    parse_answers_json,
+    parse_survey_questions,
     period_item_to_public,
     sheet_status_to_public,
     sql_group_concat_distinct,
     sql_round_avg,
     survey_filter_fields,
     survey_item_to_public,
+    survey_layout_questions,
     survey_period_to_public,
+    survey_questions_json,
     utc_now,
     with_returning,
     audit_log_to_public,
@@ -475,21 +480,23 @@ def create_survey_period(
             if source_period is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Source survey period not found")
             filter_fields_json = source_period["filter_fields_json"]
+            questions_json = survey_questions_json(parse_survey_questions(source_period["questions_json"]))
         else:
             filter_fields_json = json.dumps(survey_filter_fields(conn, company_id))
+            questions_json = survey_questions_json(survey_layout_questions(conn, company_id))
 
         status_value = "open" if payload.open_immediately else "draft"
         opens_at = utc_now().isoformat() if payload.open_immediately else None
         if payload.open_immediately:
             close_open_survey_periods(conn, company_id)
 
-        values = (company_id, name, status_value, opens_at, filter_fields_json)
+        values = (company_id, name, status_value, opens_at, filter_fields_json, questions_json)
         if IS_POSTGRES:
             period = execute(
                 conn,
                 """
-                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 RETURNING *
                 """,
                 values,
@@ -498,8 +505,8 @@ def create_survey_period(
             cursor = execute(
                 conn,
                 """
-                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO survey_periods (company_id, name, status, opens_at, filter_fields_json, questions_json)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 values,
             )
@@ -563,9 +570,11 @@ def get_survey_period_detail(
         editor_items.append(public)
 
     editor_items.sort(key=lambda item: (0 if item["in_survey"] else 1, item["survey_sort_order"], item["id"]))
+    period_public = survey_period_to_public(period, item_count=len(items))
     return {
-        "period": survey_period_to_public(period, item_count=len(items)),
-        "filter_fields": survey_period_to_public(period)["filter_fields"],
+        "period": period_public,
+        "filter_fields": period_public["filter_fields"],
+        "questions": period_public["questions"],
         "items": editor_items,
     }
 
@@ -622,6 +631,7 @@ def update_survey_period_layout(
 ) -> dict:
     company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
+    questions = normalize_survey_questions([question.model_dump() for question in payload.questions])
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -695,10 +705,21 @@ def update_survey_period_layout(
             conn,
             """
             UPDATE survey_periods
-            SET filter_fields_json = ?, updated_at = CURRENT_TIMESTAMP
+            SET filter_fields_json = ?, questions_json = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND company_id = ?
             """,
-            (json.dumps(filter_fields), period_id, company_id),
+            (json.dumps(filter_fields), survey_questions_json(questions), period_id, company_id),
+        )
+        # Keep company template in sync with the latest edited period questions.
+        ensure_survey_layout(conn, company_id)
+        execute(
+            conn,
+            """
+            UPDATE survey_layouts
+            SET questions_json = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE company_id = ?
+            """,
+            (survey_questions_json(questions), company_id),
         )
         period = get_survey_period(conn, company_id, period_id)
         items = list_period_items(conn, period_id)
@@ -706,6 +727,7 @@ def update_survey_period_layout(
     return {
         "period": survey_period_to_public(period, item_count=len(items)),
         "filter_fields": filter_fields,
+        "questions": questions,
         "items": [period_item_to_public(row) for row in items],
     }
 
@@ -761,6 +783,27 @@ def export_survey_responses(
             args.append(period_id)
             period_name = str(period["name"]).replace(" ", "-").lower()
 
+        question_labels: list[tuple[str, str]] = []
+        if period_id is not None:
+            period_row = get_survey_period(conn, company_id, period_id)
+            if period_row is not None:
+                for question in parse_survey_questions(period_row["questions_json"]):
+                    question_labels.append((question["id"], question["label"]))
+        else:
+            seen: set[str] = set()
+            for period_row in execute(
+                conn,
+                "SELECT questions_json FROM survey_periods WHERE company_id = ?",
+                (company_id,),
+            ).fetchall():
+                for question in parse_survey_questions(period_row["questions_json"]):
+                    if question["id"] in seen:
+                        continue
+                    seen.add(question["id"])
+                    question_labels.append((question["id"], question["label"]))
+        if not question_labels:
+            question_labels = [("interest", "Interest"), ("feedback", "Notes")]
+
         rows = execute(
             conn,
             f"""
@@ -775,7 +818,8 @@ def export_survey_responses(
                 COALESCE(survey_items.price, '') AS price,
                 survey_responses.email,
                 survey_responses.recommend_rollout,
-                survey_responses.feedback
+                survey_responses.feedback,
+                survey_responses.answers_json
             FROM survey_responses
             LEFT JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
             WHERE survey_responses.company_id = ?{period_clause}
@@ -788,17 +832,27 @@ def export_survey_responses(
     worksheet = workbook.active
     worksheet.title = "Survey Responses"
     headers = ["Submitted At", "Item Name", "Brand", "Channel", "Product Type",
-               "Key Program", "UOM", "Price", "Email", "Interest", "Notes"]
+               "Key Program", "UOM", "Price", "Email"] + [label for _, label in question_labels]
     worksheet.append(headers)
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
     for row in rows:
+        answers = parse_answers_json(row["answers_json"])
+        answer_cells = []
+        for question_id, _label in question_labels:
+            if question_id in answers and answers[question_id] not in (None, ""):
+                answer_cells.append(str(answers[question_id]))
+            elif question_id == "interest":
+                answer_cells.append("Interested" if row["recommend_rollout"] == "Yes" else "Not Interested")
+            elif question_id == "feedback":
+                answer_cells.append(str(row["feedback"] or ""))
+            else:
+                answer_cells.append("")
         worksheet.append([
             str(row["created_at"] or ""), row["item_name"], row["brand"],
             row["channel"], row["product_type"], row["key_program"], row["uom"], row["price"],
             row["email"],
-            "Interested" if row["recommend_rollout"] == "Yes" else "Not Interested",
-            row["feedback"],
+            *answer_cells,
         ])
     for column_cells in worksheet.columns:
         max_length = max(len(str(cell.value or "")) for cell in column_cells)

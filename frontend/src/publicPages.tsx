@@ -4,9 +4,11 @@ import type {
   SurveyFilterField,
   SurveyInterest,
   SurveyItem,
+  SurveyQuestion,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
+import { DEFAULT_SURVEY_QUESTIONS } from './constants'
 import {
   getViewerStatus,
   isImageReference,
@@ -46,6 +48,7 @@ type BuyBookPageProps = PublicBrandProps & {
 type SurveyPageProps = PublicBrandProps & {
   surveyItems: SurveyItem[]
   surveyFilterFields: SurveyFilterField[]
+  surveyQuestions: SurveyQuestion[]
   surveyLoading: boolean
   surveyError: string
   surveyMessage: string
@@ -62,6 +65,102 @@ type SurveyPageProps = PublicBrandProps & {
   bulkUpdateSurveyInterest: (interest: Exclude<SurveyInterest, ''>) => void
   getSurveyResponse: (itemId: number) => SurveyResponseDraft
   updateSurveyResponse: (itemId: number, updates: Partial<SurveyResponseDraft>) => void
+}
+
+function findInterestQuestion(questions: SurveyQuestion[]) {
+  return (
+    questions.find((question) => question.type === 'yes_no' && question.id === 'interest') ??
+    questions.find((question) => question.type === 'yes_no') ??
+    null
+  )
+}
+
+function SurveyQuestionFields({
+  itemId,
+  questions,
+  draft,
+  onAnswer,
+}: {
+  itemId: number
+  questions: SurveyQuestion[]
+  draft: SurveyResponseDraft
+  onAnswer: (questionId: string, value: string | number) => void
+}) {
+  return (
+    <div className="survey-dynamic-questions">
+      {questions.map((question) => {
+        const value = draft.answers[question.id]
+        if (question.type === 'text') {
+          return (
+            <label key={question.id} className="survey-feedback-field">
+              <span>
+                {question.label}
+                {question.required ? ' *' : ''}
+              </span>
+              <textarea
+                value={typeof value === 'string' || typeof value === 'number' ? String(value) : ''}
+                onChange={(event) => onAnswer(question.id, event.target.value)}
+                placeholder={question.label}
+              />
+            </label>
+          )
+        }
+
+        if (question.type === 'scale') {
+          return (
+            <fieldset key={question.id}>
+              <legend>
+                {question.label}
+                {question.required ? ' *' : ''}
+              </legend>
+              <div className="survey-scale-options">
+                {[1, 2, 3, 4, 5].map((score) => (
+                  <label key={score}>
+                    <input
+                      checked={Number(value) === score}
+                      type="radio"
+                      name={`item-${itemId}-${question.id}-scale`}
+                      onChange={() => onAnswer(question.id, score)}
+                    />
+                    {score}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          )
+        }
+
+        const options =
+          question.options.length > 0
+            ? question.options
+            : question.type === 'yes_no'
+              ? ['Yes', 'No']
+              : []
+
+        return (
+          <fieldset key={question.id}>
+            <legend>
+              {question.label}
+              {question.required ? ' *' : ''}
+            </legend>
+            {options.map((option) => (
+              <label key={option}>
+                <input
+                  checked={String(value ?? '') === option}
+                  type="checkbox"
+                  value={option}
+                  onChange={() =>
+                    onAnswer(question.id, String(value ?? '') === option ? '' : option)
+                  }
+                />
+                {option}
+              </label>
+            ))}
+          </fieldset>
+        )
+      })}
+    </div>
+  )
 }
 
 type ViewerPageProps = PublicBrandProps & {
@@ -528,6 +627,7 @@ export function SurveyPage({
   companyBannerUrl,
   surveyItems,
   surveyFilterFields,
+  surveyQuestions,
   surveyLoading,
   surveyError,
   surveyMessage,
@@ -546,6 +646,8 @@ export function SurveyPage({
   updateSurveyResponse,
 }: SurveyPageProps) {
   const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
+  const questions = surveyQuestions.length > 0 ? surveyQuestions : DEFAULT_SURVEY_QUESTIONS
+  const interestQuestion = findInterestQuestion(questions)
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const [currentPage, setCurrentPage] = useState(0)
   const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
@@ -569,6 +671,24 @@ export function SurveyPage({
       const isSelected = selectedSurveyItemIds.includes(item.id)
       if (allVisibleSelected ? isSelected : !isSelected) toggleSurveyItem(item.id)
     })
+  }
+
+  function answerQuestion(itemId: number, questionId: string, value: string | number) {
+    if (!selectedSurveyItemIds.includes(itemId)) toggleSurveyItem(itemId)
+    const draft = getSurveyResponse(itemId)
+    const nextAnswers = { ...draft.answers, [questionId]: value }
+    const updates: Partial<SurveyResponseDraft> = { answers: nextAnswers }
+    if (interestQuestion && questionId === interestQuestion.id) {
+      const yes = interestQuestion.options[0] || 'Yes'
+      const no = interestQuestion.options[1] || 'No'
+      updates.interest =
+        value === yes ? 'Interested' : value === no ? 'Not Interested' : ''
+    }
+    const textQuestion = questions.find((question) => question.type === 'text' && question.id === questionId)
+    if (textQuestion) {
+      updates.notes = String(value ?? '')
+    }
+    updateSurveyResponse(itemId, updates)
   }
 
   if (!surveyLoading && !surveyOpen) {
@@ -622,22 +742,26 @@ export function SurveyPage({
           >
             {allVisibleSelected ? 'Clear Selection' : 'Select All'}
           </button>
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={() => bulkUpdateSurveyInterest('Interested')}
-            disabled={selectedSurveyItemIds.length === 0}
-          >
-            Mark Interested
-          </button>
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={() => bulkUpdateSurveyInterest('Not Interested')}
-            disabled={selectedSurveyItemIds.length === 0}
-          >
-            Mark Not Interested
-          </button>
+          {interestQuestion && (
+            <>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => bulkUpdateSurveyInterest('Interested')}
+                disabled={selectedSurveyItemIds.length === 0}
+              >
+                Mark Interested
+              </button>
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => bulkUpdateSurveyInterest('Not Interested')}
+                disabled={selectedSurveyItemIds.length === 0}
+              >
+                Mark Not Interested
+              </button>
+            </>
+          )}
           <div className="survey-toolbar-spacer" />
           <label className="survey-email-field">
             <span>Your Email <span className="survey-email-required" aria-label="required">*</span></span>
@@ -728,31 +852,12 @@ export function SurveyPage({
             </div>
             <div className="survey-inline-response">
               <h3>Response</h3>
-              <fieldset>
-                {(['Interested', 'Not Interested'] as const).map((interest) => (
-                  <label key={interest}>
-                    <input
-                      checked={getSurveyResponse(item.id).interest === interest}
-                      type="checkbox"
-                      value={interest}
-                      onChange={() => {
-                        if (!selectedSurveyItemIds.includes(item.id)) toggleSurveyItem(item.id)
-                        updateSurveyResponse(item.id, {
-                          interest: getSurveyResponse(item.id).interest === interest ? '' : interest,
-                        })
-                      }}
-                    />
-                    {interest}
-                  </label>
-                ))}
-              </fieldset>
-              <label className="survey-feedback-field">
-                <textarea
-                  value={getSurveyResponse(item.id).notes}
-                  onChange={(event) => updateSurveyResponse(item.id, { notes: event.target.value })}
-                  placeholder="Please provide feedback about the design, size, color, etc. of this item"
-                />
-              </label>
+              <SurveyQuestionFields
+                itemId={item.id}
+                questions={questions}
+                draft={getSurveyResponse(item.id)}
+                onAnswer={(questionId, value) => answerQuestion(item.id, questionId, value)}
+              />
             </div>
           </article>
           )

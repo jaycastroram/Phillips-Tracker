@@ -453,6 +453,8 @@ def _scope_sheet_status_uniqueness(conn) -> None:
 
 def _ensure_survey_layout_columns(conn) -> None:
     from config import DEFAULT_RESPONSE_WIDTH
+    from database import survey_questions_json
+
     ensure_column(conn, "survey_items", "in_survey", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "survey_items", "in_buy_book", "INTEGER NOT NULL DEFAULT 1")
     ensure_column(conn, "survey_items", "survey_sort_order", "INTEGER NOT NULL DEFAULT 0")
@@ -463,6 +465,28 @@ def _ensure_survey_layout_columns(conn) -> None:
     ensure_column(conn, "survey_items", "image_display_size", "TEXT NOT NULL DEFAULT 'medium'")
     ensure_column(conn, "survey_items", "image_fit", "TEXT NOT NULL DEFAULT 'contain'")
     ensure_column(conn, "buy_book_layouts", "group_by", "TEXT NOT NULL DEFAULT 'brand'")
+    ensure_column(conn, "survey_layouts", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "survey_periods", "questions_json", "TEXT NOT NULL DEFAULT '[]'")
+    ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
+    default_questions = survey_questions_json()
+    execute(
+        conn,
+        """
+        UPDATE survey_layouts
+        SET questions_json = ?
+        WHERE questions_json IS NULL OR questions_json = '' OR questions_json = '[]'
+        """,
+        (default_questions,),
+    )
+    execute(
+        conn,
+        """
+        UPDATE survey_periods
+        SET questions_json = ?
+        WHERE questions_json IS NULL OR questions_json = '' OR questions_json = '[]'
+        """,
+        (default_questions,),
+    )
     execute(
         conn,
         """

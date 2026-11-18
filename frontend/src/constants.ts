@@ -60,7 +60,25 @@ export const EMPTY_ITEM_DRAFT: ItemDraft = {
 export const EMPTY_SURVEY_RESPONSE: SurveyResponseDraft = {
   interest: '',
   notes: '',
+  answers: {},
 }
+
+export const DEFAULT_SURVEY_QUESTIONS = [
+  {
+    id: 'interest',
+    type: 'yes_no' as const,
+    label: 'Are you interested in this item?',
+    required: true,
+    options: ['Yes', 'No'],
+  },
+  {
+    id: 'feedback',
+    type: 'text' as const,
+    label: 'Please provide feedback about the design, size, color, etc. of this item',
+    required: false,
+    options: [] as string[],
+  },
+]
 
 export const DEFAULT_SURVEY_FILTER_FIELDS: SurveyFilterField[] = ['brand', 'channel', 'product_type']
 export const SURVEY_FILTER_FIELDS: { field: SurveyFilterField; label: string }[] = [

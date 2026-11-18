@@ -10,6 +10,7 @@ import {
   API_BASE,
   AUTH_STORAGE_KEY,
   DEFAULT_COMPANY_SLUG,
+  DEFAULT_SURVEY_QUESTIONS,
   EMPTY_SURVEY_RESPONSE,
   SURVEY_FILTER_FIELDS,
   DEFAULT_SURVEY_FILTER_FIELDS,
@@ -33,6 +34,7 @@ import type {
   SurveyFilterField,
   SurveyInterest,
   SurveyItem,
+  SurveyQuestion,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
@@ -72,6 +74,7 @@ function App() {
   const [publicStatusFilter, setPublicStatusFilter] = useState('')
   const [surveyQuery, setSurveyQuery] = useState('')
   const [surveyFilterFields, setSurveyFilterFields] = useState<SurveyFilterField[]>(DEFAULT_SURVEY_FILTER_FIELDS)
+  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
   const [surveyOpen, setSurveyOpen] = useState(true)
   const [surveyClosedMessage, setSurveyClosedMessage] = useState('')
   const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
@@ -234,6 +237,11 @@ function App() {
           setSurveyFilterFields(data.filter_fields.filter((f: string) => allowed.has(f as SurveyFilterField)))
         }
         if (isPublicSurveyPath) {
+          setSurveyQuestions(
+            Array.isArray(data.questions) && data.questions.length > 0
+              ? data.questions
+              : DEFAULT_SURVEY_QUESTIONS,
+          )
           setSurveyOpen(data.survey_open !== false)
           setSurveyClosedMessage(
             typeof data.message === 'string' && data.message
@@ -241,6 +249,7 @@ function App() {
               : 'No survey is open right now.',
           )
         } else {
+          setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS)
           setSurveyOpen(true)
           setSurveyClosedMessage('')
         }
@@ -325,9 +334,23 @@ function App() {
 
   function bulkUpdateSurveyInterest(interest: Exclude<SurveyInterest, ''>) {
     if (!selectedSurveyItemIds.length) return
+    const interestQuestion =
+      surveyQuestions.find((question) => question.type === 'yes_no' && question.id === 'interest') ??
+      surveyQuestions.find((question) => question.type === 'yes_no')
+    if (!interestQuestion) return
+    const yes = interestQuestion.options[0] || 'Yes'
+    const no = interestQuestion.options[1] || 'No'
+    const answer = interest === 'Interested' ? yes : no
     setSurveyResponses((c) => {
       const next = { ...c }
-      selectedSurveyItemIds.forEach((id) => { next[id] = { ...(next[id] ?? EMPTY_SURVEY_RESPONSE), interest } })
+      selectedSurveyItemIds.forEach((id) => {
+        const current = next[id] ?? EMPTY_SURVEY_RESPONSE
+        next[id] = {
+          ...current,
+          interest,
+          answers: { ...current.answers, [interestQuestion.id]: answer },
+        }
+      })
       return next
     })
   }
@@ -339,23 +362,35 @@ function App() {
       setSurveyError('Please enter a valid email address before submitting.')
       return
     }
-    const missing = selected.filter((item) => !getSurveyResponse(item.id).interest)
-    if (missing.length) { setSurveyError('Choose Interested or Not Interested for each selected item.'); return }
+    const questions = surveyQuestions.length > 0 ? surveyQuestions : DEFAULT_SURVEY_QUESTIONS
+    for (const item of selected) {
+      const draft = getSurveyResponse(item.id)
+      for (const question of questions) {
+        if (!question.required) continue
+        const value = draft.answers[question.id]
+        if (value === undefined || value === null || String(value).trim() === '') {
+          setSurveyError(`Please answer “${question.label}” for each selected item.`)
+          return
+        }
+      }
+    }
     setIsSubmittingSurvey(true); setSurveyError(''); setSurveyMessage('')
     try {
       for (const item of selected) {
         const draft = getSurveyResponse(item.id)
-        const interested = draft.interest === 'Interested'
         const res = await fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            survey_item_id: item.id, email: surveyEmail.trim().toLowerCase(),
-            attention_effectiveness: interested ? 5 : 1, recommend_rollout: interested ? 'Yes' : 'No',
-            retail_engagement: interested ? 5 : 1, stands_out: interested ? 'Yes' : 'No',
-            price_reasonable: 'Yes', feedback: draft.notes,
+            survey_item_id: item.id,
+            email: surveyEmail.trim().toLowerCase(),
+            answers: draft.answers,
+            feedback: draft.notes,
           }),
         })
-        if (!res.ok) throw new Error('Unable to submit survey response.')
+        if (!res.ok) {
+          const detail = await res.json().catch(() => null)
+          throw new Error(detail?.detail || 'Unable to submit survey response.')
+        }
       }
       setSurveyEmail(surveyEmail.trim().toLowerCase())
       setSurveyMessage(selected.length === 1
@@ -556,6 +591,7 @@ function App() {
   }
   if (isPublicSurveyPath) {
     return <SurveyPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
+      surveyQuestions={surveyQuestions}
       surveyLoading={surveyLoading} surveyError={surveyError} surveyMessage={surveyMessage}
       surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
       isSubmittingSurvey={isSubmittingSurvey} setSurveyQuery={setSurveyQuery}
