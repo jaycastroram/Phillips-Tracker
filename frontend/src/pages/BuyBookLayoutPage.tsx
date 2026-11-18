@@ -9,9 +9,12 @@ import type { SurveyFilterField, SurveyItem } from '../types'
 
 type Props = {
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
+  // The company the page is showing. The PDF has to be the same one, so it
+  // travels in the body (the route takes no query parameters).
+  companyId?: number | null
 }
 
-export function BuyBookLayoutPage({ apiFetch }: Props) {
+export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
   const [items, setItems] = useState<SurveyItem[]>([])
   const [filterFields, setFilterFields] = useState<SurveyFilterField[]>([])
   const [layers, setLayers] = useState<BuyBookLayer[]>(DEFAULT_PAGE_BREAK_LAYERS)
@@ -84,7 +87,12 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
         showResponseWidth={false}
         showImageControls
         filterLegend="Buy book options"
-        filterExtra={<PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />}
+        filterExtra={(
+          <>
+            <PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />
+            <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
+          </>
+        )}
         includeLabel="In Buy Book"
         saveLabel="Save Buy Book Layout"
         filterFields={filterFields}
@@ -95,6 +103,49 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
         onSave={saveLayout}
       />
     </section>
+  )
+}
+
+/** The book itself: the same cover, order and breaks the screen draws. */
+function DownloadBookButton({ apiFetch, companyId }: Props) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function download() {
+    setBusy(true)
+    setError('')
+    try {
+      const body = companyId == null ? {} : { company_id: companyId }
+      const res = await apiFetch('/admin/buy-book/pdf', { method: 'POST', body: JSON.stringify(body) })
+      if (!res.ok) {
+        const detail = await res.json().catch(() => ({}))
+        throw new Error(detail.detail || 'Unable to build the Buy Book PDF.')
+      }
+      const blob = await res.blob()
+      const disposition = res.headers.get('Content-Disposition') || ''
+      const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || 'buy-book.pdf'
+      const link = document.createElement('a')
+      link.href = URL.createObjectURL(blob)
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(link.href)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to build the Buy Book PDF.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="buy-book-download">
+      <p>Download the book as a PDF: the cover, then six items to a page.</p>
+      <button type="button" className="secondary-action" onClick={download} disabled={busy}>
+        {busy ? 'Building PDF…' : 'Download PDF'}
+      </button>
+      {error && <div className="error">{error}</div>}
+    </div>
   )
 }
 

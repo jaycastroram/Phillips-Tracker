@@ -75,7 +75,9 @@ export function SurveysPage({
 
       <div key={workingCompanyId ?? 'home'}>
         {tab === 'manage' && <SurveyPeriodsPage apiFetch={scopedApiFetch} />}
-        {tab === 'buy-book' && <BuyBookLayoutPage apiFetch={scopedApiFetch} />}
+        {tab === 'buy-book' && (
+          <BuyBookLayoutPage apiFetch={scopedApiFetch} companyId={workingCompanyId} />
+        )}
         {tab === 'results' && (
           <SurveyDashboardPage apiFetch={scopedApiFetch} onExport={onDownloadSurveyResponses} />
         )}

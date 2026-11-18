@@ -438,6 +438,30 @@ button {
   font-weight: 700;
 }
 
+.buy-book-download {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 16px;
+  border-top: 1px solid var(--brand-gridline);
+}
+
+.buy-book-download p {
+  margin: 0;
+  color: var(--brand-ink);
+}
+
+.buy-book-download .brand-button,
+.buy-book-download .secondary-button,
+.buy-book-download button {
+  flex: none;
+}
+
+.buy-book-download .error {
+  flex-basis: 100%;
+}
+
 .row-count {
   margin-left: auto;
   color: var(--brand-ink);
