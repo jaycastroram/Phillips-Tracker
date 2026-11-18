@@ -54,7 +54,6 @@ export function BuyBookLayoutPage({ apiFetch }: Props) {
           items: draftItems.map((item) => ({
             id: item.id,
             in_buy_book: item.in_buy_book,
-            page_break_before: item.page_break_before,
             image_display_size: item.image_display_size ?? 'medium',
             image_fit: item.image_fit ?? 'contain',
           })),

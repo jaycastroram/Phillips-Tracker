@@ -71,18 +71,25 @@ ITEMS = [
 def make_items(conn: Any, company_id: int) -> list[int]:
     ids = []
     for index, (brand, channel, program, product_type, name) in enumerate(ITEMS):
-        cursor = execute(
+        execute(
             conn,
             """
             INSERT INTO survey_items (
                 company_id, item_name, brand, channel, key_program, product_type,
                 item_description, uom, price, image_url, is_active, in_survey, in_buy_book,
                 survey_sort_order, buy_book_sort_order, sort_order
-            ) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', 1, 1, 1, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, '', '', '', '', ?, ?, ?, ?, ?, ?)
             """,
-            (company_id, f"{MARK} {name}", brand, channel, program, product_type, index, index, index),
+            (company_id, f"{MARK} {name}", brand, channel, program, product_type,
+             True, 1, 1, index, index, index),
         )
-        ids.append(int(cursor.lastrowid))
+        # lastrowid is SQLite-only; the name marks the row on both backends.
+        row = execute(
+            conn,
+            "SELECT id FROM survey_items WHERE company_id = ? AND item_name = ?",
+            (company_id, f"{MARK} {name}"),
+        ).fetchone()
+        ids.append(int(row["id"]))
     return ids
 
 
@@ -178,6 +185,29 @@ def main() -> None:
         book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
         mine = [item for item in book["items"] if item["item_name"] in items]
         check("a stored manual flag does not break a page", len(pages_of(mine)) == 1, pages_of(mine))
+        # Saving the layout must not write the retired column back either.
+        with connect() as conn:
+            execute(conn, "UPDATE survey_items SET buy_book_page_break_before = 0 WHERE id = ?", (item_ids[1],))
+        client.put(
+            "/api/admin/buy-book-layout",
+            headers=headers,
+            params=params,
+            json={
+                "page_break_layers": [{"field": "brand", "new_page": False}],
+                "items": [{"id": item_ids[1], "in_buy_book": True, "page_break_before": True}],
+            },
+        )
+        with connect() as conn:
+            stored_flag = execute(
+                conn,
+                "SELECT buy_book_page_break_before FROM survey_items WHERE id = ?",
+                (item_ids[1],),
+            ).fetchone()
+        check(
+            "a layout save does not write the manual flag",
+            not int(stored_flag["buy_book_page_break_before"] or 0),
+            dict(stored_flag),
+        )
 
         print("\n6. Two spellings of one value are one group")
         client.put("/api/admin/buy-book-layout", headers=headers, params=params, json={
@@ -186,16 +216,21 @@ def main() -> None:
         with connect() as conn:
             extra = []
             for brand, program, name in [("ALPHA ", "Spring", "A4"), ("alpha", "Fall", "A5")]:
-                cursor = execute(conn,
+                execute(conn,
                     """
                     INSERT INTO survey_items (
                         company_id, item_name, brand, channel, key_program, product_type,
                         item_description, uom, price, image_url, is_active, in_survey, in_buy_book,
                         survey_sort_order, buy_book_sort_order, sort_order
-                    ) VALUES (?, ?, ?, 'On Premise', ?, 'Print', '', '', '', '', 1, 1, 1, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 'On Premise', ?, 'Print', '', '', '', '', ?, ?, ?, ?, ?, ?)
                     """,
-                    (company_id, f"{MARK} {name}", brand, program, 90, 90, 90))
-                extra.append(int(cursor.lastrowid))
+                    (company_id, f"{MARK} {name}", brand, program, True, 1, 1, 90, 90, 90))
+                row = execute(
+                    conn,
+                    "SELECT id FROM survey_items WHERE company_id = ? AND item_name = ?",
+                    (company_id, f"{MARK} {name}"),
+                ).fetchone()
+                extra.append(int(row["id"]))
         book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
         mine = [item for item in book["items"] if item["item_name"] in items or item["item_name"].endswith(("A4", "A5"))]
         pages = pages_of(mine)

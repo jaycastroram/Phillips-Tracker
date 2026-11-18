@@ -459,18 +459,20 @@ def update_buy_book_layout(
             (json.dumps(filter_fields), group_by, json.dumps(layers), company_id),
         )
         for index, item in enumerate(payload.items, start=1):
+            # The page break is derived from the layer stack at render time, so a
+            # layout save leaves the retired manual column alone: writing the
+            # derived flag back into it would revive a column nothing reads.
             cursor = execute(
                 conn,
                 """
                 UPDATE survey_items
-                SET in_buy_book = ?, buy_book_sort_order = ?, buy_book_page_break_before = ?,
+                SET in_buy_book = ?, buy_book_sort_order = ?,
                     image_display_size = ?, image_fit = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ? AND company_id = ? AND is_active = ?
                 """,
                 (
                     1 if item.in_buy_book else 0,
                     index,
-                    1 if item.page_break_before and index > 1 else 0,
                     item.image_display_size,
                     item.image_fit,
                     item.id,
