@@ -21,7 +21,7 @@ import { AdminPage } from './pages/AdminPage'
 import { SurveysPage } from './pages/SurveysPage'
 import { SystemLogPage } from './pages/SystemLogPage'
 import { TrackerPage } from './pages/TrackerPage'
-import { BuyBookPage, SurveyPage, ViewerPage } from './publicPages'
+import { SurveyPage, ViewerPage } from './publicPages'
 import type {
   AppUser,
   CompanyInfo,
@@ -44,7 +44,7 @@ import {
   writeAdminCompanyFilter,
   type AdminCompanyFilter,
 } from './utils/adminCompany'
-import { companyPublicApiPath, escapePrintValue, isImageReference, parsePublicRoute, publicPagePath } from './utils'
+import { companyPublicApiPath, parsePublicRoute, publicPagePath } from './utils'
 import './App.css'
 
 function ExternalLinkIcon() {
@@ -116,8 +116,7 @@ function App() {
   const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
   const isPublicViewerPath = publicPage === 'viewer'
   const isPublicSurveyPath = publicPage === 'survey'
-  const isPublicBuyBookPath = publicPage === 'buy-book'
-  const isPublicSurface = isPublicViewerPath || isPublicSurveyPath || isPublicBuyBookPath
+  const isPublicSurface = isPublicViewerPath || isPublicSurveyPath
 
   const companyConfig = useCompanyConfig(
     isPublicSurface || currentUser?.role === 'admin' ? null : currentUser?.company,
@@ -221,43 +220,53 @@ function App() {
     return () => controller.abort()
   }, [companySlug, isPublicViewerPath, publicQuery])
 
-  // --- Survey / buy-book items ---
+  // --- Survey items ---
+  // The survey link carries its period token (?t=). It is the only credential
+  // the public surface accepts; a link without one gets a clean closed state.
   useEffect(() => {
-    if (!isPublicSurveyPath && !isPublicBuyBookPath) return
+    if (!isPublicSurveyPath) return
     const controller = new AbortController()
     setSurveyLoading(true)
-    const params = new URLSearchParams({ surface: isPublicSurveyPath ? 'survey' : 'buy-book' })
+    const token = new URLSearchParams(window.location.search).get('t') ?? ''
+    const params = new URLSearchParams({ surface: 'survey' })
+    if (token) params.set('t', token)
     if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
     fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-items')}?${params}`, { signal: controller.signal })
-      .then((res) => res.ok ? res.json() : Promise.reject(res.status))
+      .then((res) => {
+        if (res.status === 401 || res.status === 404) {
+          setSurveyItems([])
+          setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS)
+          setSurveyOpen(false)
+          setSurveyClosedMessage('This survey link is not valid or has been replaced. Ask for a current link.')
+          setSurveyLoading(false)
+          return null
+        }
+        if (!res.ok) throw new Error('survey')
+        return res.json()
+      })
       .then((data) => {
+        if (!data) return
         setSurveyItems(Array.isArray(data.items) ? data.items : [])
         if (Array.isArray(data.filter_fields)) {
           const allowed = new Set(SURVEY_FILTER_FIELDS.map((f) => f.field))
           setSurveyFilterFields(data.filter_fields.filter((f: string) => allowed.has(f as SurveyFilterField)))
         }
-        if (isPublicSurveyPath) {
-          setSurveyQuestions(
-            Array.isArray(data.questions) && data.questions.length > 0
-              ? data.questions
-              : DEFAULT_SURVEY_QUESTIONS,
-          )
-          setSurveyOpen(data.survey_open !== false)
-          setSurveyClosedMessage(
-            typeof data.message === 'string' && data.message
-              ? data.message
-              : 'No survey is open right now.',
-          )
-        } else {
-          setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS)
-          setSurveyOpen(true)
-          setSurveyClosedMessage('')
-        }
+        setSurveyQuestions(
+          Array.isArray(data.questions) && data.questions.length > 0
+            ? data.questions
+            : DEFAULT_SURVEY_QUESTIONS,
+        )
+        setSurveyOpen(data.survey_open !== false)
+        setSurveyClosedMessage(
+          typeof data.message === 'string' && data.message
+            ? data.message
+            : 'No survey is open right now.',
+        )
         setSurveyLoading(false)
       })
       .catch(() => setSurveyLoading(false))
     return () => controller.abort()
-  }, [companySlug, isPublicBuyBookPath, isPublicSurveyPath, surveyQuery])
+  }, [companySlug, isPublicSurveyPath, surveyQuery])
 
   // --- Kanban (public) ---
   useEffect(() => {
@@ -376,9 +385,12 @@ function App() {
     }
     setIsSubmittingSurvey(true); setSurveyError(''); setSurveyMessage('')
     try {
+      const surveyToken = new URLSearchParams(window.location.search).get('t') ?? ''
       for (const item of selected) {
         const draft = getSurveyResponse(item.id)
-        const res = await fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}`, {
+        const submitUrl = `${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}` +
+          (surveyToken ? `?t=${encodeURIComponent(surveyToken)}` : '')
+        const res = await fetch(submitUrl, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             survey_item_id: item.id,
@@ -402,87 +414,6 @@ function App() {
     } finally {
       setIsSubmittingSurvey(false)
     }
-  }
-
-  // --- Buy book print ---
-  function printSurveyBuyBook() {
-    const selected = surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
-    if (!selected.length) return
-    const printFrame = document.createElement('iframe')
-    printFrame.title = 'SmartBuy Survey Buy Book'
-    Object.assign(printFrame.style, { position: 'fixed', right: '0', bottom: '0', width: '0', height: '0', border: '0' })
-    document.body.appendChild(printFrame)
-    const pw = printFrame.contentWindow
-    const pd = pw?.document
-    if (!pw || !pd) { printFrame.remove(); return }
-
-    const pages: typeof selected[] = []
-    let currentPage: typeof selected = []
-    selected.forEach((item, index) => {
-      if (item.page_break_before && index > 0 && currentPage.length > 0) {
-        pages.push(currentPage)
-        currentPage = []
-      }
-      currentPage.push(item)
-    })
-    if (currentPage.length) pages.push(currentPage)
-
-    const pagesMarkup = pages.map((pageItems, pageIndex) => {
-      // Print the whole layer path a page belongs to, the same headings the
-      // on-screen book draws: first layer as the section, deeper layers below.
-      const first = pageItems[0]
-      const headers = first?.group_headers?.length
-        ? first.group_headers
-        : first?.group_label
-          ? [{ field: first.group_field ?? 'brand', label: first.group_label, level: 0 }]
-          : []
-      const facetName = (field: string) =>
-        field === 'key_program' ? 'Program' : field === 'product_type' ? 'Type' : field === 'channel' ? 'Channel' : 'Brand'
-      const groupHeading = headers.length
-        ? `<header class="buy-book-group">${headers
-            .map((header, depth) => {
-              const level = header.level ?? depth
-              const facet = escapePrintValue(facetName(header.field))
-              const label = escapePrintValue(header.label)
-              return level === 0
-                ? `<p>${facet}</p><h1>${label}</h1>`
-                : `<p class="buy-book-group-sub"><span>${facet}</span>${label}</p>`
-            })
-            .join('')}</header>`
-        : ''
-      const itemMarkup = pageItems.map((item, i) => {
-        const img = isImageReference(item.image_url)
-          ? `<img src="${escapePrintValue(item.image_url)}" alt="" />`
-          : `<div class="image-placeholder">${escapePrintValue(item.brand.slice(0, 2).toUpperCase() || 'SB')}</div>`
-        return `<article class="buy-book-item"><div class="item-image">${img}</div><div class="item-copy"><dl>
-          <div><dt>Name:</dt><dd>${escapePrintValue(item.item_name || `Item ${i + 1}`)}</dd></div>
-          <div><dt>Description:</dt><dd>${escapePrintValue(item.item_description || 'No description.')}</dd></div>
-          <div><dt>UOM:</dt><dd>${escapePrintValue(item.uom || '-')}</dd></div>
-          <div><dt>Price:</dt><dd>${escapePrintValue(item.price || '-')}</dd></div>
-        </dl></div></article>`
-      }).join('')
-      return `<section class="buy-book-page${pageIndex > 0 ? ' buy-book-page-break' : ''}">${groupHeading}<div class="buy-book-grid">${itemMarkup}</div></section>`
-    }).join('')
-
-    pd.open()
-    pd.write(`<!doctype html><html><head><title>SmartBuy Buy Book</title><style>
-      *{box-sizing:border-box}body{margin:0;padding:30px 42px;font-family:Arial,sans-serif}
-      .buy-book-page{padding-bottom:12px}
-      .buy-book-page-break{break-before:page;page-break-before:always}
-      .buy-book-group{margin:0 0 18px} .buy-book-group p{margin:0;font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#666}
-      .buy-book-group h1{margin:4px 0 0;font-size:22px}
-      .buy-book-group-sub{margin:4px 0 0;font-size:13px;color:#33404f;font-weight:700}
-      .buy-book-group-sub span{margin-right:6px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:#666}
-      .buy-book-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:34px 44px}
-      .buy-book-item{break-inside:avoid;display:grid;grid-template-columns:116px 1fr;gap:16px;min-height:126px}
-      .item-image{min-height:104px;display:grid;place-items:center}
-      .item-image img{width:100%;height:104px;object-fit:contain}
-      .image-placeholder{width:70px;height:70px;display:grid;place-items:center;border-radius:999px;background:#f4f4f4;color:#FD4338;font-size:20px;font-weight:800}
-      dl{margin:0;display:grid;gap:3px}dt{display:inline;margin-right:4px;font-size:11px;font-weight:800}
-      dd{display:inline;margin:0;font-size:11px}@media print{@page{size:landscape;margin:.35in}}
-    </style></head><body>${pagesMarkup}</body></html>`)
-    pd.close()
-    setTimeout(() => { pw.focus(); pw.print(); setTimeout(() => printFrame.remove(), 1000) }, 250)
   }
 
   // --- Navigation helpers ---
@@ -595,12 +526,6 @@ function App() {
     companyBannerUrl: companyConfig.banner_url,
   }
 
-  if (isPublicBuyBookPath) {
-    return <BuyBookPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
-      surveyLoading={surveyLoading} surveyError={surveyError}
-      surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
-      setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook} />
-  }
   if (isPublicSurveyPath) {
     return <SurveyPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
       surveyQuestions={surveyQuestions}
@@ -684,12 +609,6 @@ function App() {
             </>}
             <button className="nav-external" type="button" onClick={() => openPublicPath('/viewer')}>
               Viewer <ExternalLinkIcon />
-            </button>
-            <button className="nav-external" type="button" onClick={() => openPublicPath('/survey')}>
-              Survey <ExternalLinkIcon />
-            </button>
-            <button className="nav-external" type="button" onClick={() => openPublicPath('/buy-book')}>
-              Buy Book <ExternalLinkIcon />
             </button>
             <button type="button" onClick={handleLogout}>Log Out</button>
           </nav>

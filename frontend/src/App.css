@@ -4009,3 +4009,47 @@ td textarea {
   .survey-toolbar-spacer { display: none; }
   .survey-email-field input { min-width: 0; width: 100%; }
 }
+
+/* Survey link block: the token is the only way into a survey, so it lives
+   next to the period's own editor and nowhere on the public page. */
+.survey-link-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #666;
+}
+
+.survey-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.survey-link-row input {
+  flex: 1 1 320px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid #d8d8d8;
+  border-radius: 6px;
+  background: #f7f7f7;
+  font-family: inherit;
+  font-size: 13px;
+  color: #333;
+}
+
+.survey-link-hint {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #666;
+}
+
+.survey-link-message {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #1a6b3c;
+}

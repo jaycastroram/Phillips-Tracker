@@ -32,6 +32,8 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
   const [editorLoading, setEditorLoading] = useState(false)
   const [editorSaving, setEditorSaving] = useState(false)
   const [editorMessage, setEditorMessage] = useState('')
+  const [editorToken, setEditorToken] = useState('')
+  const [linkMessage, setLinkMessage] = useState('')
   const [listCollapsed, setListCollapsed] = useState(false)
   const editorRef = useRef<HTMLDivElement | null>(null)
 
@@ -140,6 +142,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
           ? data.questions
           : DEFAULT_SURVEY_QUESTIONS,
       )
+      setEditorToken(String(data.period?.survey_token ?? ''))
       setEditingPeriodId(periodId)
       window.requestAnimationFrame(() => {
         editorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -230,6 +233,41 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
       await loadPeriods()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to delete survey.')
+    }
+  }
+
+  function surveyLink(token: string) {
+    return `${window.location.origin}/survey?t=${encodeURIComponent(token)}`
+  }
+
+  async function copySurveyLink() {
+    if (!editorToken) return
+    setLinkMessage('')
+    try {
+      await navigator.clipboard.writeText(surveyLink(editorToken))
+      setLinkMessage('Survey link copied.')
+    } catch {
+      setLinkMessage('This browser blocked the clipboard — select the link and copy it.')
+    }
+  }
+
+  async function rotateSurveyToken() {
+    const period = periods.find((item) => item.id === editingPeriodId)
+    if (!period) return
+    if (!window.confirm(
+      `Replace the link for “${period.name}”? The current link stops working immediately.`,
+    )) return
+    setLinkMessage('')
+    setError('')
+    try {
+      const response = await apiFetch(`/admin/survey-periods/${period.id}/rotate-token`, { method: 'POST' })
+      if (!response.ok) throw new Error('Unable to replace the survey link.')
+      const data = await response.json()
+      setEditorToken(String(data.period?.survey_token ?? ''))
+      setLinkMessage('New link issued. The old one no longer opens this survey.')
+      await loadPeriods()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to replace the survey link.')
     }
   }
 
@@ -413,6 +451,21 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
 
       {editingPeriod && (
         <div className="survey-periods-editor" ref={editorRef}>
+          <p className="survey-link-label">Survey link (read-only)</p>
+          <div className="survey-link-row">
+            <input readOnly value={editorToken ? surveyLink(editorToken) : 'Loading...'} aria-label="Survey link" />
+            <button type="button" onClick={copySurveyLink} disabled={!editorToken}>
+              Copy link
+            </button>
+            <button type="button" onClick={rotateSurveyToken} disabled={!editorToken}>
+              Replace link
+            </button>
+          </div>
+          <p className="survey-link-hint">
+            This link is the only way into the survey. Anyone with it can answer while the survey is open;
+            replacing it kills the old link at once.
+          </p>
+          {linkMessage && <p className="survey-link-message">{linkMessage}</p>}
           {!editorLoading && (
             <SurveyQuestionEditor
               disabled={editingPeriod.status === 'closed' || editorSaving}

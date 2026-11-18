@@ -1,8 +1,8 @@
 import { DEFAULT_COMPANY_SLUG, NOT_ON_TRACK_STATUSES } from './constants'
 import type { SheetKey, TrackerItem, ViewerStatus } from './types'
 
-export type PublicCompanyPage = 'viewer' | 'survey' | 'buy-book'
-export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey' | '/buy-book'
+export type PublicCompanyPage = 'viewer' | 'survey'
+export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey'
 
 export type PublicRoute = {
   companySlug: string
@@ -14,7 +14,7 @@ export type PublicRoute = {
 export function parsePublicRoute(pathname: string): PublicRoute {
   const [first = '', second = '', third = ''] = pathname.split('/').filter(Boolean)
 
-  if (first === 'viewer' || first === 'survey' || first === 'buy-book') {
+  if (first === 'viewer' || first === 'survey') {
     return {
       companySlug: DEFAULT_COMPANY_SLUG,
       page: first,
@@ -23,7 +23,7 @@ export function parsePublicRoute(pathname: string): PublicRoute {
     }
   }
 
-  if (second === 'viewer' || second === 'survey' || second === 'buy-book') {
+  if (second === 'viewer' || second === 'survey') {
     return {
       companySlug: first.toLowerCase(),
       page: second,
