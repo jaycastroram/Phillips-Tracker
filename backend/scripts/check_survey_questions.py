@@ -36,7 +36,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 from openpyxl import load_workbook  # noqa: E402
 
 from app import app  # noqa: E402
-from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG  # noqa: E402
+from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG, IS_POSTGRES  # noqa: E402
 from database import connect, execute, fetch_company_by_slug  # noqa: E402
 from init_db import init_db  # noqa: E402
 
@@ -133,6 +133,26 @@ def count_answers(item_id: int, period_id: int) -> dict[str, Any]:
             " WHERE survey_item_id = ? AND survey_period_id = ? ORDER BY id DESC LIMIT 1",
             (item_id, period_id),
         ).fetchone())
+
+
+def questions_json_of(period_id: int) -> str:
+    with connect() as conn:
+        row = execute(conn, "SELECT questions_json FROM survey_periods WHERE id = ?", (period_id,)).fetchone()
+    return str(row["questions_json"] or "")
+
+
+def column_names(table: str) -> list[str]:
+    """Works on both backends: dict_row on Postgres has no positional access."""
+    with connect() as conn:
+        if IS_POSTGRES:
+            rows = execute(
+                conn,
+                "SELECT column_name AS name FROM information_schema.columns WHERE table_name = ?",
+                (table,),
+            ).fetchall()
+        else:
+            rows = execute(conn, f"PRAGMA table_info({table})").fetchall()
+    return [row["name"] for row in rows]
 
 
 def main() -> int:
@@ -255,6 +275,23 @@ def main() -> int:
               f"{relabelled_item['interested']}/{relabelled_item['not_interested']}")
 
         # ------------------------------------------------------------------
+        print("\n4b. Copy from a past survey keeps that survey's questions")
+        period_source = create_period(client, headers, "check-source", questions_for(["yes_no"], interest_label="SOURCE interest") + [
+            {"id": "source_only", "type": "text", "label": "SOURCE only question", "required": False, "options": []},
+        ])
+        created.append(period_source)
+        response = client.post("/api/admin/survey-periods", headers=headers, json={
+            "name": "check-copied", "open_immediately": False, "copy_from_period_id": period_source,
+        })
+        check("copy-from create succeeds", response.status_code == 201, f"HTTP {response.status_code} {response.text[:160]}")
+        copied_id = int(response.json()["period"]["id"])
+        created.append(copied_id)
+        copied = client.get(f"/api/admin/survey-periods/{copied_id}", headers=headers).json()
+        copied_labels = [question["label"] for question in copied.get("questions", [])]
+        check("the copied survey keeps the source's questions",
+              copied_labels == ["SOURCE interest", "SOURCE only question"], str(copied_labels))
+
+        # ------------------------------------------------------------------
         print("\n5. Legacy response, and no synthesised averages")
         # A fresh open period with a required interest question and no scale
         # question: the legacy payload must satisfy it and must not produce
@@ -273,20 +310,35 @@ def main() -> int:
               legacy_item["avg_attention"] is None and legacy_item["avg_engagement"] is None,
               f"{legacy_item['avg_attention']}/{legacy_item['avg_engagement']}")
         scaled = next(row for row in after["items"] if row["id"] == item_id)
-        check("a scale question gives a real average", scaled["avg_attention"] == 3.0, str(scaled["avg_attention"]))
+        check("one scale question sets attention only",
+              scaled["avg_attention"] == 3.0 and scaled["avg_engagement"] is None,
+              f"{scaled['avg_attention']}/{scaled['avg_engagement']}")
+
+        period_two_scales = create_period(client, headers, "check-two-scales", questions_for(["yes_no"]) + [
+            {"id": "attention_1", "type": "scale", "label": "Attention score", "required": False, "options": []},
+            {"id": "engagement_1", "type": "scale", "label": "Engagement score", "required": False, "options": []},
+        ])
+        created.append(period_two_scales)
+        response = submit(client, args.company, item_id, "two@example.com", {
+            "interest": "Yes", "attention_1": 5, "engagement_1": 2})
+        check("two-scale response accepted", response.status_code == 201, str(response.text[:160]))
+        two_scale = results(client, headers, period_two_scales)
+        two_scale_item = next(row for row in two_scale["items"] if row["id"] == item_id)
+        check("attention and engagement are different numbers",
+              (two_scale_item["avg_attention"], two_scale_item["avg_engagement"]) == (5.0, 2.0),
+              f"{two_scale_item['avg_attention']}/{two_scale_item['avg_engagement']}")
 
         # ------------------------------------------------------------------
         print("\n6. Migrations do not rewrite an existing period")
-        with connect() as conn:
-            before_json = execute(conn, "SELECT questions_json FROM survey_periods WHERE id = ?", (period_all,)).fetchone()[0]
+        before_json = questions_json_of(period_all)
         init_db()
         init_db()
-        with connect() as conn:
-            after_json = execute(conn, "SELECT questions_json FROM survey_periods WHERE id = ?", (period_all,)).fetchone()[0]
-            with connect() as conn2:
-                columns = [row["name"] for row in execute(conn2, "PRAGMA table_info(survey_periods)").fetchall()]
+        after_json = questions_json_of(period_all)
+        columns = column_names("survey_periods")
+        response_columns = column_names("survey_responses")
         check("questions survive two migrations", before_json == after_json, after_json[:120])
         check("questions_json added once", columns.count("questions_json") == 1, str(columns))
+        check("answers_json added once", response_columns.count("answers_json") == 1, str(response_columns))
     finally:
         if not args.keep:
             with connect() as conn:

@@ -176,7 +176,7 @@ def get_survey_results(
             stats = tally.setdefault(
                 int(row["survey_item_id"]),
                 {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
-                 "emails": [], "scale": []},
+                 "emails": [], "attention": [], "engagement": []},
             )
             stats["total"] += 1
             if interest == "interested":
@@ -189,17 +189,18 @@ def get_survey_results(
             if email and email not in stats["emails"]:
                 stats["emails"].append(email)
 
-            # A scale answer is the only honest source for these two figures; with
-            # no scale question they stay null and the dashboard hides them instead
-            # of printing a drop derived from a yes/no.
-            scale_question = next((q for q in row_questions if q["type"] == "scale"), None)
-            if scale_question is not None:
+            # Two labelled figures, two questions: the first scale question feeds
+            # attention, the second feeds engagement. A period with one scale
+            # question leaves engagement null (the dashboard hides it) rather than
+            # printing the same number under a second label.
+            scale_questions = [q for q in row_questions if q["type"] == "scale"]
+            for slot, question in zip(("attention", "engagement"), scale_questions[:2]):
                 try:
-                    scale_value = int(answers.get(scale_question["id"]))
+                    scale_value = int(answers.get(question["id"]))
                 except (TypeError, ValueError):
                     scale_value = 0
                 if 1 <= scale_value <= 5:
-                    stats["scale"].append(scale_value)
+                    stats[slot].append(scale_value)
 
         unique_respondents = len({str(row["email"] or "").strip().lower() for row in answer_rows if str(row["email"] or "").strip()})
         summary = {
@@ -241,11 +242,17 @@ def get_survey_results(
         ).fetchall()
 
     items = []
-    empty_stats = {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0, "emails": [], "scale": []}
+    empty_stats = {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
+                   "emails": [], "attention": [], "engagement": []}
     for row in item_rows:
         stats = tally.get(int(row["id"]), empty_stats)
         total_responses = stats["total"]
-        scale_average = round(sum(stats["scale"]) / len(stats["scale"]), 2) if stats["scale"] else None
+        attention_average = (
+            round(sum(stats["attention"]) / len(stats["attention"]), 2) if stats["attention"] else None
+        )
+        engagement_average = (
+            round(sum(stats["engagement"]) / len(stats["engagement"]), 2) if stats["engagement"] else None
+        )
         items.append({
             "id": row["id"],
             "item_name": row["item_name"],
@@ -261,8 +268,8 @@ def get_survey_results(
             "interested": stats["interested"],
             "not_interested": stats["not_interested"],
             "maybe": stats["maybe"],
-            "avg_attention": scale_average,
-            "avg_engagement": scale_average,
+            "avg_attention": attention_average,
+            "avg_engagement": engagement_average,
             "interest_pct": round(stats["interested"] / total_responses * 100) if total_responses else 0,
             "respondent_emails": list(stats["emails"]),
         })

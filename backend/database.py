@@ -604,15 +604,20 @@ def mirror_legacy_response_fields(
     if first_text is not None:
         feedback = str(answers.get(first_text["id"], "") or "").strip()
 
-    first_scale = next((q for q in questions if q["type"] == "scale"), None)
-    if first_scale is not None:
+    # First scale question mirrors into attention, second into engagement; with a
+    # single scale question the engagement column keeps its default instead of
+    # repeating the attention answer under a different label.
+    scale_questions = [q for q in questions if q["type"] == "scale"]
+    for slot, question in zip(("attention", "retail"), scale_questions[:2]):
         try:
-            scale_value = int(answers.get(first_scale["id"]))
-            if 1 <= scale_value <= 5:
-                attention = scale_value
-                retail = scale_value
+            scale_value = int(answers.get(question["id"]))
         except (TypeError, ValueError):
-            pass
+            continue
+        if 1 <= scale_value <= 5:
+            if slot == "attention":
+                attention = scale_value
+            else:
+                retail = scale_value
 
     return recommend, feedback, attention, retail, stands_out, price_reasonable
 

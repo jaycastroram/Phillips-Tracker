@@ -54,13 +54,15 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     loadPeriods()
   }, [loadPeriods])
 
-  // The create form starts from the company template, so a new survey inherits
-  // the same questions the last saved layout has (interest required by default).
+  // The create form shows the questions the new survey will actually get: the
+  // company template for a fresh survey, or the source survey's own questions
+  // when one is picked (the editor is read-only in that case).
   useEffect(() => {
     let cancelled = false
-    async function loadTemplate() {
+    async function loadQuestions() {
+      const path = copyFromId === '' ? '/admin/survey-layout' : `/admin/survey-periods/${copyFromId}`
       try {
-        const response = await apiFetch('/admin/survey-layout')
+        const response = await apiFetch(path)
         if (!response.ok) return
         const data = await response.json()
         if (cancelled) return
@@ -68,14 +70,14 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
           setNewQuestions(data.questions)
         }
       } catch {
-        /* the default template stands in */
+        /* the backend still copies the source's questions; the list is a preview */
       }
     }
-    loadTemplate()
+    loadQuestions()
     return () => {
       cancelled = true
     }
-  }, [apiFetch])
+  }, [apiFetch, copyFromId])
 
   async function createPeriod(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -89,7 +91,9 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
           name: newName.trim(),
           copy_from_period_id: copyFromId === '' ? null : copyFromId,
           open_immediately: openImmediately,
-          questions: newQuestions,
+          // A copied survey keeps its own questions: sending the template here
+          // would override them, because explicit questions always win.
+          ...(copyFromId === '' ? { questions: newQuestions } : {}),
         }),
       })
       if (!response.ok) {
