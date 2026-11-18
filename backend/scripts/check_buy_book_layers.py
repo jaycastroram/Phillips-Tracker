@@ -37,7 +37,12 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import app  # noqa: E402
 from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG  # noqa: E402
-from database import connect, execute, fetch_company_by_slug  # noqa: E402
+from database import (  # noqa: E402
+    apply_buy_book_layers,
+    connect,
+    execute,
+    fetch_company_by_slug,
+)
 from init_db import init_db  # noqa: E402
 
 FAILURES: list[str] = []
@@ -93,6 +98,24 @@ def make_items(conn: Any, company_id: int) -> list[int]:
     return ids
 
 
+def render_book(
+    client: TestClient,
+    headers: dict[str, str],
+    params: dict[str, Any],
+) -> dict[str, Any]:
+    """Render the buy book the way the PDF pass will: the stored stack over the rows.
+
+    The public buy-book surface is gone, so the grouping comes from
+    ``apply_buy_book_layers`` on the admin layout's own rows — the call the
+    public route used to make.
+    """
+    layout = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
+    return {
+        "items": apply_buy_book_layers(layout["items"], layout["page_break_layers"]),
+        "page_break_layers": layout["page_break_layers"],
+    }
+
+
 def pages_of(items: list[dict[str, Any]]) -> list[list[str]]:
     pages: list[list[str]] = []
     current: list[str] = []
@@ -138,7 +161,7 @@ def main() -> None:
         layout = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("layers read as one Brand layer", layout["page_break_layers"] == [{"field": "brand", "new_page": True}], layout["page_break_layers"])
 
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items]
         check("public payload carries the stack", book.get("page_break_layers") == [{"field": "brand", "new_page": True}], book.get("page_break_layers"))
         check("a page per brand", pages_of(mine) == [["A1", "A2", "A3"], ["B1", "B2"], ["Unbranded"]], pages_of(mine))
@@ -149,7 +172,7 @@ def main() -> None:
             "page_break_layers": [{"field": "brand", "new_page": True}, {"field": "key_program", "new_page": True}],
             "items": [],
         })
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items]
         # Within a brand the program values keep the catalog's order - Spring
         # before Fall, because A1 comes first - and a blank sorts last, so
@@ -165,7 +188,7 @@ def main() -> None:
             "page_break_layers": [{"field": "brand", "new_page": True}, {"field": "key_program", "new_page": False}],
             "items": [],
         })
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items]
         check("no extra break inside a brand", pages_of(mine) == [["A1", "A2", "A3"], ["B2", "B1"], ["Unbranded"]], pages_of(mine))
         check("the unticked layer still sorts", [item["item_name"].replace(f"{MARK} ", "") for item in mine][:3] == ["A1", "A2", "A3"], [item["item_name"] for item in mine][:3])
@@ -182,7 +205,7 @@ def main() -> None:
         with connect() as conn:
             execute(conn, "UPDATE survey_items SET buy_book_page_break_before = 1 WHERE id = ?", (item_ids[1],))
             execute(conn, "UPDATE buy_book_layouts SET page_break_layers_json = ?, group_by = 'brand' WHERE company_id = ?", (json.dumps([{"field": "brand", "new_page": False}]), company_id))
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items]
         check("a stored manual flag does not break a page", len(pages_of(mine)) == 1, pages_of(mine))
         # Saving the layout must not write the retired column back either.
@@ -231,7 +254,7 @@ def main() -> None:
                     (company_id, f"{MARK} {name}"),
                 ).fetchone()
                 extra.append(int(row["id"]))
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items or item["item_name"].endswith(("A4", "A5"))]
         pages = pages_of(mine)
         spring_page = next((page for page in pages if "A1" in page), [])
@@ -263,7 +286,7 @@ def main() -> None:
         ungrouped = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("no grouping loads as an empty stack", ungrouped["page_break_layers"] == [], ungrouped["page_break_layers"])
         init_db()
-        book = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "buy-book"}).json()
+        book = render_book(client, headers, params)
         check(
             "an ungrouped book starts no pages",
             bool(book["items"]) and not any(i["page_break_before"] for i in book["items"]) and not any(i["group_headers"] for i in book["items"]),

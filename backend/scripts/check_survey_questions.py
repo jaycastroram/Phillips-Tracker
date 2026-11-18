@@ -12,7 +12,7 @@ What it proves:
 1. a period created with all six question types returns them on the public
    surface, and the public form data carries required flags
 2. required answers are enforced (400 naming the question), option membership is
-   enforced (400), and a valid submission returns 201
+   enforced (400), and a valid submission returns 200
 3. a checkbox answer stores every picked option, exports as "A; B", and does
    not change the interest counts
 4. interest counts follow the interest question after a rename and after
@@ -41,6 +41,10 @@ from database import connect, execute, fetch_company_by_slug  # noqa: E402
 from init_db import init_db  # noqa: E402
 
 FAILURES: list[str] = []
+
+# The newest created period is the open one (creating a period closes the rest),
+# so every public call below uses that period's token.
+ACTIVE: dict[str, Any] = {"period_id": 0, "token": ""}
 
 
 def check(label: str, passed: bool, detail: str = "") -> bool:
@@ -107,7 +111,10 @@ def create_period(client: TestClient, headers: dict[str, str], name: str, questi
     )
     if response.status_code != 201:
         raise SystemExit(f"Could not create period {name}: {response.status_code} {response.text[:300]}")
-    return int(response.json()["period"]["id"])
+    period = response.json()["period"]
+    ACTIVE["period_id"] = int(period["id"])
+    ACTIVE["token"] = str(period.get("survey_token") or "")
+    return int(period["id"])
 
 
 def submit(client: TestClient, slug: str, item_id: int, email: str, answers: Any, legacy: dict | None = None) -> Any:
@@ -116,7 +123,11 @@ def submit(client: TestClient, slug: str, item_id: int, email: str, answers: Any
         payload.update(legacy)
     if answers is not None:
         payload["answers"] = answers
-    return client.post(f"/api/public/{slug}/survey-responses", json=payload)
+    return client.post(
+        f"/api/public/{slug}/survey-responses",
+        params={"t": ACTIVE["token"]},
+        json=payload,
+    )
 
 
 def results(client: TestClient, headers: dict[str, str], period_id: int) -> dict[str, Any]:
@@ -169,7 +180,7 @@ def main() -> int:
         raise SystemExit(f"Login failed ({login.status_code}). Set ADMIN_EMAIL / ADMIN_PASSWORD.")
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
 
-    catalog = client.get(f"/api/public/{args.company}/survey-items").json()["items"]
+    catalog = client.get("/api/admin/survey-layout", headers=headers).json()["items"]
     if not catalog:
         raise SystemExit("No catalog items — seed the database first.")
     item_id = int(catalog[0]["id"])
@@ -182,7 +193,10 @@ def main() -> int:
             ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"]
         ))
         created.append(period_all)
-        public = client.get(f"/api/public/{args.company}/survey-items", params={"surface": "survey"}).json()
+        public = client.get(
+            f"/api/public/{args.company}/survey-items",
+            params={"surface": "survey", "t": ACTIVE["token"]},
+        ).json()
         types = [question["type"] for question in public.get("questions", [])]
         check("public surface returns every type", types == ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"], str(types))
         required = [question["id"] for question in public["questions"] if question["required"]]
@@ -213,7 +227,7 @@ def main() -> int:
             "attention_1": 4,
         }
         response = submit(client, args.company, item_id, "a@example.com", valid)
-        check("a valid answer returns 201", response.status_code == 201, f"HTTP {response.status_code} {response.text[:200]}")
+        check("a valid answer returns 200", response.status_code == 200, f"HTTP {response.status_code} {response.text[:200]}")
         stored = count_answers(item_id, period_all)
         import json as _json
         check("the checkbox answer stores both picks",
@@ -225,7 +239,7 @@ def main() -> int:
         before_counts = {row["id"]: (row["interested"], row["not_interested"]) for row in before["items"]}
         response = submit(client, args.company, item_id, "b@example.com", {
             "interest": "No", "size_fit": "Too big", "colors": ["Red", "Black"], "attention_1": 2})
-        check("second response accepted", response.status_code == 201, str(response.text[:160]))
+        check("second response accepted", response.status_code == 200, str(response.text[:160]))
         after = results(client, headers, period_all)
         item_after = next(row for row in after["items"] if row["id"] == item_id)
         check("counts follow the answers, not the checkbox",
@@ -255,7 +269,7 @@ def main() -> int:
         created.append(period_renamed)
         for email, answer in [("y1@example.com", "Yes"), ("y2@example.com", "Yes"), ("n1@example.com", "No")]:
             response = submit(client, args.company, item_id, email, {"interest": answer})
-            check(f"submit {answer} for {email}", response.status_code == 201, str(response.text[:120]))
+            check(f"submit {answer} for {email}", response.status_code == 200, str(response.text[:120]))
         renamed = results(client, headers, period_renamed)
         renamed_item = next(row for row in renamed["items"] if row["id"] == item_id)
         check("renamed yes/no gives 2 interested, 1 not",
@@ -302,7 +316,7 @@ def main() -> int:
             "attention_effectiveness": 5, "recommend_rollout": "Yes", "retail_engagement": 5,
             "stands_out": "Yes", "price_reasonable": "Yes", "feedback": "legacy note",
         })
-        check("a legacy POST without answers is accepted", legacy.status_code == 201, f"HTTP {legacy.status_code} {legacy.text[:160]}")
+        check("a legacy POST without answers is accepted", legacy.status_code == 200, f"HTTP {legacy.status_code} {legacy.text[:160]}")
         legacy_results = results(client, headers, period_legacy)
         legacy_item = next(row for row in legacy_results["items"] if row["id"] == item_id)
         check("the legacy response is counted", legacy_item["interested"] == 1, str(legacy_item["interested"]))
@@ -321,7 +335,7 @@ def main() -> int:
         created.append(period_two_scales)
         response = submit(client, args.company, item_id, "two@example.com", {
             "interest": "Yes", "attention_1": 5, "engagement_1": 2})
-        check("two-scale response accepted", response.status_code == 201, str(response.text[:160]))
+        check("two-scale response accepted", response.status_code == 200, str(response.text[:160]))
         two_scale = results(client, headers, period_two_scales)
         two_scale_item = next(row for row in two_scale["items"] if row["id"] == item_id)
         check("attention and engagement are different numbers",

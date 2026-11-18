@@ -383,15 +383,22 @@ def main() -> int:
             execute(conn, "UPDATE survey_items SET image_url = ? WHERE id = ?", (from_record, survey_item_id))
         print("  (URL written DB-DIRECT, the same write the backfill script performs — not an app route)")
 
-        default_view = client.get("/api/public/survey-items").json().get("items", [])
+        # The public survey surface is token-gated and the public buy-book
+        # surface is gone (it is a printed PDF now), so the catalog is read
+        # through the admin routes that serve the same rows.
+        default_view = client.get(
+            "/api/admin/survey-layout", headers=headers, params={"company_id": company_id}
+        ).json().get("items", [])
         default_row = next((row for row in default_view if row["id"] == survey_item_id), None)
-        check("/api/public/survey-items carries the record URL",
+        check("the survey catalog carries the stored item image",
               default_row is not None and default_row.get("image_url") == expected,
               repr(default_row.get("image_url") if default_row else None))
 
-        buy_book_view = client.get("/api/public/survey-items", params={"surface": "buy-book"}).json().get("items", [])
+        buy_book_view = client.get(
+            "/api/admin/buy-book-layout", headers=headers, params={"company_id": company_id}
+        ).json().get("items", [])
         buy_book_row = next((row for row in buy_book_view if row["id"] == survey_item_id), None)
-        check("/api/public/survey-items?surface=buy-book carries the record URL",
+        check("the buy-book layout carries the stored item image",
               buy_book_row is not None and buy_book_row.get("image_url") == expected,
               repr(buy_book_row.get("image_url") if buy_book_row else None))
 
