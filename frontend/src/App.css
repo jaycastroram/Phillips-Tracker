@@ -4053,3 +4053,23 @@ td textarea {
   font-weight: 600;
   color: #1a6b3c;
 }
+
+/* Catalog sync: the last run and the per-item way back to NetSuite. */
+.catalog-sync-last {
+  margin: 6px 0 0;
+  font-size: 0.85rem;
+  color: var(--muted, #667085);
+}
+
+.catalog-reset {
+  white-space: nowrap;
+}
+
+.catalog-needs-name {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #fef0c7;
+  color: #93370d;
+  font-size: 0.78rem;
+  white-space: nowrap;
+}

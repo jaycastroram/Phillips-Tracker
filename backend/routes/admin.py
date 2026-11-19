@@ -10,9 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
-from config import IS_POSTGRES, SHEETS
+from config import IS_POSTGRES, NETSUITE_SYNC_COMPANY_SLUG, SHEETS
 from database import (
     MAX_PAGE_BREAK_LAYERS,
+    fetch_company_by_id,
     buy_book_filter_fields,
     buy_book_group_by,
     buy_book_page_break_layers,
@@ -69,6 +70,8 @@ from models import (
     UserCreate,
     UserUpdate,
 )
+from catalog_sync import last_run, reset_to_netsuite, sync_catalog
+from netsuite import SourceError
 from routes.auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -346,7 +349,7 @@ def get_survey_layout(
     return {
         "filter_fields": fields,
         "questions": questions,
-        "items": [survey_item_to_public(row) for row in rows],
+        "items": [catalog_item(row) for row in rows],
     }
 
 
@@ -395,7 +398,7 @@ def update_survey_layout(
             "SELECT * FROM survey_items WHERE company_id = ? AND is_active = ? ORDER BY survey_sort_order ASC, sort_order ASC, id ASC",
             (company_id, True),
         ).fetchall()
-    return {"filter_fields": filter_fields, "items": [survey_item_to_public(row) for row in rows]}
+    return {"filter_fields": filter_fields, "items": [catalog_item(row) for row in rows]}
 
 
 # ---------------------------------------------------------------------------
@@ -427,7 +430,7 @@ def get_buy_book_layout(
         "filter_fields": fields,
         "group_by": group_by,
         "page_break_layers": layers,
-        "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
+        "items": [catalog_item(row, surface="buy-book") for row in rows],
     }
 
 
@@ -520,8 +523,100 @@ def update_buy_book_layout(
         "filter_fields": filter_fields,
         "group_by": group_by,
         "page_break_layers": layers,
-        "items": [survey_item_to_public(row, surface="buy-book") for row in rows],
+        "items": [catalog_item(row, surface="buy-book") for row in rows],
     }
+
+
+# ---------------------------------------------------------------------------
+# Catalog sync (a read-only reconciliation against the NetSuite item master)
+# ---------------------------------------------------------------------------
+
+def catalog_item(row: Any, *, surface: str | None = None) -> dict:
+    """A catalog row for the admin screen, plus the two sync facts it shows."""
+    payload = survey_item_to_public(row, surface=surface)
+    payload["needs_name"] = bool(row_value(row, "needs_name", 0))
+    payload["netsuite_synced"] = bool(row_value(row, "netsuite_synced_json", ""))
+    return payload
+
+
+def catalog_sync_company(conn: Any, user: Any, company_id: int | None) -> Any:
+    """The one company this call syncs.
+
+    Explicit id, else ``NETSUITE_SYNC_COMPANY_SLUG`` (the scheduler's setting),
+    else the caller's own scope — which for an admin is the app's default
+    company. One company per run, always: the item master read is per account,
+    but the rows it writes belong to one dataset.
+    """
+    if company_id is not None:
+        return fetch_company_by_id(conn, resolve_scoped_company_id(user, company_id))
+    slug = NETSUITE_SYNC_COMPANY_SLUG
+    if slug:
+        company = fetch_company_by_slug(conn, slug)
+        if company is None:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR,
+                f"NETSUITE_SYNC_COMPANY_SLUG names '{slug}', which is not a company",
+            )
+        return company
+    return fetch_company_by_id(conn, resolve_scoped_company_id(user, None))
+
+
+@router.post("/catalog/sync")
+def run_catalog_sync(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    """Reconcile the catalog now and return the report the run produced."""
+    with connect() as conn:
+        company = catalog_sync_company(conn, user, company_id)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
+    try:
+        report = sync_catalog(dict(company), apply=True, user_email=user["email"])
+    except SourceError as error:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(error)) from None
+    return {"company": company["slug"], "report": report.as_dict()}
+
+
+@router.get("/catalog/sync")
+def get_catalog_sync(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    """The last run recorded for this company — the line above the item list."""
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        run = last_run(conn, company_id)
+    return {"last_run": run}
+
+
+@router.post("/catalog/items/{item_id}/reset")
+def reset_catalog_item(
+    item_id: int,
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(require_admin),
+) -> dict:
+    """Write the last-synced NetSuite values back onto one catalog row.
+
+    The way out of a per-field override. It touches only the mapped fields:
+    price, image, uom, the book flags and ``is_active`` are not NetSuite's to
+    change, and a reset never reactivates a retired row.
+    """
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        row = execute(
+            conn,
+            "SELECT * FROM survey_items WHERE id = ? AND company_id = ?",
+            (item_id, company_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Catalog item not found")
+        try:
+            restored = reset_to_netsuite(conn, row, user_email=user["email"])
+        except SourceError as error:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(error)) from None
+        fresh = execute(conn, "SELECT * FROM survey_items WHERE id = ?", (item_id,)).fetchone()
+    return {"item": catalog_item(fresh), "restored": restored}
 
 
 # ---------------------------------------------------------------------------

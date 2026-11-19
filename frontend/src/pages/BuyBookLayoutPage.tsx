@@ -22,6 +22,21 @@ export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [resetNote, setResetNote] = useState('')
+
+  async function resetItem(item: SurveyItem) {
+    setResetNote('')
+    setError('')
+    try {
+      const res = await apiFetch(`/admin/catalog/items/${item.id}/reset`, { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'Unable to reset this item.')
+      setResetNote(`${data.item?.item_name ?? item.item_name} follows NetSuite again.`)
+      await loadLayout()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to reset this item.')
+    }
+  }
 
   const loadLayout = useCallback(async () => {
     setLoading(true)
@@ -90,6 +105,7 @@ export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
         filterExtra={(
           <>
             <PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />
+            <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />
             <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
           </>
         )}
@@ -98,11 +114,120 @@ export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
         filterFields={filterFields}
         items={items}
         loading={loading}
-        message={message}
+        message={message || resetNote}
         saving={saving}
         onSave={saveLayout}
+        renderItemExtra={(item) =>
+          item.netsuite_synced ? (
+            <button
+              className="secondary-button catalog-reset"
+              type="button"
+              title={
+                item.needs_name
+                  ? 'This item still has no NetSuite name to take.'
+                  : 'Write the last-synced NetSuite values back onto this item.'
+              }
+              onClick={() => resetItem(item)}
+            >
+              Reset to NetSuite{item.needs_name ? ' (no name)' : ''}
+            </button>
+          ) : item.needs_name ? (
+            <span className="catalog-needs-name">Needs a name</span>
+          ) : null
+        }
       />
     </section>
+  )
+}
+
+type SyncReport = {
+  scanned: number
+  created: number
+  updated: number
+  unchanged: number
+  overridden: number
+  retired: number
+  needs_name: number
+  label_misses: number
+  excluded: number
+  duration: number
+  dry_run: boolean
+}
+
+type LastRun = {
+  created_at: string
+  user_email: string
+  report: SyncReport
+}
+
+/** The catalog's NetSuite reconciliation: on demand, read-only, one company. */
+function CatalogSyncPanel({ apiFetch, onDone }: { apiFetch: Props['apiFetch']; onDone: () => void }) {
+  const [busy, setBusy] = useState(false)
+  const [last, setLast] = useState<LastRun | null>(null)
+  const [error, setError] = useState('')
+  const [note, setNote] = useState('')
+
+  const loadLast = useCallback(async () => {
+    try {
+      const res = await apiFetch('/admin/catalog/sync')
+      if (!res.ok) return
+      const data = await res.json()
+      setLast(data.last_run ?? null)
+    } catch {
+      /* the last-run line is decoration; the sync button still works */
+    }
+  }, [apiFetch])
+
+  useEffect(() => {
+    loadLast()
+  }, [loadLast])
+
+  async function run() {
+    setBusy(true)
+    setError('')
+    setNote('')
+    try {
+      const res = await apiFetch('/admin/catalog/sync', { method: 'POST' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.detail || 'The NetSuite sync failed.')
+      const report: SyncReport = data.report
+      setNote(
+        `Synced: ${report.scanned} items scanned, ${report.created} created, ` +
+          `${report.updated} updated, ${report.unchanged} unchanged, ` +
+          `${report.overridden} overridden, ${report.retired} retired, ` +
+          `${report.needs_name} without a name, ${report.label_misses} unlabelled facet values ` +
+          `(${report.duration.toFixed(1)}s).`,
+      )
+      await loadLast()
+      onDone()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The NetSuite sync failed.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="buy-book-download catalog-sync">
+      <p>
+        Reconcile the catalog against the NetSuite item master: names, facets, description and
+        sort order follow NetSuite, a value someone edited here stays edited. Read-only — nothing
+        is written back to NetSuite.
+      </p>
+      <button type="button" className="secondary-action" onClick={run} disabled={busy}>
+        {busy ? 'Syncing…' : 'Sync from NetSuite'}
+      </button>
+      {last ? (
+        <p className="catalog-sync-last">
+          Last run {new Date(last.created_at).toLocaleString()} by {last.user_email}:{' '}
+          {last.report.created} created, {last.report.updated} updated, {last.report.retired} retired.
+        </p>
+      ) : (
+        <p className="catalog-sync-last">Never run from NetSuite.</p>
+      )}
+      {note && <div className="success">{note}</div>}
+      {error && <div className="error">{error}</div>}
+    </div>
   )
 }
 

@@ -105,6 +105,10 @@ export type SurveyItem = {
   catalog_item_id?: number
   image_display_size?: 'small' | 'medium' | 'large' | 'full'
   image_fit?: 'contain' | 'cover'
+  // NetSuite sync facts (admin payload only): the row carries a snapshot, and
+  // the name still needs a person.
+  netsuite_synced?: boolean
+  needs_name?: boolean
   group_field?: SurveyFilterField | null
   group_label?: string | null
   group_headers?: { field: SurveyFilterField; label: string; level?: number }[]

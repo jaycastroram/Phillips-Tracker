@@ -619,6 +619,88 @@ def section_failure(company_id: int, client: FakeSuiteQL) -> None:
     client.remove(110)
 
 
+def section_routes(company_id: int, client: FakeSuiteQL) -> None:
+    """The admin route: who may call it, what it returns, and Reset.
+
+    The route builds its client from the environment, so the fake is injected
+    where the sync looks for one — the same function the cron calls.
+    """
+    print("\n9. The admin route")
+    from fastapi.testclient import TestClient
+
+    from app import app
+    from config import ADMIN_EMAIL, ADMIN_PASSWORD
+    from database import fetch_company_by_slug, hash_password
+
+    with connect() as conn:
+        execute(
+            conn,
+            "INSERT INTO users (email, name, password_hash, role, company_id)"
+            " VALUES (?, ?, ?, 'editor', ?)",
+            (f"{PREFIX}editor@example.com", "Check Editor", hash_password("Check123"), company_id),
+        )
+    api = TestClient(app)
+
+    def login(email: str, password: str) -> dict[str, str]:
+        response = api.post("/api/auth/login", json={"email": email, "password": password})
+        return {"Authorization": f"Bearer {response.json()['token']}"}
+
+    admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    editor = login(f"{PREFIX}editor@example.com", "Check123")
+
+    scoped = f"?company_id={company_id}"
+    check("anonymous is refused", api.post(f"/api/admin/catalog/sync{scoped}").status_code == 401)
+    check("an editor is refused", api.post(f"/api/admin/catalog/sync{scoped}", headers=editor).status_code == 403)
+
+    real_client_from_env = catalog_sync.client_from_env
+    catalog_sync.client_from_env = lambda env=None: client
+    try:
+        client.add(item(111, name="Route Item", brand="1", channel="10"))
+        response = api.post(f"/api/admin/catalog/sync{scoped}", headers=admin)
+        check("an admin gets 200", response.status_code == 200, response.status_code)
+        payload = response.json() if response.status_code == 200 else {}
+        report = payload.get("report") or {}
+        check("the route returns the report", report.get("created") == 1, report)
+        check("the run is not a dry run", report.get("dry_run") is False, report.get("dry_run"))
+
+        response = api.get(f"/api/admin/catalog/sync{scoped}", headers=admin)
+        last = (response.json() or {}).get("last_run") or {}
+        check("the last-run line is readable", response.status_code == 200 and last.get("report") is not None,
+              response.status_code)
+        check("it carries the same counters", (last.get("report") or {}).get("scanned") == report.get("scanned"),
+              last)
+
+        with connect() as conn:
+            created = execute(
+                conn,
+                "SELECT * FROM survey_items WHERE company_id = ? AND netsuite_item_id = '111'",
+                (company_id,),
+            ).fetchone()
+        check("the row arrives with both book flags 0",
+              created is not None and int(created["in_survey"]) == 0 and int(created["in_buy_book"]) == 0,
+              dict(created) if created else None)
+
+        with connect() as conn:
+            catalog_row = execute(
+                conn, "SELECT * FROM survey_items WHERE company_id = ? AND netsuite_item_id = '111'",
+                (company_id,),
+            ).fetchone()
+            execute(conn, "UPDATE survey_items SET item_name = 'Typed by a person' WHERE id = ?",
+                    (catalog_row["id"],))
+        client.update(111, storedisplayname="Route Item v2")
+        api.post(f"/api/admin/catalog/sync{scoped}", headers=admin)
+        response = api.post(f"/api/admin/catalog/items/{catalog_row['id']}/reset{scoped}", headers=admin)
+        check("Reset answers 200", response.status_code == 200, response.status_code)
+        check("Reset restored the NetSuite name",
+              (response.json() or {}).get("item", {}).get("item_name") == "Route Item v2",
+              (response.json() or {}).get("item"))
+        check("an unknown item is a 404",
+              api.post(f"/api/admin/catalog/items/99999999/reset{scoped}", headers=admin).status_code == 404)
+    finally:
+        catalog_sync.client_from_env = real_client_from_env
+        client.remove(111)
+
+
 def section_live() -> None:
     print("\n9. Live read (only with credentials)")
     from catalog_sync import read_item_rows
@@ -658,6 +740,7 @@ def main() -> int:
         section_untouched(company_id, client)
         section_dry_run(company_id, client)
         section_failure(company_id, client)
+        section_routes(company_id, client)
         if args.live:
             section_live()
     finally:

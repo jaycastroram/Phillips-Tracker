@@ -19,6 +19,7 @@ type SurveyLayoutEditorProps = {
   filterExtra?: ReactNode
   includeLabel?: string
   saveLabel?: string
+  renderItemExtra?: (item: SurveyItem) => ReactNode
   disabled?: boolean
   onSave: (items: SurveyItem[], filterFields: SurveyFilterField[]) => void
 }
@@ -63,6 +64,7 @@ export function SurveyLayoutEditor({
   filterExtra,
   includeLabel = 'Buy Book',
   saveLabel = 'Save Layout',
+  renderItemExtra,
   disabled = false,
   onSave,
 }: SurveyLayoutEditorProps) {
@@ -256,6 +258,8 @@ export function SurveyLayoutEditor({
                       {includeLabel}
                     </label>
                   )}
+
+                  {renderItemExtra?.(item)}
 
                   {showResponseWidth && (
                     <label className="survey-layout-width">
