@@ -81,6 +81,12 @@ NETSUITE_IMAGE_BASE = os.getenv("NETSUITE_IMAGE_BASE", "").strip()
 # the UI. --verify only; nothing on a request path does network I/O.
 NETSUITE_IMAGE_VERIFY_TIMEOUT = float(os.getenv("NETSUITE_IMAGE_VERIFY_TIMEOUT", "2.0"))
 
+# NetSuite catalog sync. One company per run; a nightly Render cron passes the
+# same value through NETSUITE_SYNC_COMPANY_SLUG. Default: the app's company.
+NETSUITE_SYNC_COMPANY_SLUG = os.getenv("NETSUITE_SYNC_COMPANY_SLUG", "").strip()
+# The one client (netsuite.py) reads the token-based-auth set documented in
+# backend/.env.example; nothing else in the app talks to NetSuite.
+
 # Zoho Analytics — fill these in backend/.env (Self Client OAuth)
 ZOHO_ANALYTICS_CLIENT_ID = os.getenv("ZOHO_ANALYTICS_CLIENT_ID", "").strip()
 ZOHO_ANALYTICS_CLIENT_SECRET = os.getenv("ZOHO_ANALYTICS_CLIENT_SECRET", "").strip()

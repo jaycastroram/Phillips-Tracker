@@ -379,6 +379,42 @@ def _create_netsuite_item_images_table(conn) -> None:
         """)
 
 
+def _create_netsuite_facet_values_table(conn) -> None:
+    """Cached facet labels: one list id -> its name, per company dataset.
+
+    The four facet fields hold list ids. Reading them means one query per list
+    table, so the answer is cached here and a second run only asks for ids it
+    has not seen. Only found labels are stored; an id that resolves to nothing
+    is reported every run instead of being cached as blank forever.
+    """
+    if IS_POSTGRES:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS netsuite_facet_values (
+                id SERIAL PRIMARY KEY,
+                company_id INTEGER NOT NULL,
+                field TEXT NOT NULL,
+                value_id TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (company_id, field, value_id)
+            )
+        """)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS netsuite_facet_values (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                company_id INTEGER NOT NULL,
+                field TEXT NOT NULL,
+                value_id TEXT NOT NULL,
+                label TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (company_id, field, value_id)
+            )
+        """)
+
+
 def _ensure_company_columns(conn) -> None:
     for table_name in COMPANY_SCOPED_TABLES:
         ensure_column(conn, table_name, "company_id", "INTEGER")
@@ -664,6 +700,7 @@ def init_db() -> None:
         _create_core_tables(conn)
         _create_survey_periods_tables(conn)
         _create_netsuite_item_images_table(conn)
+        _create_netsuite_facet_values_table(conn)
 
         execute(conn, "DELETE FROM sessions WHERE expires_at <= ?", (utc_now().isoformat(),))
         ensure_column(conn, "survey_items", "product_type", "TEXT NOT NULL DEFAULT ''")
@@ -672,6 +709,12 @@ def init_db() -> None:
         # never derived from an image URL, and never a SKU or an item name.
         ensure_column(conn, "tracker_items", "netsuite_item_id", "TEXT")
         ensure_column(conn, "survey_items", "netsuite_item_id", "TEXT NOT NULL DEFAULT ''")
+        # What NetSuite said last run. The per-field override test compares the
+        # live value against this; a person's edit differs from it and survives.
+        ensure_column(conn, "survey_items", "netsuite_synced_json", "TEXT NOT NULL DEFAULT ''")
+        # A row created without a usable NetSuite name: named ``Item <id>`` and
+        # kept out of every book until someone names it.
+        ensure_column(conn, "survey_items", "needs_name", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "survey_responses", "survey_period_id", "INTEGER")
         _ensure_company_columns(conn)
         _ensure_survey_layout_columns(conn)
@@ -695,6 +738,12 @@ def init_db() -> None:
         execute(
             conn,
             "CREATE INDEX IF NOT EXISTS survey_responses_period_idx ON survey_responses (survey_period_id)",
+        )
+
+        execute(
+            conn,
+            "CREATE INDEX IF NOT EXISTS survey_items_netsuite_id_idx"
+            " ON survey_items (company_id, netsuite_item_id)",
         )
 
         existing_admin = execute(
