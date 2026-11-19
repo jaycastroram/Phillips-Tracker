@@ -17,6 +17,7 @@ import {
   viewerStatusLabel,
 } from './utils'
 
+const BUY_BOOK_HEADER_LOGO = '/SmartBuy Analytics -Buy Book Logo (1).png'
 const PRE_BUY_SURVEY_HEADER_LOGO = '/SmartBuy Analytics - Pre Buy Survey Logo.png'
 const STATUS_TRACKER_HEADER_LOGO = '/SmartBuy Analytics - Status Tracker Logo.png'
 const MRL_LOGO_URL =
@@ -33,6 +34,18 @@ type PublicBrandProps = {
   companyBannerUrl?: string
 }
 
+
+type BuyBookPageProps = PublicBrandProps & {
+  surveyItems: SurveyItem[]
+  surveyFilterFields: SurveyFilterField[]
+  surveyLoading: boolean
+  surveyError: string
+  surveyQuery: string
+  selectedSurveyItemIds: number[]
+  setSurveyQuery: Dispatch<SetStateAction<string>>
+  toggleSurveyItem: (itemId: number) => void
+  printSurveyBuyBook: () => void
+}
 
 type SurveyPageProps = PublicBrandProps & {
   surveyItems: SurveyItem[]
@@ -484,6 +497,208 @@ function SurveyFilterControls({
         </label>
       )}
     </div>
+  )
+}
+
+export function BuyBookPage({
+  companyName,
+  companyLogoUrl,
+  companyBannerUrl,
+  surveyItems,
+  surveyFilterFields,
+  surveyLoading,
+  surveyError,
+  surveyQuery,
+  selectedSurveyItemIds,
+  setSurveyQuery,
+  toggleSurveyItem,
+  printSurveyBuyBook,
+}: BuyBookPageProps) {
+  const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+  const [currentPage, setCurrentPage] = useState(0)
+  const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
+  const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+  const brandHeader = resolvePublicBrandHeader(
+    companyBannerUrl,
+    companyLogoUrl,
+    companyName,
+    BUY_BOOK_HEADER_LOGO,
+    'SmartBuy Buy Book',
+  )
+  useEffect(() => {
+    setCurrentPage(0)
+  }, [surveyFilters.filteredItems])
+  const allVisibleSelected =
+    surveyFilters.filteredItems.length > 0 &&
+    surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
+
+  function toggleVisibleSurveyItems() {
+    surveyFilters.filteredItems.forEach((item) => {
+      const isSelected = selectedSurveyItemIds.includes(item.id)
+      if (allVisibleSelected ? isSelected : !isSelected) toggleSurveyItem(item.id)
+    })
+  }
+
+  return (
+    <main className="app-shell viewer-shell survey-shell">
+      <PublicBrandHeader {...brandHeader} />
+
+      <section className="viewer-toolbar buy-book-toolbar">
+        <div className="buy-book-filter-group">
+          <label>
+            Search
+            <input
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
+            />
+          </label>
+          <SurveyFilterControls {...surveyFilters} />
+        </div>
+        <div className="viewer-toolbar-actions buy-book-toolbar-actions">
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => {
+              setSurveyQuery('')
+              surveyFilters.resetFilters()
+            }}
+          >
+            Reset Search
+          </button>
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={toggleVisibleSurveyItems}
+            disabled={surveyFilters.filteredItems.length === 0}
+          >
+            {allVisibleSelected ? 'Clear Selection' : 'Select All'}
+          </button>
+          <button
+            className="primary-action"
+            type="button"
+            onClick={printSurveyBuyBook}
+            disabled={selectedSurveyItemIds.length === 0}
+          >
+            Print Buy Book ({selectedSurveyItemIds.length})
+          </button>
+          <span>{surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}</span>
+        </div>
+      </section>
+
+      <div className="survey-pager">
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage === 0}
+          onClick={() => setCurrentPage(Math.max(safePage - 1, 0))}
+        >
+          Back
+        </button>
+        <span>
+          Page {pages.length === 0 ? 0 : safePage + 1} of {pages.length}
+        </span>
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage >= pages.length - 1}
+          onClick={() => setCurrentPage(Math.min(safePage + 1, pages.length - 1))}
+        >
+          Next
+        </button>
+      </div>
+
+      {surveyError && <div className="error">{surveyError}</div>}
+
+      <section className="survey-grid" aria-label="Buy book items">
+        {surveyFilters.filteredItems.map((item, index) => {
+          const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
+          const previous = index > 0 ? surveyFilters.filteredItems[index - 1] : null
+          // The backend derives both the headings and the breaks from the layer
+          // stack; older payloads without them fall back to the single group.
+          const headers =
+            item.group_headers && item.group_headers.length > 0
+              ? item.group_headers
+              : item.group_label && (!previous || previous.group_label !== item.group_label || item.page_break_before)
+                ? [{ field: item.group_field ?? 'brand', label: item.group_label }]
+                : []
+          const showGroupHeader = headers.length > 0
+          const isOnPage = pageIndex === safePage
+          return (
+            <div key={item.id} className={`buy-book-item-block${isOnPage ? '' : ' survey-page-hidden'}`}>
+              {showGroupHeader && (
+                <header className={`buy-book-group-header${item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}>
+                  {headers.map((header, depth) => {
+                    const facetLabel =
+                      header.field === 'key_program'
+                        ? 'Program'
+                        : header.field === 'product_type'
+                          ? 'Type'
+                          : header.field === 'channel'
+                            ? 'Channel'
+                            : 'Brand'
+                    const level = header.level ?? depth
+                    return level === 0 ? (
+                      <div key={`${header.field}-${level}`} className="buy-book-group-level buy-book-group-level--0">
+                        <p className="eyebrow">{facetLabel}</p>
+                        <h2>{header.label}</h2>
+                      </div>
+                    ) : (
+                      <p key={`${header.field}-${level}`} className="buy-book-group-sub">
+                        <span>{facetLabel}</span>
+                        {header.label}
+                      </p>
+                    )
+                  })}
+                </header>
+              )}
+              <article
+                className={`survey-card buy-book-card${!showGroupHeader && item.page_break_before && index > 0 ? ' survey-page-break' : ''}`}
+              >
+                <label className="survey-select">
+                  <input
+                    checked={selectedSurveyItemIds.includes(item.id)}
+                    type="checkbox"
+                    onChange={() => toggleSurveyItem(item.id)}
+                  />
+                  <span>Select</span>
+                </label>
+                <button
+                  className="survey-image image-preview-trigger"
+                  type="button"
+                  onClick={() => {
+                    if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
+                  }}
+                >
+                  {isImageReference(item.image_url) ? (
+                    <img src={item.image_url} alt="" />
+                  ) : (
+                    <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+                  )}
+                </button>
+                <div className="survey-card-copy">
+                  <span className="survey-column-heading">Item Name</span>
+                  <h2>{item.item_name}</h2>
+                  <p>{item.item_description || 'No description provided yet.'}</p>
+                </div>
+              </article>
+            </div>
+          )
+        })}
+        {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
+          <div className="empty-state">No buy book items found.</div>
+        )}
+      </section>
+      <PublicFooter />
+      {previewImage && (
+        <ImageLightbox
+          imageUrl={previewImage.url}
+          title={previewImage.title}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
+    </main>
   )
 }
 

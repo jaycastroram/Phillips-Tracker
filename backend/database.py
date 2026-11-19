@@ -179,6 +179,12 @@ def company_to_public(row: Any) -> dict:
         "banner_url": banner_url,
         "market_label": str(_row_get(row, "market_label", "") or ""),
         "is_active": bool(row["is_active"]),
+        # The two legacy public links, one flag each: the buy book and the
+        # survey have different futures, so a single switch would flip both.
+        # A row read before the column existed defaults to on, the same answer
+        # the column's DEFAULT TRUE gives every existing company.
+        "legacy_public_buy_book": bool(_row_get(row, "legacy_public_buy_book", True)),
+        "legacy_public_survey": bool(_row_get(row, "legacy_public_survey", True)),
         "created_at": _row_get(row, "created_at"),
         "updated_at": _row_get(row, "updated_at"),
     }

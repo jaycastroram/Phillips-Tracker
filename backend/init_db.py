@@ -37,6 +37,8 @@ def _create_companies_table(conn) -> None:
                 banner_url TEXT NOT NULL DEFAULT '',
                 netsuite_image_base TEXT NOT NULL DEFAULT '',
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                legacy_public_buy_book BOOLEAN NOT NULL DEFAULT TRUE,
+                legacy_public_survey BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -51,6 +53,8 @@ def _create_companies_table(conn) -> None:
                 banner_url TEXT NOT NULL DEFAULT '',
                 netsuite_image_base TEXT NOT NULL DEFAULT '',
                 is_active INTEGER NOT NULL DEFAULT 1,
+                legacy_public_buy_book INTEGER NOT NULL DEFAULT 1,
+                legacy_public_survey INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -426,6 +430,12 @@ def _ensure_company_columns(conn) -> None:
     ensure_column(conn, "companies", "market_label", "TEXT")
     # The public Buy Book link: one opaque token per company, minted on demand.
     ensure_column(conn, "companies", "public_book_token", "TEXT")
+    # The two pre-0013 open routes, each behind its own switch so one can be
+    # retired without shutting the other. DEFAULT TRUE backfills every existing
+    # company: the links were open before the change, so they stay open after it.
+    flag_type = "INTEGER NOT NULL DEFAULT 1" if not IS_POSTGRES else "BOOLEAN NOT NULL DEFAULT TRUE"
+    ensure_column(conn, "companies", "legacy_public_buy_book", flag_type)
+    ensure_column(conn, "companies", "legacy_public_survey", flag_type)
     ensure_column(conn, "users", "company_id", "INTEGER")
 
 

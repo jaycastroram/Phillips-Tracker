@@ -9,24 +9,34 @@ periods and responses and removes them afterwards.
 
 What it proves:
 
-1.  no token -> 401 on the survey surface, the bare catalog form and POST, and
-    a rejected POST writes nothing
-2.  an unknown token -> 404
-3.  another company's token under this company's slug -> 404
-4.  a valid token returns the period's items and questions
-5.  a closed period with a valid token -> GET 200 survey_open false and no
+1.  the bare catalog form (no surface, no token) -> 401, and a stranger's page
+    view still creates no period row
+2.  the restored legacy survey link: no token + nothing open -> 200 with the
+    pre-change closed shape, and an anonymous POST -> 403, writing nothing
+3.  the same link follows an open period (200, survey_open true) and follows
+    its close time: past-close -> the closed shape again on the anonymous path
+    while a token on that period still says "This survey is closed."
+4.  a supplied token always wins: a bogus token 404s even while a period is
+    open, and a valid token returns the period's items and questions
+5.  another company's token under this company's slug -> 404
+6.  a closed period with a valid token -> GET 200 survey_open false and no
     items, POST 410
-6.  closes_at in the past while the status still says open -> same as 5
-7.  rotation kills the old token at once and the new one works
-8.  init_db() twice mints no second token and leaves the unique indexes in place
-9.  two answers for one shopper and item -> one row, the second answer stored,
+7.  closes_at in the past while the status still says open -> same as 6
+8.  rotation kills the old token at once and the new one works
+9.  init_db() twice mints no second token and leaves the unique indexes in place
+10. two answers for one shopper and item -> one row, the second answer stored,
     results counting one respondent with that answer
-10. duplicate rows seeded before the index -> migration keeps the highest id
-11. no buy-book key is read or rendered anywhere
-12. the public buy-book surface is gone (400 unknown surface, no items key)
+11. duplicate rows seeded before the index -> migration keeps the highest id
+12. the public buy book is back at 128aa1e's shape behind its flag: active,
+    in-buy-book items, layer payload, ?k= accepted and ignored, and no key
+    column read anywhere
 13. admin buy-book layout: anonymous 401 (another company's editor is #2's route)
 14. the token is on the admin period detail and never in the public payload
 15. a public read against a company with no period creates no period row
+16. a cleared date field is stored as NULL, never as an empty string
+17. a legacy blank row is cleaned on boot
+18. the two legacy flags switch one link each, from one authenticated PUT,
+    and a non-admin PUT still reads 403
 """
 
 from __future__ import annotations
@@ -244,35 +254,75 @@ def main() -> int:
 
     try:
         # --------------------------------------------------------------
-        print("\n1. No token: 401 everywhere, and the rejected POST writes nothing")
+        print("\n1. The bare catalog form stays token-gated")
         response = survey_get(client, slug, None)
-        check("survey surface without t -> 401", response.status_code == 401, str(response.status_code))
-        check("the 401 names the missing credential",
-              "survey_token" in str(response.json().get("detail", "")), str(response.json())[:120])
+        check("survey surface without t -> 200 (the legacy link)", response.status_code == 200,
+              str(response.status_code))
         bare = survey_get(client, slug, None, surface="")
         check("bare catalog form without t -> 401", bare.status_code == 401, str(bare.status_code))
-        before = response_count()
-        post = submit(client, slug, None, item_id, test_email, "Yes")
-        check("POST without t -> 401", post.status_code == 401, str(post.status_code))
-        check("rejected POST left the response count alone", response_count() == before,
-              f"{before} -> {response_count()}")
+        check("the 401 names the missing credential",
+              "survey_token" in str(bare.json().get("detail", "")), str(bare.json())[:120])
+        no_params = client.get(f"/api/public/{slug}/survey-items")
+        check("no surface and no token -> 401", no_params.status_code == 401, str(no_params.status_code))
 
         # --------------------------------------------------------------
-        print("\n2. Unknown token -> 404")
-        unknown = survey_get(client, slug, "not-a-real-token")
-        check("unknown token -> 404", unknown.status_code == 404, str(unknown.status_code))
+        print("\n2. The legacy anonymous link, with nothing open")
+        before_periods = period_count(empty_company_id)
+        no_open = survey_get(client, empty_slug, None)
+        closed_body = no_open.json()
+        check("no token + no open period -> 200", no_open.status_code == 200, str(no_open.status_code))
+        check("the pre-change closed shape comes back",
+              closed_body.get("items") == [] and closed_body.get("survey_open") is False
+              and closed_body.get("period") is None
+              and closed_body.get("message") == "No survey is open right now.",
+              str(closed_body)[:180])
+        before_rows = response_count()
+        no_period_post = submit(client, empty_slug, None, item_id, test_email, "Yes")
+        check("anonymous POST with nothing open -> 403", no_period_post.status_code == 403,
+              str(no_period_post.status_code))
+        check("the 403 is the pre-change message",
+              no_period_post.json().get("detail") == "No survey is open right now",
+              str(no_period_post.json())[:120])
+        check("neither the read nor the POST created a period",
+              period_count(empty_company_id) == before_periods,
+              f"{before_periods} -> {period_count(empty_company_id)}")
+        check("the refused POST wrote nothing", response_count() == before_rows)
 
         # --------------------------------------------------------------
-        print("\n3. Another company's token under this slug -> 404")
-        other_period = create_period(client, headers, "access-check-other", other_company_id)
-        created_periods.append(other_period)
-        other_token = token_of(client, headers, other_period, other_company_id)
-        check("the other company's period carries a token", bool(other_token))
-        cross = survey_get(client, slug, other_token)
-        check("cross-company token -> 404", cross.status_code == 404, str(cross.status_code))
+        print("\n3. The legacy link follows an open period, and its close time")
+        anon_period = create_period(client, headers, "access-check-anon", empty_company_id)
+        created_periods.append(anon_period)
+        anon_read = survey_get(client, empty_slug, None)
+        anon_body = anon_read.json()
+        check("no token + an open period -> 200 survey_open true",
+              anon_read.status_code == 200 and anon_body.get("survey_open") is True,
+              str(anon_body)[:180])
+        check("the open period is the period block", isinstance(anon_body.get("period"), dict),
+              str(anon_body.get("period"))[:120])
+        with connect() as conn:
+            execute(
+                conn,
+                "UPDATE survey_periods SET closes_at = ? WHERE id = ?",
+                ("2000-01-01T00:00:00+00:00", anon_period),
+            )
+        past_read = survey_get(client, empty_slug, None)
+        past_body = past_read.json()
+        check("past close on the anonymous path -> the closed shape, not items",
+              past_read.status_code == 200 and past_body.get("survey_open") is False
+              and past_body.get("message") == "No survey is open right now."
+              and past_body.get("period") is None, str(past_body)[:180])
+        past_post = submit(client, empty_slug, None, item_id, test_email, "Yes")
+        check("past close + anonymous POST -> 403", past_post.status_code == 403,
+              str(past_post.status_code))
+        anon_token = token_of(client, headers, anon_period, empty_company_id)
+        closed_token_read = survey_get(client, empty_slug, anon_token)
+        check("the token path still says this survey is closed",
+              closed_token_read.status_code == 200
+              and closed_token_read.json().get("message") == "This survey is closed.",
+              str(closed_token_read.json())[:160])
 
         # --------------------------------------------------------------
-        print("\n4. Valid token returns the period")
+        print("\n4. A supplied token always wins: valid reads, bogus never falls back")
         period_id = create_period(client, headers, "access-check-open")
         created_periods.append(period_id)
         token = token_of(client, headers, period_id)
@@ -285,9 +335,39 @@ def main() -> int:
         check("payload carries the period's questions",
               [q["id"] for q in payload.get("questions", [])] == ["interest"],
               str(payload.get("questions"))[:120])
+        with connect() as conn:
+            catalog_count = int(execute(
+                conn,
+                "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ?",
+                (company_id, True),
+            ).fetchone()["n"])
+        bare_token = survey_get(client, slug, token, surface="")
+        check("the bare form behind the same token still reads the catalog",
+              bare_token.status_code == 200
+              and len(bare_token.json().get("items") or []) == catalog_count,
+              f"{bare_token.status_code}: {len(bare_token.json().get('items') or []) if bare_token.status_code == 200 else ''} of {catalog_count}")
+
+        unknown = survey_get(client, slug, "not-a-real-token")
+        check("bogus token -> 404 while a period is open (no fallback)",
+              unknown.status_code == 404, str(unknown.status_code))
+        check("the 404 is the same answer an unknown survey gets",
+              "not found" in str(unknown.json().get("detail", "")).lower(), str(unknown.json())[:120])
+        anon_default = survey_get(client, slug, None).json()
+        check("the anonymous link reads the same open period on the real company",
+              anon_default.get("survey_open") is True and bool(anon_default.get("items")),
+              str(anon_default)[:160])
 
         # --------------------------------------------------------------
-        print("\n5. Closed period with a valid token: read-only, no submissions")
+        print("\n5. Another company's token under this slug -> 404")
+        other_period = create_period(client, headers, "access-check-other", other_company_id)
+        created_periods.append(other_period)
+        other_token = token_of(client, headers, other_period, other_company_id)
+        check("the other company's period carries a token", bool(other_token))
+        cross = survey_get(client, slug, other_token)
+        check("cross-company token -> 404", cross.status_code == 404, str(cross.status_code))
+
+        # --------------------------------------------------------------
+        print("\n6. Closed period with a valid token: read-only, no submissions")
         close = client.patch(f"/api/admin/survey-periods/{period_id}", headers=headers, json={"status": "closed"})
         check("period closed by the admin", close.status_code == 200, str(close.status_code))
         closed_read = survey_get(client, slug, token)
@@ -299,7 +379,7 @@ def main() -> int:
         check("closed POST -> 410", closed_post.status_code == 410, str(closed_post.status_code))
 
         # --------------------------------------------------------------
-        print("\n6. closes_at in the past, status still open -> closed behaviour")
+        print("\n7. closes_at in the past, status still open -> closed behaviour")
         timed_id = create_period(client, headers, "access-check-timed")
         created_periods.append(timed_id)
         timed_token = token_of(client, headers, timed_id)
@@ -315,7 +395,7 @@ def main() -> int:
         check("past closes_at POST -> 410", timed_post.status_code == 410, str(timed_post.status_code))
 
         # --------------------------------------------------------------
-        print("\n7. Rotation")
+        print("\n8. Rotation")
         rotate_id = create_period(client, headers, "access-check-rotate")
         created_periods.append(rotate_id)
         old_token = token_of(client, headers, rotate_id)
@@ -327,7 +407,7 @@ def main() -> int:
         check("new token -> 200", survey_get(client, slug, new_token).status_code == 200)
 
         # --------------------------------------------------------------
-        print("\n8. init_db() twice: no re-mint, indexes hold")
+        print("\n9. init_db() twice: no re-mint, indexes hold")
         before_tokens = all_period_tokens()
         init_db()
         init_db()
@@ -339,7 +419,7 @@ def main() -> int:
         check("unique answer index present", index_present("survey_responses_unique_answer_idx"))
 
         # --------------------------------------------------------------
-        print("\n9. Two answers for one shopper and item: one row, last write wins")
+        print("\n10. Two answers for one shopper and item: one row, last write wins")
         upsert_id = create_period(client, headers, "access-check-upsert")
         created_periods.append(upsert_id)
         upsert_token = token_of(client, headers, upsert_id)
@@ -359,7 +439,7 @@ def main() -> int:
               and summary.get("total_interested") == 0, str(summary)[:120])
 
         # --------------------------------------------------------------
-        print("\n10. Duplicate rows seeded before the index -> highest id survives")
+        print("\n11. Duplicate rows seeded before the index -> highest id survives")
         dup_id = create_period(client, headers, "access-check-dupes")
         created_periods.append(dup_id)
         with connect() as conn:
@@ -389,27 +469,40 @@ def main() -> int:
         check("the unique answer index came back", index_present("survey_responses_unique_answer_idx"))
 
         # --------------------------------------------------------------
-        print("\n11. No buy-book key is read or rendered")
+        print("\n12. The public buy book is back at 128aa1e's shape, behind its flag")
         columns = table_columns("companies")
         public_config = client.get(f"/api/public/{slug}/config").json()
         companies = client.get("/api/admin/companies", headers=headers).json().get("companies", [])
         exposed = [key for key in ("buy_book_key", "public_key", "buy_book_slug") if key in public_config]
         exposed += [key for row in companies for key in ("buy_book_key", "public_key", "buy_book_slug") if key in row]
         check("no key field in the public config or company list", exposed == [], str(exposed))
-        if "buy_book_key" in columns:
-            check("buy_book_key column still present", True)
-        else:
-            print("  PASS  no buy_book_key column exists in this codebase (nothing to preserve, nothing to read)")
-        unauth_key = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book", "k": "whatever"})
-        check("a ?k= still cannot open a buy-book surface", unauth_key.status_code in {400, 401}, str(unauth_key.status_code))
-
-        # --------------------------------------------------------------
-        print("\n12. The public buy-book surface is gone")
-        gone = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"})
-        check("surface=buy-book -> 400", gone.status_code == 400, str(gone.status_code))
-        body = gone.json()
-        check("the 400 carries no items", "items" not in gone.text, str(gone.text)[:120])
-        check("the 400 names the surface problem", "surface" in str(body).lower(), str(body)[:120])
+        check("no buy_book_key column was added", "buy_book_key" not in columns, str(columns)[:160])
+        with connect() as conn:
+            buy_book_rows = int(execute(
+                conn,
+                "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ? AND in_buy_book = ?",
+                (company_id, True, 1),
+            ).fetchone()["n"])
+        book = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"})
+        check("surface=buy-book -> 200", book.status_code == 200, str(book.status_code))
+        book_body = book.json()
+        check("the buy book carries every active in-buy-book item",
+              len(book_body.get("items") or []) == buy_book_rows,
+              f"{len(book_body.get('items') or [])} vs {buy_book_rows}")
+        check("the pre-0013 payload keys are back",
+              {"items", "filter_fields", "group_by", "page_break_layers"} <= set(book_body),
+              sorted(book_body.keys()))
+        check("group_by names a layer, defaulting to brand",
+              bool(book_body.get("group_by")), str(book_body.get("group_by")))
+        book_key = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book", "k": "abc"})
+        check("?k= is accepted and ignored", book_key.status_code == 200
+              and (book_key.json().get("items") or []) == (book_body.get("items") or []),
+              str(book_key.status_code))
+        unprefixed = client.get("/api/public/survey-items", params={"surface": "buy-book", "k": "abc"})
+        check("the unprefixed API form serves the default company's book",
+              unprefixed.status_code == 200
+              and len(unprefixed.json().get("items") or []) == buy_book_rows,
+              str(unprefixed.status_code))
 
         # --------------------------------------------------------------
         print("\n13. Admin buy-book endpoints require a session")
@@ -448,15 +541,51 @@ def main() -> int:
               all("survey_token" not in item for item in fresh.get("items", [])))
 
         # --------------------------------------------------------------
-        print("\n15. A public read against a company with no period creates no period")
-        before_periods = period_count(empty_company_id)
-        empty_read = survey_get(client, empty_slug, "irrelevant-token")
-        check("a token for a company with no periods 404s", empty_read.status_code == 404,
-              str(empty_read.status_code))
-        no_token_read = survey_get(client, empty_slug, None)
-        check("no token still 401s first", no_token_read.status_code == 401, str(no_token_read.status_code))
-        check("no period row was created", period_count(empty_company_id) == before_periods,
-              f"{before_periods} -> {period_count(empty_company_id)}")
+        print("\n15. A public read against a company with no open period creates no period")
+        fresh_slug = "access-check-fresh"
+        with connect() as conn:
+            execute(conn, "DELETE FROM companies WHERE slug = ?", (fresh_slug,))
+            if IS_POSTGRES:
+                row = execute(
+                    conn,
+                    "INSERT INTO companies (slug, name, is_active) VALUES (?, ?, ?) RETURNING id",
+                    (fresh_slug, "Access Check Fresh", True),
+                ).fetchone()
+            else:
+                cursor = execute(
+                    conn,
+                    "INSERT INTO companies (slug, name, is_active) VALUES (?, ?, ?)",
+                    (fresh_slug, "Access Check Fresh", 1),
+                )
+                row = execute(conn, "SELECT id FROM companies WHERE id = ?", (cursor.lastrowid,)).fetchone()
+            fresh_id = int(row["id"])
+        try:
+            before_periods = period_count(fresh_id)
+            # The legacy link controls these companies at their DEFAULT: a row
+            # created after the migration carries TRUE without an UPDATE.
+            with connect() as conn:
+                created_flags = execute(
+                    conn,
+                    "SELECT legacy_public_buy_book, legacy_public_survey FROM companies WHERE id = ?",
+                    (fresh_id,),
+                ).fetchone()
+            check("a new company's flags default to on",
+                  bool(created_flags["legacy_public_buy_book"])
+                  and bool(created_flags["legacy_public_survey"]),
+                  str(dict(created_flags)))
+            anon = survey_get(client, fresh_slug, None)
+            check("the anonymous read answers the closed shape", anon.status_code == 200
+                  and anon.json().get("survey_open") is False, str(anon.status_code))
+            empty_read = survey_get(client, fresh_slug, "irrelevant-token")
+            check("a token for a company with no periods 404s", empty_read.status_code == 404,
+                  str(empty_read.status_code))
+            client.get(f"/api/public/{fresh_slug}/survey-items", params={"surface": "buy-book"})
+            check("no period row was created",
+                  period_count(fresh_id) == before_periods,
+                  f"{before_periods} -> {period_count(fresh_id)}")
+        finally:
+            with connect() as conn:
+                execute(conn, "DELETE FROM companies WHERE id = ?", (fresh_id,))
 
         # --------------------------------------------------------------
         print("\n16. A cleared date field is stored as NULL, never as an empty string")
@@ -542,12 +671,103 @@ def main() -> int:
         else:
             check("Postgres cannot store a blank in timestamptz (no cleanup needed)", True)
 
+        # --------------------------------------------------------------
+        print("\n18. The two legacy flags: one PUT each, one link each")
+        listed = client.get("/api/admin/companies", headers=headers).json().get("companies", [])
+        subject = next((row for row in listed if int(row.get("id", 0)) == company_id), None)
+        check("the admin company list carries both flags",
+              subject is not None
+              and "legacy_public_buy_book" in subject
+              and "legacy_public_survey" in subject,
+              str(subject)[:160] if subject else "company row missing")
+        check("both flags default on for an existing company",
+              bool(subject and subject.get("legacy_public_buy_book"))
+              and bool(subject and subject.get("legacy_public_survey")),
+              str(subject)[:160] if subject else "")
+        reopened = client.patch(
+            f"/api/admin/survey-periods/{period_id}",
+            headers=headers,
+            json={"status": "open"},
+        )
+        check("an open period is in place for the flag comparison", reopened.status_code == 200,
+              str(reopened.status_code))
+        demo_headers = login(client, "demo@example.com", "Demo1234")
+        try:
+            off_book = client.patch(
+                f"/api/admin/companies/{company_id}",
+                headers=headers,
+                json={"legacy_public_buy_book": False},
+            )
+            off_payload = (off_book.json().get("company") or {}) if off_book.status_code == 200 else {}
+            check("one PUT turns the buy book off", off_book.status_code == 200,
+                  f"{off_book.status_code} {off_book.text[:120]}")
+            check("the PUT response carries both flags",
+                  off_payload.get("legacy_public_buy_book") is False
+                  and off_payload.get("legacy_public_survey") is True, str(off_payload)[:160])
+            book_off = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"})
+            check("buy book off -> 404", book_off.status_code == 404, str(book_off.status_code))
+            check("the survey link keeps answering while the book is off",
+                  survey_get(client, slug, None).status_code == 200,
+                  str(survey_get(client, slug, None).status_code))
+            if demo_headers is not None:
+                non_admin = client.patch(
+                    f"/api/admin/companies/{company_id}",
+                    headers=demo_headers,
+                    json={"legacy_public_buy_book": True},
+                )
+                check("a non-admin PUT -> 403", non_admin.status_code == 403, str(non_admin.status_code))
+                check("the non-admin PUT changed nothing",
+                      client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"}).status_code == 404,
+                      "the flag flipped")
+            else:
+                pending("a non-admin PUT still 403s", "no demo editor login in this database")
+
+            survey_off = client.patch(
+                f"/api/admin/companies/{company_id}",
+                headers=headers,
+                json={"legacy_public_survey": False},
+            )
+            check("one PUT turns the anonymous survey link off", survey_off.status_code == 200,
+                  str(survey_off.status_code))
+            anon_off = survey_get(client, slug, None)
+            check("anonymous survey off -> 401", anon_off.status_code == 401, str(anon_off.status_code))
+            check("its 401 names the missing credential",
+                  "survey_token" in str(anon_off.json().get("detail", "")), str(anon_off.json())[:120])
+            check("the token link still answers with the anonymous link off",
+                  survey_get(client, slug, token).status_code == 200,
+                  str(survey_get(client, slug, token).status_code))
+            check("the buy book is untouched by the survey flag",
+                  client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"}).status_code == 404,
+                  "the book came back with the survey flag")
+        finally:
+            restored = client.patch(
+                f"/api/admin/companies/{company_id}",
+                headers=headers,
+                json={"legacy_public_buy_book": True, "legacy_public_survey": True},
+            )
+            check("both flags can be turned back on from one PUT", restored.status_code == 200,
+                  str(restored.status_code))
+            client.patch(
+                f"/api/admin/survey-periods/{period_id}",
+                headers=headers,
+                json={"status": "closed"},
+            )
+        check("both links answer again after the restore",
+              client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"}).status_code == 200
+              and survey_get(client, slug, None).status_code == 200,
+              "the restore did not re-open both links")
+
     finally:
         if not args.keep:
             with connect() as conn:
                 for period_id in created_periods:
                     execute(conn, "DELETE FROM survey_responses WHERE survey_period_id = ?", (period_id,))
                     execute(conn, "DELETE FROM survey_periods WHERE id = ?", (period_id,))
+                # The admin create mints a legacy period for a company that has
+                # none, so the scratch company owns periods this script never
+                # listed; they go with it.
+                execute(conn, "DELETE FROM survey_responses WHERE company_id = ?", (empty_company_id,))
+                execute(conn, "DELETE FROM survey_periods WHERE company_id = ?", (empty_company_id,))
                 execute(conn, "DELETE FROM companies WHERE id = ?", (empty_company_id,))
 
     print()

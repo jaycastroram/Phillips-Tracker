@@ -81,6 +81,11 @@ class CompanyUpdate(BaseModel):
     # prints it, and a period can override it.
     market_label: str | None = None
     is_active: bool | None = None
+    # The two pre-0013 public links. One authenticated PUT flips one flag for
+    # one company, with no deploy: the buy book and the survey are retired
+    # separately, so they are switched separately.
+    legacy_public_buy_book: bool | None = None
+    legacy_public_survey: bool | None = None
 
 
 class PasswordReset(BaseModel):

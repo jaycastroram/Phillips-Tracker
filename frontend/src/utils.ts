@@ -1,8 +1,8 @@
 import { DEFAULT_COMPANY_SLUG, NOT_ON_TRACK_STATUSES } from './constants'
 import type { SheetKey, TrackerItem, ViewerStatus } from './types'
 
-export type PublicCompanyPage = 'viewer' | 'survey' | 'book'
-export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey'
+export type PublicCompanyPage = 'viewer' | 'survey' | 'book' | 'buy-book'
+export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey' | '/buy-book'
 
 export type PublicRoute = {
   companySlug: string
@@ -26,6 +26,29 @@ export function parsePublicRoute(pathname: string): PublicRoute {
     }
   }
 
+  // The buy book's legacy paths: /buy-book and /phillips/buy-book, plus the
+  // no-hyphen spelling /buybook that a customer site may have embedded. /book/
+  // <token> above is the separate token page and is checked first.
+  const buyBookFirst = first === 'buy-book' || first === 'buybook'
+  if (buyBookFirst) {
+    // /buybook/<company-slug> was asked for by hand; treat its tail as the
+    // company rather than silently showing the default company's book.
+    if (second) {
+      return {
+        companySlug: second.toLowerCase(),
+        page: 'buy-book',
+        isKanban: false,
+        usesCompanyPrefix: true,
+      }
+    }
+    return {
+      companySlug: DEFAULT_COMPANY_SLUG,
+      page: 'buy-book',
+      isKanban: false,
+      usesCompanyPrefix: false,
+    }
+  }
+
   if (first === 'viewer' || first === 'survey') {
     return {
       companySlug: DEFAULT_COMPANY_SLUG,
@@ -35,10 +58,11 @@ export function parsePublicRoute(pathname: string): PublicRoute {
     }
   }
 
-  if (second === 'viewer' || second === 'survey') {
+  const buyBookSecond = second === 'buy-book' || second === 'buybook'
+  if (second === 'viewer' || second === 'survey' || buyBookSecond) {
     return {
       companySlug: first.toLowerCase(),
-      page: second,
+      page: buyBookSecond ? 'buy-book' : (second as PublicCompanyPage),
       isKanban: second === 'viewer' && third === 'kanban',
       usesCompanyPrefix: true,
     }

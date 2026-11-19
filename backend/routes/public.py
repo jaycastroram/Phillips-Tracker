@@ -18,6 +18,7 @@ from database import (
     execute,
     fetch_company_by_slug,
     get_default_company,
+    get_open_survey_period,
     get_survey_period_by_token,
     kanban_column_to_public,
     list_period_items,
@@ -25,6 +26,7 @@ from database import (
     parse_period_filter_fields,
     parse_survey_questions,
     resolve_interest_question,
+    row_value,
     period_item_to_public,
     row_to_item,
     survey_filter_fields,
@@ -47,10 +49,23 @@ def _get_company(slug: str) -> Any:
     return company
 
 
-def _default_company_id() -> int:
+def _default_company() -> Any:
     with connect() as conn:
-        company = ensure_default_company(conn)
-    return company["id"]
+        return ensure_default_company(conn)
+
+
+def _default_company_id() -> int:
+    return _default_company()["id"]
+
+
+def _legacy_public_link(company: Any, column: str) -> bool:
+    """Whether this company still serves the pre-0013 open link.
+
+    The column defaults to on for every company that existed before it was
+    added; a row read before the migration also answers on, so the flag can
+    never close a link by accident.
+    """
+    return bool(row_value(company, column, True))
 
 
 # ---------------------------------------------------------------------------
@@ -152,55 +167,138 @@ def _survey_item_matches(item: dict, needle: str) -> bool:
     )
 
 
-def _survey_items_response(company_id: int, q: str, surface: str, token: str = "") -> dict:
-    if surface not in {"", "survey"}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown survey surface")
-
-    with connect() as conn:
-        # A page view never creates a period: nothing a stranger opens mints a
-        # live token. The admin Survey Periods read is where a legacy period
-        # comes from now.
-        period = _resolve_survey_period(conn, company_id, token)
-        questions = parse_survey_questions(period["questions_json"])
-        if survey_period_is_closed(period):
-            return {
-                "items": [],
-                "filter_fields": [],
-                "questions": questions,
-                "period": survey_period_to_public(period),
-                "survey_open": False,
-                "message": "This survey is closed.",
-            }
-        if surface == "survey":
-            rows = list_period_items(conn, period["id"])
-            fields = parse_period_filter_fields(period["filter_fields_json"])
-            items = [period_item_to_public(row) for row in rows]
-        else:
-            # The bare form stays, behind the same token: the SPA does not call
-            # it, and a caller that does should fail loudly rather than read
-            # the whole active catalog anonymously.
-            rows = execute(
-                conn,
-                """
-                SELECT * FROM survey_items
-                WHERE company_id = ? AND is_active = ?
-                ORDER BY survey_sort_order ASC, sort_order ASC, id ASC
-                """,
-                (company_id, True),
-            ).fetchall()
-            fields = survey_filter_fields(conn, company_id)
-            items = [survey_item_to_public(row) for row in rows]
-
-    needle = q.strip().lower()
-    if needle:
-        items = [item for item in items if _survey_item_matches(item, needle)]
+def _period_survey_payload(conn: Any, period: Any) -> dict:
+    """One period as the survey page reads it: its snapshot, questions, state."""
+    questions = parse_survey_questions(period["questions_json"])
+    if survey_period_is_closed(period):
+        return {
+            "items": [],
+            "filter_fields": [],
+            "questions": questions,
+            "period": survey_period_to_public(period),
+            "survey_open": False,
+            "message": "This survey is closed.",
+        }
+    rows = list_period_items(conn, period["id"])
+    fields = parse_period_filter_fields(period["filter_fields_json"])
     return {
-        "items": items,
+        "items": [period_item_to_public(row) for row in rows],
         "filter_fields": fields,
         "questions": questions,
         "period": survey_period_to_public(period),
         "survey_open": True,
     }
+
+
+def _bare_catalog_payload(conn: Any, company_id: int) -> dict:
+    """The bare token-gated form: the whole active catalog, as 128aa1e read it.
+
+    Nothing embeds this and the SPA never calls it; it stays behind the same
+    token so an existing caller keeps the answer it had, no wider.
+    """
+    rows = execute(
+        conn,
+        """
+        SELECT * FROM survey_items
+        WHERE company_id = ? AND is_active = ?
+        ORDER BY survey_sort_order ASC, sort_order ASC, id ASC
+        """,
+        (company_id, True),
+    ).fetchall()
+    return {
+        "items": [survey_item_to_public(row) for row in rows],
+        "filter_fields": survey_filter_fields(conn, company_id),
+    }
+
+
+def _no_open_survey_payload() -> dict:
+    """The pre-change answer when nothing is open: a closed page, not an error."""
+    return {
+        "items": [],
+        "filter_fields": [],
+        "questions": [],
+        "period": None,
+        "survey_open": False,
+        "message": "No survey is open right now.",
+    }
+
+
+def _legacy_buy_book_payload(company_id: int, q: str) -> dict:
+    """The buy book exactly as 128aa1e served it, behind the company flag.
+
+    Restored from the pre-0013 branch: active items marked for the buy book, in
+    buy-book order, with the filtered fields and the layer stack the page draws
+    its headings and breaks from. No token is read — the key never gated it.
+    """
+    clauses = ["company_id = ?", "is_active = ?", "in_buy_book = ?"]
+    args: list[Any] = [company_id, True, 1]
+    if q.strip():
+        like = f"%{q.strip().lower()}%"
+        clauses.append(
+            "(lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ? OR "
+            "lower(product_type) LIKE ? OR lower(key_program) LIKE ? OR lower(item_description) LIKE ?)"
+        )
+        args.extend([like] * 6)
+    with connect() as conn:
+        rows = execute(
+            conn,
+            f"SELECT * FROM survey_items WHERE {' AND '.join(clauses)} "
+            "ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC",
+            args,
+        ).fetchall()
+        fields = buy_book_filter_fields(conn, company_id)
+        layers = buy_book_page_break_layers(conn, company_id)
+    group_by = layers[0]["field"] if layers else "brand"
+    items = apply_buy_book_layers(
+        [survey_item_to_public(row, surface="buy-book") for row in rows],
+        layers,
+    )
+    return {
+        "items": items,
+        "filter_fields": fields,
+        "group_by": group_by,
+        "page_break_layers": layers,
+    }
+
+
+def _survey_items_response(company: Any, q: str, surface: str, token: str = "") -> dict:
+    if surface not in {"", "survey", "buy-book"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown survey surface")
+
+    company_id = int(company["id"])
+
+    if surface == "buy-book":
+        if not _legacy_public_link(company, "legacy_public_buy_book"):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Buy book not found")
+        return _legacy_buy_book_payload(company_id, q)
+
+    text = str(token or "").strip()
+    if text:
+        # A supplied token always decides: bogus, rotated and another company's
+        # tokens 404, and never fall back to the open period. The anonymous
+        # link below is only for the caller who presents no token at all.
+        with connect() as conn:
+            period = _resolve_survey_period(conn, company_id, text)
+            if surface == "" and not survey_period_is_closed(period):
+                payload = _bare_catalog_payload(conn, company_id)
+            else:
+                payload = _period_survey_payload(conn, period)
+    elif surface == "survey" and _legacy_public_link(company, "legacy_public_survey"):
+        # The restored legacy link: no token needed, but only an open period
+        # that has not passed its close time — get_open_survey_period is the
+        # one resolver that enforces both. A page view never mints a period.
+        with connect() as conn:
+            period = get_open_survey_period(conn, company_id)
+            payload = _no_open_survey_payload() if period is None else _period_survey_payload(conn, period)
+    else:
+        # The bare catalog form stays behind the token: nothing embeds it, the
+        # SPA never calls it, and it returns the whole active catalog.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "survey_token_required")
+
+    needle = q.strip().lower()
+    if needle:
+        payload["items"] = [item for item in payload["items"] if _survey_item_matches(item, needle)]
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +345,8 @@ def get_public_buy_book(token: str) -> dict:
 
 @router.get("/survey-items")
 def list_public_survey_items(q: str = "", surface: str = "", t: str = "") -> dict:
-    return _survey_items_response(_default_company_id(), q, surface, t)
+    # k= is accepted and ignored: no column on this side ever gated the book.
+    return _survey_items_response(_default_company(), q, surface, t)
 
 
 @router.get("/{company_slug}/survey-items")
@@ -257,18 +356,31 @@ def list_public_company_survey_items(
     surface: str = "",
     t: str = "",
 ) -> dict:
-    return _survey_items_response(_get_company(company_slug)["id"], q, surface, t)
+    return _survey_items_response(_get_company(company_slug), q, surface, t)
 
 
 # ---------------------------------------------------------------------------
 # Survey responses
 # ---------------------------------------------------------------------------
 
-def _create_survey_response(company_id: int, payload: SurveyResponseCreate, token: str) -> dict:
+def _create_survey_response(company: Any, payload: SurveyResponseCreate, token: str) -> dict:
+    company_id = int(company["id"])
+    text = str(token or "").strip()
     with connect() as conn:
-        period = _resolve_survey_period(conn, company_id, token)
-        if survey_period_is_closed(period):
-            raise HTTPException(status.HTTP_410_GONE, "survey_closed")
+        if text:
+            # A supplied token always wins: a bad one is refused here, never
+            # quietly answered from the company's open period.
+            period = _resolve_survey_period(conn, company_id, text)
+            if survey_period_is_closed(period):
+                raise HTTPException(status.HTTP_410_GONE, "survey_closed")
+        elif _legacy_public_link(company, "legacy_public_survey"):
+            # The legacy anonymous form: the same open-and-not-past-close
+            # resolver as the read, so a window that closed collects nothing.
+            period = get_open_survey_period(conn, company_id)
+            if period is None:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "No survey is open right now")
+        else:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "survey_token_required")
 
         period_item = execute(
             conn,
@@ -440,9 +552,9 @@ def _create_survey_response(company_id: int, payload: SurveyResponseCreate, toke
 
 @router.post("/survey-responses")
 def create_public_survey_response(payload: SurveyResponseCreate, t: str = "") -> dict:
-    return _create_survey_response(_default_company_id(), payload, t)
+    return _create_survey_response(_default_company(), payload, t)
 
 
 @router.post("/{company_slug}/survey-responses")
 def create_public_company_survey_response(company_slug: str, payload: SurveyResponseCreate, t: str = "") -> dict:
-    return _create_survey_response(_get_company(company_slug)["id"], payload, t)
+    return _create_survey_response(_get_company(company_slug), payload, t)
