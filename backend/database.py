@@ -119,6 +119,21 @@ def utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+def normalize_timestamp(value: Any) -> str | None:
+    """A stored time is a real instant or NULL - never a blank string.
+
+    ``""`` is what a cleared date field sends, and it is *not* a portable
+    "unset": SQLite stores it as ordinary text, while Postgres cannot put it in
+    a ``timestamptz`` at all - comparing or inserting it raises
+    ``InvalidDatetimeFormat`` instead of reading as absent. Normalising at the
+    write edge gives both engines one meaning for "no time set".
+    """
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def row_to_item(row: sqlite3.Row) -> dict:
     item = dict(row)
     item["extra"] = json.loads(item.pop("extra_json") or "{}")
@@ -1071,14 +1086,16 @@ def get_open_survey_period(conn: Any, company_id: int) -> Any:
 
     Status alone is not enough — a period whose ``closes_at`` has passed is
     closed even if nobody flipped the status, and submission is the whole point
-    of this lookup.
+    of this lookup. "No close time" is NULL, and only NULL: a blank is never
+    written (``normalize_timestamp``) and pre-existing blanks are cleaned on
+    boot, because Postgres cannot hold one in a ``timestamptz``.
     """
     return execute(
         conn,
         """
         SELECT * FROM survey_periods
         WHERE company_id = ? AND status = 'open'
-          AND (closes_at IS NULL OR closes_at = '' OR closes_at > ?)
+          AND (closes_at IS NULL OR closes_at > ?)
         ORDER BY id DESC
         LIMIT 1
         """,

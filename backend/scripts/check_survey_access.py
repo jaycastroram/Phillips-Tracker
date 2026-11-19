@@ -42,7 +42,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app import app  # noqa: E402
 from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG, IS_POSTGRES  # noqa: E402
-from database import connect, execute, fetch_company_by_slug  # noqa: E402
+from database import connect, execute, fetch_company_by_slug, get_open_survey_period  # noqa: E402
 from init_db import init_db  # noqa: E402
 
 FAILURES: list[str] = []
@@ -457,6 +457,90 @@ def main() -> int:
         check("no token still 401s first", no_token_read.status_code == 401, str(no_token_read.status_code))
         check("no period row was created", period_count(empty_company_id) == before_periods,
               f"{before_periods} -> {period_count(empty_company_id)}")
+
+        # --------------------------------------------------------------
+        print("\n16. A cleared date field is stored as NULL, never as an empty string")
+        blank_id = create_period(client, headers, "access-check-blank")
+        created_periods.append(blank_id)
+        blank_token = token_of(client, headers, blank_id)
+        cleared = client.patch(
+            f"/api/admin/survey-periods/{blank_id}",
+            headers=headers,
+            json={"closes_at": "", "opens_at": "   "},
+        )
+        check(
+            "clearing both date fields is accepted",
+            cleared.status_code == 200,
+            f"{cleared.status_code} {cleared.text[:120]}",
+        )
+        with connect() as conn:
+            stored = execute(
+                conn,
+                "SELECT opens_at, closes_at FROM survey_periods WHERE id = ?",
+                (blank_id,),
+            ).fetchone()
+        check("cleared closes_at stored as NULL", stored["closes_at"] is None, repr(stored["closes_at"]))
+        check("blank opens_at stored as NULL", stored["opens_at"] is None, repr(stored["opens_at"]))
+
+        # The open-period lookup is the buy-book's period resolver: it compares
+        # closes_at to a timestamp, which is where a blank raised
+        # InvalidDatetimeFormat on Postgres and 500ed every PDF render.
+        with connect() as conn:
+            open_no_close = get_open_survey_period(conn, company_id)
+        check(
+            "the open-period lookup runs with no close time",
+            open_no_close is not None and int(open_no_close["id"]) == blank_id,
+            repr(open_no_close["id"] if open_no_close is not None else None),
+        )
+        with_close = client.patch(
+            f"/api/admin/survey-periods/{blank_id}",
+            headers=headers,
+            json={"closes_at": "2099-01-01T00:00:00+00:00"},
+        )
+        check("a real close time is accepted", with_close.status_code == 200, str(with_close.status_code))
+        with connect() as conn:
+            open_with_close = get_open_survey_period(conn, company_id)
+        check(
+            "the open-period lookup runs with a real close time",
+            open_with_close is not None and int(open_with_close["id"]) == blank_id,
+            repr(open_with_close["id"] if open_with_close is not None else None),
+        )
+        blank_read = survey_get(client, slug, blank_token)
+        check(
+            "the survey still reads open with a future close time",
+            blank_read.status_code == 200,
+            f"{blank_read.status_code} {str(blank_read.text)[:100]}",
+        )
+        garbage = client.patch(
+            f"/api/admin/survey-periods/{blank_id}",
+            headers=headers,
+            json={"closes_at": "not-a-date"},
+        )
+        check(
+            "a non-timestamp closes_at -> 400, not stored",
+            garbage.status_code == 400,
+            f"{garbage.status_code} {garbage.text[:100]}",
+        )
+
+        # --------------------------------------------------------------
+        print("\n17. A legacy blank row is cleaned on boot")
+        if not IS_POSTGRES:
+            with connect() as conn:
+                execute(
+                    conn,
+                    "UPDATE survey_periods SET closes_at = '' WHERE id = ?",
+                    (blank_id,),
+                )
+            init_db()
+            with connect() as conn:
+                healed = execute(
+                    conn,
+                    "SELECT closes_at FROM survey_periods WHERE id = ?",
+                    (blank_id,),
+                ).fetchone()["closes_at"]
+            check("the blank is NULL after init_db", healed is None, repr(healed))
+        else:
+            check("Postgres cannot store a blank in timestamptz (no cleanup needed)", True)
 
     finally:
         if not args.keep:

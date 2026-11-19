@@ -638,6 +638,25 @@ def _migrate_survey_access(conn) -> None:
     )
 
 
+def _normalize_survey_period_times(conn) -> None:
+    """Blanks in a period's window become NULL.
+
+    An older admin form stored the cleared field as ``""``. SQLite accepts that;
+    Postgres cannot hold it in a ``TIMESTAMPTZ``, so on Postgres there is
+    nothing to clean. Idempotent: a second boot finds no blanks left.
+    """
+    if IS_POSTGRES:
+        return
+    execute(
+        conn,
+        "UPDATE survey_periods SET opens_at = NULL WHERE opens_at IS NOT NULL AND TRIM(opens_at) = ''",
+    )
+    execute(
+        conn,
+        "UPDATE survey_periods SET closes_at = NULL WHERE closes_at IS NOT NULL AND TRIM(closes_at) = ''",
+    )
+
+
 def init_db() -> None:
     with connect() as conn:
         _create_companies_table(conn)
@@ -660,6 +679,7 @@ def init_db() -> None:
         company = ensure_default_company(conn)
         _backfill_company_ids(conn, company["id"])
         _migrate_survey_access(conn)
+        _normalize_survey_period_times(conn)
         ensure_survey_layout(conn, company["id"])
         ensure_buy_book_layout(conn, company["id"])
         _scope_sheet_status_uniqueness(conn)

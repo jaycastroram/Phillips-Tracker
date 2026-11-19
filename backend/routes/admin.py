@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import sqlite3
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
@@ -38,6 +39,7 @@ from database import (
     normalize_buy_book_group_by,
     normalize_filter_fields,
     normalize_survey_questions,
+    normalize_timestamp,
     parse_answers_json,
     parse_cover_json,
     parse_survey_questions,
@@ -70,6 +72,26 @@ from models import (
 from routes.auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
+
+
+def normalize_period_timestamp(field: str, value: Any) -> str | None:
+    """What a client sent for a period's window, or None for "unset".
+
+    A blank means cleared (see ``normalize_timestamp``); anything else has to be
+    a real ISO-8601 instant. Without the parse test a typo lands in the column
+    and only Postgres complains - later, at read time, as a 500 on a page that
+    has nothing to do with the edit.
+    """
+    text = normalize_timestamp(value)
+    if text is None:
+        return None
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"{field} must be an ISO-8601 timestamp"
+        ) from None
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -713,8 +735,20 @@ def update_survey_period(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Survey name is required")
 
         next_status = payload.status if payload.status is not None else period["status"]
-        opens_at = payload.opens_at if payload.opens_at is not None else period["opens_at"]
-        closes_at = payload.closes_at if payload.closes_at is not None else period["closes_at"]
+        # A cleared date field sends ""; storing it is what broke the open-period
+        # read on Postgres (a blank is not a timestamptz). Normalise both the
+        # incoming value and the row it falls back to, so a save also heals a
+        # row written before the normaliser existed.
+        opens_at = (
+            normalize_period_timestamp("opens_at", payload.opens_at)
+            if payload.opens_at is not None
+            else normalize_timestamp(period["opens_at"])
+        )
+        closes_at = (
+            normalize_period_timestamp("closes_at", payload.closes_at)
+            if payload.closes_at is not None
+            else normalize_timestamp(period["closes_at"])
+        )
 
         if next_status == "open" and period["status"] != "open":
             close_open_survey_periods(conn, company_id)
