@@ -363,19 +363,26 @@ def seed_sheet_statuses_if_empty(conn: Any, company_id: int) -> None:
 
 
 def sync_default_survey_items(conn: Any, company_id: int) -> None:
-    """Top up the demo catalog on boot — and stay out of the real one.
+    """Put the demo catalog in — once, and only into an empty catalog.
 
     These twenty hand-written rows exist so a fresh install has something to
-    show. Any row carrying a NetSuite id belongs to the item master or to the
-    tracker link, not to this seed: the seed neither rewrites it nor retires it.
-    Before that rule, the blanket "deactivate everything whose name is not one
-    of mine" ran on every boot and would have deactivated an entire synced
-    catalog the first time the app restarted.
+    show. They are seeded exactly once, when the company has no catalog rows at
+    all: the seed never deactivates, rewrites or reactivates anything on a boot.
+
+    The old rule deactivated every row whose name was not one of its own, on
+    every boot. That would have emptied a synced catalog on the next restart —
+    and, because retirement is one-way, kept it empty. It would have taken
+    hand-created rows and the tracker-linked rows #5 creates the same way. The
+    NetSuite-id guard stays as belt and braces: nothing this seed touches may
+    carry an item-master id.
     """
-    active_item_names = []
+    existing = execute(
+        conn, "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ?", (company_id,)
+    ).fetchone()
+    if int(existing["n"] or 0) > 0:
+        return
 
     for item in DEFAULT_SURVEY_ITEMS:
-        active_item_names.append(item["item_name"].lower())
         existing_item = execute(
             conn,
             """
@@ -386,56 +393,32 @@ def sync_default_survey_items(conn: Any, company_id: int) -> None:
             """,
             (company_id, item["item_name"]),
         ).fetchone()
-
-        values = (
-            company_id,
-            item["item_name"],
-            item["brand"],
-            item["channel"],
-            item["product_type"],
-            item["key_program"],
-            item["item_description"],
-            item["uom"],
-            item["price"],
-            item["image_url"],
-            item["sort_order"],
-            True,
+        if existing_item is not None:
+            continue
+        execute(
+            conn,
+            """
+            INSERT INTO survey_items (
+                company_id, item_name, brand, channel, product_type, key_program,
+                item_description, uom, price, image_url, sort_order, is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                company_id,
+                item["item_name"],
+                item["brand"],
+                item["channel"],
+                item["product_type"],
+                item["key_program"],
+                item["item_description"],
+                item["uom"],
+                item["price"],
+                item["image_url"],
+                item["sort_order"],
+                True,
+            ),
         )
-        if existing_item is None:
-            execute(
-                conn,
-                """
-                INSERT INTO survey_items (
-                    company_id, item_name, brand, channel, product_type, key_program,
-                    item_description, uom, price, image_url, sort_order, is_active
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                values,
-            )
-        else:
-            execute(
-                conn,
-                """
-                UPDATE survey_items
-                SET company_id = ?, item_name = ?, brand = ?, channel = ?, product_type = ?, key_program = ?,
-                    item_description = ?, uom = ?, price = ?, image_url = ?, sort_order = ?, is_active = ?
-                WHERE id = ?
-                """,
-                (*values, existing_item["id"]),
-            )
-
-    placeholders = ", ".join("?" for _ in active_item_names)
-    execute(
-        conn,
-        f"""
-        UPDATE survey_items
-        SET is_active = ?
-        WHERE company_id = ? AND lower(item_name) NOT IN ({placeholders})
-          AND COALESCE(netsuite_item_id, '') = ''
-        """,
-        (False, company_id, *active_item_names),
-    )
 
 
 def backfill_survey_sort_order(conn: Any) -> None:

@@ -176,13 +176,13 @@ def map_item(row: dict[str, Any], labels: FacetResolution, synced_at: str) -> Ma
         "product_type": resolved["product_type"],
         "sort_order": order,
     }
-    # The description is catalog copy, not a second name. It is taken from
-    # NetSuite only when the name came from the fallback ladder, where the
-    # description is the last human-readable text the row has.
-    if source != NAME_SOURCE_CHOSEN:
-        description = text(row.get("description"))
-        if description:
-            fields["item_description"] = description
+    # The description is written whenever NetSuite returns one — the buy book
+    # prints it, so every synced row is worth having one on. A blank from
+    # NetSuite leaves the stored value alone: the key is left out here and out
+    # of the snapshot, so a blank can never read as an override or as an edit.
+    description = text(row.get("description"))
+    if description:
+        fields["item_description"] = description
 
     snapshot = {
         "netsuite_item_id": internal_id,
@@ -193,7 +193,6 @@ def map_item(row: dict[str, Any], labels: FacetResolution, synced_at: str) -> Ma
         "needs_name": needs_name,
         "facet_ids": ids,
         "item_name": name,
-        "item_description": fields.get("item_description", ""),
         "brand": resolved["brand"],
         "channel": resolved["channel"],
         "key_program": resolved["key_program"],
@@ -202,6 +201,8 @@ def map_item(row: dict[str, Any], labels: FacetResolution, synced_at: str) -> Ma
         "multi_order_sort_raw": text(row.get(SORT_COLUMN) or row.get("multi_order_sort")),
         "synced_at": synced_at,
     }
+    if description:
+        snapshot["item_description"] = description
     return MappedItem(
         netsuite_item_id=internal_id,
         name=name,

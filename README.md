@@ -117,6 +117,12 @@ Set these on the web service **and** the cron job:
 - `NETSUITE_SYNC_COMPANY_SLUG` — the one company a run writes to (default: the
   app's company).
 
+The catalog a run keeps is the union of two sets: active items carrying at least
+one facet, and any item a buy-in period row points at (kits sold inside a window
+often carry no facet). The run prints its own live totals — active items,
+scanned, created, retired, and how many came from a period alone — so no count
+in this file can go stale.
+
 Run it by hand before trusting the cron:
 
 ```
@@ -126,5 +132,5 @@ python backend/scripts/sync_catalog.py --limit 200 --report /tmp/run.json
 ```
 
 A dry run is the same code path inside a transaction that is rolled back, so it
-is an honest preview. `python backend/scripts/netsuite_sync.py` is the offline
+is an honest preview. `python backend/scripts/check_catalog_sync.py` is the offline
 acceptance check (add `--live` for one real read when the credentials are set).

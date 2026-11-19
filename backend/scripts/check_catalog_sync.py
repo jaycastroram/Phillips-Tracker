@@ -1,9 +1,9 @@
 """Acceptance check for the NetSuite catalog sync. Offline, against a fake client.
 
-    python backend/scripts/netsuite_sync.py
-    SMARTBUY_DB_PATH=/tmp/scratch.db python backend/scripts/netsuite_sync.py
-    DATABASE_URL=postgresql://... python backend/scripts/netsuite_sync.py
-    python backend/scripts/netsuite_sync.py --live     # plus one real read, if configured
+    python backend/scripts/check_catalog_sync.py
+    SMARTBUY_DB_PATH=/tmp/scratch.db python backend/scripts/check_catalog_sync.py
+    DATABASE_URL=postgresql://... python backend/scripts/check_catalog_sync.py
+    python backend/scripts/check_catalog_sync.py --live     # plus one real read, if configured
 
 On SQLite it writes to its own throwaway database unless ``SMARTBUY_DB_PATH``
 says otherwise, so running it never touches the configured one. What it creates
@@ -13,14 +13,17 @@ What it proves:
 
 0.  the name column is ``storedisplayname`` and the ladder around it holds
 1.  a first run into an empty catalog creates rows with both book flags 0, no
-    price, no image, and no period rows
-2.  a second identical run writes nothing — every ``updated_at`` unchanged
-3.  a changed name updates; a changed price or image changes nothing; the
-    description of a fallback-named row updates
+    price, no image, and no period rows — including an item with no facet that
+    a buy-in period points at
+2.  a second identical run writes nothing — every ``updated_at`` unchanged,
+    and a boot leaves the catalog alone
+3.  a changed name or description updates; a changed price or image changes
+    nothing; a blank NetSuite description leaves the stored one alone
 4.  a human edit survives a differing sync value, is reported overridden, and
     "Reset to NetSuite" writes the snapshot back
 5.  an inactive item is retired once with an audit reason, stays retired, a
-    human restore is retired again, and an item whose facets went away retires
+    human restore is retired again; facets gone with no buy-in row retires,
+    facets gone but still in a buy-in row stays, and losing both retires
 6.  hand-created and from-tracker rows are untouched
 7.  a dry run leaves the database byte-identical
 8.  a client that dies mid-scan writes nothing
@@ -38,7 +41,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-_SCRATCH_DB = str(Path(tempfile.gettempdir()) / "smartbuy-netsuite-sync-check.db")
+_SCRATCH_DB = str(Path(tempfile.gettempdir()) / "smartbuy-catalog-sync-check.db")
 _OWNS_SCRATCH = not os.environ.get("DATABASE_URL") and not os.environ.get("SMARTBUY_DB_PATH")
 if _OWNS_SCRATCH:
     os.environ["SMARTBUY_DB_PATH"] = _SCRATCH_DB
@@ -112,9 +115,16 @@ def item(
 class FakeSuiteQL:
     """Answers the two shapes the sync asks for: item scans and facet labels."""
 
-    def __init__(self, items: list[dict[str, Any]], labels: dict[str, dict[str, str]] | None = None):
+    def __init__(
+        self,
+        items: list[dict[str, Any]],
+        labels: dict[str, dict[str, str]] | None = None,
+        period_items: list[tuple[int, int]] | None = None,
+    ):
         self.items = {row["id"]: dict(row) for row in items}
         self.labels = labels or {}
+        # (period row id, item id) — the buy-in period item record.
+        self.period_items = list(period_items or [])
         self.scans = 0
         self.fail_on_scan: int | None = None
 
@@ -129,7 +139,17 @@ class FakeSuiteQL:
         self.items.pop(str(internal_id), None)
 
     def copy(self) -> "FakeSuiteQL":
-        return FakeSuiteQL(list(self.items.values()), self.labels)
+        return FakeSuiteQL(list(self.items.values()), self.labels, self.period_items)
+
+    def add_period_item(self, item_id: int) -> None:
+        next_id = max((row_id for row_id, _ in self.period_items), default=0) + 1
+        self.period_items.append((next_id, item_id))
+
+    def drop_period_items(self, item_id: int) -> None:
+        self.period_items = [row for row in self.period_items if row[1] != item_id]
+
+    def in_period(self, item_id: int) -> bool:
+        return any(row[1] == item_id for row in self.period_items)
 
     # -- the client surface -------------------------------------------------
     def query(self, statement: str, limit: int | None = None) -> tuple[list[dict], bool]:
@@ -139,6 +159,23 @@ class FakeSuiteQL:
             wanted = [part.strip() for part in label_query.group(2).split(",") if part.strip()]
             labels = self.labels.get(table, {})
             return ([{"id": value, "name": labels[value]} for value in wanted if value in labels], False)
+
+        if "customrecord_ag_buy_in_period_item" in statement:
+            after = int(re.search(r"id\s*>\s*(\d+)", statement).group(1))
+            size = int(re.search(r"FETCH FIRST\s+(\d+)", statement).group(1))
+            rows = [
+                {"id": str(row_id), "item_id": str(item_id)}
+                for row_id, item_id in sorted(self.period_items)
+                if row_id > after
+            ]
+            return rows[:size], len(rows) > size
+
+        in_list = re.search(r"FROM item i\s+WHERE\s+i\.id\s+IN\s*\(([^)]*)\)", statement)
+        if in_list:
+            wanted = {part.strip() for part in in_list.group(1).split(",") if part.strip()}
+            size = int(re.search(r"FETCH FIRST\s+(\d+)", statement).group(1))
+            rows = [row for key, row in self.items.items() if key in wanted]
+            return sorted(rows, key=lambda row: int(row["id"]))[:size], False
 
         if "FROM item i" not in statement:
             raise SourceError(f"unexpected statement: {statement[:120]}")
@@ -189,8 +226,13 @@ def account() -> FakeSuiteQL:
             item(106, name="Mystery Item", brand="999", channel="10"),
             # Inactive with a facet: a retirement candidate that was never created.
             item(107, name="Retired Cap", brand="1", channel="10", inactive=True),
+            # In the catalog only because a buy-in period points at it: a kit
+            # sold inside a real window, with no facet anywhere.
+            item(108, name="Kitted Assembly", displayname="Kitted Assembly", itemid="3172_KIT-1"),
         ],
         LABELS,
+        # A period points at the kit twice; 101 is also in a set, for the union.
+        [(1, 108), (2, 108), (3, 101)],
     )
 
 
@@ -330,8 +372,11 @@ def section_names() -> None:
     check("its description is taken (name came from elsewhere)",
           unnamed.fields.get("item_description") == "Blue tee", unnamed.fields)
     named = map_item(item(201, name="Hat", brand="1", description="Nice hat"), FacetResolution(), "now")
-    check("a named row does not take NetSuite's description",
-          "item_description" not in named.fields, named.fields)
+    check("a named row takes NetSuite's description too", named.fields.get("item_description") == "Nice hat",
+          named.fields)
+    blank = map_item(item(202, name="Hat two", brand="1"), FacetResolution(), "now")
+    check("a blank description is left out entirely",
+          "item_description" not in blank.fields and "item_description" not in blank.snapshot, blank.snapshot)
 
 
 def section_first_run(company_id: int, client: FakeSuiteQL) -> None:
@@ -342,9 +387,10 @@ def section_first_run(company_id: int, client: FakeSuiteQL) -> None:
     with connect() as conn:
         after = catalog(conn, company_id)
     check("catalog started empty", before == 0, before)
-    check("5 facet-bearing active items created", report.created == 5, report.as_dict())
-    check("scanned counts every item read (7)", report.scanned == 7, report.scanned)
-    check("the facet-less item is counted as excluded", report.excluded == 1, report.excluded)
+    check("6 items created (5 faceted + the kit a period points at)", report.created == 6, report.as_dict())
+    check("scanned counts every item read (8)", report.scanned == 8, report.scanned)
+    check("the facet-less item no period points at is excluded", report.excluded == 1, report.excluded)
+    check("the buy-in-only item is counted as period_only", report.period_only == 1, report.period_only)
     check("both book flags are 0",
           all(int(row["in_survey"]) == 0 and int(row["in_buy_book"]) == 0 for row in after.values()),
           [(row["netsuite_item_id"], row["in_survey"], row["in_buy_book"]) for row in after.values()])
@@ -364,6 +410,9 @@ def section_first_run(company_id: int, client: FakeSuiteQL) -> None:
     check("sort_order is numeric", int(after["101"]["sort_order"]) == 3, after["101"]["sort_order"])
     check("a blank sort is 0", int(after["104"]["sort_order"]) == 0, after["104"]["sort_order"])
     check("the facet-less item was not created", "105" not in after, sorted(after))
+    check("the item only a buy-in period points at was created", "108" in after, sorted(after))
+    check("it arrives with both book flags 0",
+          int(after["108"]["in_survey"]) == 0 and int(after["108"]["in_buy_book"]) == 0, after["108"])
     check("the inactive item was not created", "107" not in after, sorted(after))
     snapshot = json.loads(after["101"]["netsuite_synced_json"])
     check("the snapshot holds itemid and category",
@@ -381,22 +430,48 @@ def section_second_run(company_id: int, client: FakeSuiteQL) -> None:
         after = catalog(conn, company_id)
     check("nothing created", report.created == 0, report.created)
     check("nothing updated", report.updated == 0, report.as_dict())
-    check("everything unchanged", report.unchanged == 5, report.unchanged)
+    check("everything unchanged", report.unchanged == 6, report.unchanged)
     moved = [key for key in before if after[key]["updated_at"] != before[key]]
     check("every updated_at is unchanged", not moved, moved)
 
 
 def section_boot(company_id: int) -> None:
-    """The demo seed runs on every boot. It must not retire the real catalog."""
+    """The demo seed must not retire or rewrite a catalog it did not create.
+
+    Covered with the synced rows, plus the two kinds that carry no NetSuite id:
+    a hand-created row, and the tracker-linked rows #5 will create.
+    """
     print("\n2b. A boot (init_db) leaves the synced catalog alone")
+    from seed import sync_default_survey_items
+
+    now = utc_now().isoformat()
     with connect() as conn:
+        for name in (f"{PREFIX}Hand row", f"{PREFIX}From tracker row"):
+            execute(
+                conn,
+                "INSERT INTO survey_items (company_id, item_name, brand, channel, product_type,"
+                " key_program, item_description, sort_order, netsuite_item_id, in_survey,"
+                " in_buy_book, is_active, created_at, updated_at)"
+                " VALUES (?, ?, '', '', '', '', '', 9, '', 1, 1, ?, ?, ?)",
+                (company_id, name, True, now, now),
+            )
+        before_rows = rows(conn, company_id)
         before = catalog(conn, company_id)
     init_db()
     with connect() as conn:
+        # init_db seeds the default company; run the same seed for this one, which
+        # is the case a deployment hits when the app restarts.
+        sync_default_survey_items(conn, company_id)
+        after_rows = rows(conn, company_id)
         after = catalog(conn, company_id)
     check("every row is still there", set(before) == set(after), (sorted(before), sorted(after)))
-    check("every row is still active", all(int(row["is_active"]) == 1 for row in after.values()),
-          [row["netsuite_item_id"] for row in after.values() if int(row["is_active"]) != 1])
+    check("the seed added nothing to a catalog that is not empty",
+          len(after_rows) == len(before_rows), (len(before_rows), len(after_rows)))
+    check("every row is still active", all(int(row["is_active"]) == 1 for row in after_rows),
+          [row["item_name"] for row in after_rows if int(row["is_active"]) != 1])
+    check("the hand row and the tracker row are still active",
+          all(int(row["is_active"]) == 1 for row in after_rows if not row["netsuite_item_id"]),
+          [(row["item_name"], row["is_active"]) for row in after_rows if not row["netsuite_item_id"]])
     rewritten = [
         netsuite_id
         for netsuite_id, row in before.items()
@@ -434,6 +509,30 @@ def section_changes(company_id: int, client: FakeSuiteQL) -> None:
           after["104"]["item_description"])
     check("reported as one update", report.updated == 1, report.as_dict())
     check("it stays flagged needs_name", int(after["104"]["needs_name"]) == 1, after["104"]["needs_name"])
+
+    print("\n3c. A named row's description follows too; a blank one leaves it alone")
+    client.update(103, description="Heavyweight hoodie, revised")
+    report = sync(company_id, client)
+    with connect() as conn:
+        after = catalog(conn, company_id)
+    check("the named row took the new description",
+          after["103"]["item_description"] == "Heavyweight hoodie, revised",
+          after["103"]["item_description"])
+    check("reported as one update", report.updated == 1, report.as_dict())
+    snapshot = json.loads(after["103"]["netsuite_synced_json"])
+    check("the snapshot carries it", snapshot.get("item_description") == "Heavyweight hoodie, revised",
+          snapshot.get("item_description"))
+
+    client.update(103, description="")
+    report = sync(company_id, client)
+    with connect() as conn:
+        after = catalog(conn, company_id)
+        snapshot = json.loads(after["103"]["netsuite_synced_json"])
+    check("a blank leaves the stored description", after["103"]["item_description"] == "Heavyweight hoodie, revised",
+          after["103"]["item_description"])
+    check("and is not counted as an override", report.overridden == 0, report.overridden)
+    check("and is not written at all", report.updated == 0, report.as_dict())
+    check("the snapshot drops the key", "item_description" not in snapshot, snapshot.get("item_description"))
 
 
 def section_override(company_id: int, client: FakeSuiteQL) -> None:
@@ -523,6 +622,25 @@ def section_retire(company_id: int, client: FakeSuiteQL) -> None:
     with connect() as conn:
         after = catalog(conn, company_id)
     check("the facet-less row was retired", int(after["102"]["is_active"]) == 0, after["102"]["is_active"])
+    check("one retirement counted", report.retired == 1, report.retired)
+
+    print("\n5d. Facets gone but still in a buy-in period: it stays")
+    client.update(104, custitem_facet_brand=None, custitem_facet_channel=None)
+    client.add_period_item(104)
+    report = sync(company_id, client)
+    with connect() as conn:
+        after = catalog(conn, company_id)
+    check("the item is still active", int(after["104"]["is_active"]) == 1, after["104"]["is_active"])
+    check("nothing was retired", report.retired == 0, report.as_dict())
+    check("it is counted as in a buy-in but facet-less", report.period_only >= 1, report.period_only)
+
+    print("\n5e. Losing the last period row and the facets retires it")
+    check("the period row existed", client.in_period(104))
+    client.drop_period_items(104)
+    report = sync(company_id, client)
+    with connect() as conn:
+        after = catalog(conn, company_id)
+    check("the item was retired", int(after["104"]["is_active"]) == 0, after["104"]["is_active"])
     check("one retirement counted", report.retired == 1, report.retired)
 
 

@@ -10,7 +10,9 @@ Three rules the whole file is built around:
 
 * **The catalog is the universe, a buy-in is a selection from it.** This is not
   the per-customer Buy In pull. It reads the item master once, keyset-paged,
-  and never touches a period or a buy-in record.
+  and never touches a period or a buy-in record — it only asks which item ids
+  those records point at, because a kit sold inside a window belongs in the
+  catalog even when it carries no facet.
 * **A person's edit wins, per field.** ``survey_items.netsuite_synced_json``
   holds what NetSuite said last run. A field still equal to that follows
   NetSuite; a field that differs was typed by someone and is left alone (and
@@ -38,6 +40,7 @@ from catalog_mapping import (
     WRITE_FIELDS,
     facet_ids,
     has_any_facet,
+    is_inactive,
     map_item,
     text,
 )
@@ -70,6 +73,7 @@ class CatalogSyncReport:
     company: str = ""
     company_id: int = 0
     dry_run: bool = True
+    active: int = 0
     scanned: int = 0
     created: int = 0
     updated: int = 0
@@ -78,6 +82,7 @@ class CatalogSyncReport:
     retired: int = 0
     needs_name: int = 0
     label_misses: int = 0
+    period_only: int = 0
     excluded: int = 0
     duration: float = 0.0
     notes: list[str] = field(default_factory=list)
@@ -87,11 +92,11 @@ class CatalogSyncReport:
 
     def summary(self) -> str:
         return (
-            f"{self.scanned} scanned, {self.created} created, {self.updated} updated,"
-            f" {self.unchanged} unchanged, {self.overridden} overridden,"
-            f" {self.retired} retired, {self.needs_name} need a name,"
-            f" {self.label_misses} unlabelled facet values, {self.excluded} excluded,"
-            f" {self.duration:.1f}s"
+            f"{self.active} active items, {self.scanned} scanned, {self.created} created,"
+            f" {self.updated} updated, {self.unchanged} unchanged, {self.overridden} overridden,"
+            f" {self.retired} retired, {self.period_only} in a buy-in but facet-less,"
+            f" {self.needs_name} need a name, {self.label_misses} unlabelled facet values,"
+            f" {self.excluded} not in the catalog, {self.duration:.1f}s"
         )
 
 
@@ -172,32 +177,134 @@ def read_item_rows(
     return rows, True
 
 
+BUY_IN_PERIOD_ITEM = "customrecord_ag_buy_in_period_item"
+PERIOD_ITEM_COLUMN = "custrecord_ag_buy_in_period_item_id"
+
+
+@dataclass
+class Scan:
+    """What the item master said, split into the sets the rules need."""
+
+    candidates: list[dict[str, Any]]
+    inactive_ids: set[str]
+    excluded: int
+    period_only: int
+    active: int
+    rows_read: int
+    seen: set[str]
+    complete: bool
+
+
+def read_period_item_ids(client: Any, page_size: int = 500) -> set[str]:
+    """Every item id any buy-in period row points at, deduplicated here.
+
+    SuiteQL refused ``DISTINCT`` and ``GROUP BY`` on this record in the live
+    read, so the rows are paged by id and deduplicated in Python. 564 rows in
+    this account: one page, one query, no ``IN`` list.
+    """
+    ids: set[str] = set()
+    last = 0
+    while True:
+        statement = (
+            f"SELECT id, {PERIOD_ITEM_COLUMN} AS item_id FROM {BUY_IN_PERIOD_ITEM}"
+            f" WHERE id > {int(last)} ORDER BY id FETCH FIRST {int(page_size)} ROWS ONLY"
+        )
+        page, _ = client.query(statement, limit=page_size)
+        if not page:
+            break
+        for row in page:
+            value = text(row.get("item_id") or row.get(PERIOD_ITEM_COLUMN))
+            if value.isdigit():
+                ids.add(value)
+        last = int(str(page[-1].get("id")))
+        if len(page) < page_size:
+            break
+    return ids
+
+
+def fetch_items_by_id(client: Any, ids: list[str], *, batch: int = 40) -> list[dict[str, Any]]:
+    """Item rows for these ids, batched. 40 at a time: 500 ids already 500'd."""
+    rows: list[dict[str, Any]] = []
+    for start in range(0, len(ids), batch):
+        chunk = [value for value in ids[start : start + batch] if value.isdigit()]
+        if not chunk:
+            continue
+        page = client.query_all(
+            f"SELECT {_select_columns()} FROM item i WHERE i.id IN ({', '.join(chunk)})",
+            limit=len(chunk) + 5,
+        )
+        rows.extend(page)
+    return rows
+
+
 def _scan(
     client: SuiteQLClient, limit: int | None, log: Any = None, page_size: int = PAGE_SIZE
-) -> tuple[list[dict[str, Any]], set[str], int, int, bool]:
-    """(catalog candidates, inactive ids, excluded count, rows read, complete).
+) -> Scan:
+    """Read the item master and work out what belongs to the catalog.
 
-    A candidate is an active item with at least one facet. An inactive item
-    with facets is not written but is remembered, because a catalog row for it
-    must be retired. An active item with no facet is excluded and counted.
+    The catalog is the union of two sets:
+
+    * an active item carrying at least one facet, and
+    * an item any buy-in period row points at — a kit or assembly sold inside a
+      real window often carries no facet and is still part of the buy-in
+      universe, so a catalog that cannot represent it is the wrong catalog.
+
+    An inactive item is never written but is remembered, because a catalog row
+    for it must be retired. An active item in neither set is excluded, so
+    ``excluded`` keeps meaning "not catalog".
     """
     rows, complete = read_item_rows(client, limit=limit, page_size=page_size, log=log)
+    period_ids = read_period_item_ids(client)
     candidates: list[dict[str, Any]] = []
     inactive_ids: set[str] = set()
-    excluded = 0
+    scanned: set[str] = set()
+    no_facet_active: list[tuple[str, dict[str, Any]]] = []
     for row in rows:
         internal_id = text(row.get("id"))
-        faceted = has_any_facet(row)
-        inactive = text(row.get("isinactive")).upper() in ("T", "TRUE", "1")
-        if inactive:
-            if faceted:
+        scanned.add(internal_id)
+        if is_inactive(row):
+            if has_any_facet(row) or internal_id in period_ids:
                 inactive_ids.add(internal_id)
             continue
-        if not faceted:
+        if has_any_facet(row):
+            candidates.append(row)
+        else:
+            no_facet_active.append((internal_id, row))
+
+    period_only = 0
+    excluded = 0
+    for internal_id, row in no_facet_active:
+        if internal_id in period_ids:
+            candidates.append(row)
+            period_only += 1
+        else:
             excluded += 1
+
+    # A period item can sit outside the scan: inactive, or past a --limit cut.
+    # Read those by id so both the boundary and retirement see the whole set.
+    missing = [value for value in sorted(period_ids) if value not in scanned]
+    for row in fetch_items_by_id(client, missing):
+        internal_id = text(row.get("id"))
+        if not internal_id:
             continue
-        candidates.append(row)
-    return candidates, inactive_ids, excluded, len(rows), complete
+        if is_inactive(row):
+            inactive_ids.add(internal_id)
+        else:
+            candidates.append(row)
+            period_only += 1
+
+    return Scan(
+        candidates=candidates,
+        inactive_ids=inactive_ids,
+        excluded=excluded,
+        period_only=period_only,
+        active=sum(1 for row in rows if not is_inactive(row)),
+        rows_read=len(rows),
+        # The union of the two catalog sets: what a run keeps, as opposed to
+        # every row it happened to read.
+        seen={text(row.get("id")) for row in candidates} | period_ids,
+        complete=complete,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -439,11 +546,12 @@ def sync_catalog(
 
     conn = connect()
     try:
-        candidates, inactive_ids, excluded, rows_read, complete = _scan(
-            source, limit, log=log, page_size=page_size
-        )
-        report.scanned = rows_read
-        report.excluded = excluded
+        scan = _scan(source, limit, log=log, page_size=page_size)
+        candidates = scan.candidates
+        report.active = scan.active
+        report.scanned = scan.rows_read
+        report.excluded = scan.excluded
+        report.period_only = scan.period_only
         if not candidates:
             raise SourceError(
                 "NetSuite returned no facet-bearing active items; refusing to treat an empty"
@@ -455,10 +563,8 @@ def sync_catalog(
 
         existing, all_rows = _existing_rows(conn, company_id)
         synced_at = now.isoformat()
-        seen: set[str] = set()
         for row in candidates:
             item = map_item(row, resolution, synced_at)
-            seen.add(item.netsuite_item_id)
             current = existing.get(item.netsuite_item_id)
             if current is None:
                 _create_row(conn, company_id, item, now)
@@ -477,12 +583,12 @@ def sync_catalog(
             conn,
             company_id,
             all_rows,
-            seen=seen,
-            inactive_ids=inactive_ids,
-            complete=complete,
+            seen=scan.seen,
+            inactive_ids=scan.inactive_ids,
+            complete=scan.complete,
             now=now,
         )
-        if not complete:
+        if not scan.complete:
             report.notes.append(
                 "partial scan (--limit): items that did not appear were not retired"
             )
@@ -526,6 +632,10 @@ def _retire_missing(
     now: Any,
 ) -> int:
     """The one-way door: archive what NetSuite no longer offers as an item.
+
+    Retirement follows the union of the two catalog sets. An item that loses its
+    facets but still appears in a buy-in period is not gone — it stays. Out of
+    both sets, or ``isinactive``, it is archived once.
 
     Only rows this sync owns — a non-empty snapshot — are candidates. A row a
     person typed (or one the tracker link created) has no snapshot and is not
