@@ -217,7 +217,8 @@ def _public_book_payload(company_id: int) -> dict:
             WHERE company_id = ? AND is_active = ? AND in_buy_book = ?
             ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
             """,
-            (company_id, True, True),
+            # in_buy_book is an INTEGER column on Postgres; a bool here is a type error.
+            (company_id, True, 1),
         ).fetchall()
         fields = buy_book_filter_fields(conn, company_id)
         layers = buy_book_page_break_layers(conn, company_id)
