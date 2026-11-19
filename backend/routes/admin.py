@@ -12,6 +12,8 @@ from openpyxl.styles import Font
 
 from config import IS_POSTGRES, NETSUITE_SYNC_COMPANY_SLUG, SHEETS
 from database import (
+    public_book_token_for,
+    rotate_public_book_token,
     MAX_PAGE_BREAK_LAYERS,
     fetch_company_by_id,
     buy_book_filter_fields,
@@ -404,6 +406,30 @@ def update_survey_layout(
 # ---------------------------------------------------------------------------
 # Buy book layout
 # ---------------------------------------------------------------------------
+
+@router.get("/buy-book-link")
+def get_buy_book_link(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    """The public, read-only Buy Book link for this company. Mints it on first ask."""
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        token = public_book_token_for(conn, company_id)
+    return {"token": token, "path": f"/book/{token}"}
+
+
+@router.post("/buy-book-link/rotate")
+def rotate_buy_book_link(
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    """Replace the link. The old one stops working — that is the point of rotating."""
+    company_id = resolve_scoped_company_id(user, company_id)
+    with connect() as conn:
+        token = rotate_public_book_token(conn, company_id)
+    return {"token": token, "path": f"/book/{token}"}
+
 
 @router.get("/buy-book-layout")
 def get_buy_book_layout(

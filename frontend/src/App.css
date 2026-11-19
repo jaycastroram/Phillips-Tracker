@@ -4073,3 +4073,217 @@ td textarea {
   font-size: 0.78rem;
   white-space: nowrap;
 }
+
+/* ---- Public Buy Book: a link a bar can tick through and print ---- */
+.public-book {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+  background: #fff;
+}
+
+.public-book-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 2px solid var(--brand-ink, #131313);
+  padding-bottom: 14px;
+}
+
+.public-book-header h1 {
+  margin: 2px 0 4px;
+  font-family: "Poppins", sans-serif;
+  font-size: 1.8rem;
+}
+
+.public-book-date {
+  margin: 0;
+  color: #5a6879;
+  font-size: 0.9rem;
+}
+
+.public-book-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.public-book-actions span {
+  color: #5a6879;
+  font-size: 0.85rem;
+}
+
+.public-book-actions button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--brand-gridline, #e3e8ef);
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.public-book-filters {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0 8px;
+}
+
+.public-book-filters select {
+  min-width: 170px;
+  height: 36px;
+}
+
+.public-book-list {
+  display: grid;
+  gap: 10px;
+}
+
+.public-book-entry {
+  break-inside: avoid;
+}
+
+.public-book-entry.is-excluded {
+  display: none;
+}
+
+.public-book-entry[data-page-break="true"] {
+  break-before: page;
+}
+
+.public-book-group {
+  margin: 18px 0 6px;
+  border-bottom: 1px solid var(--brand-gridline, #e3e8ef);
+  padding-bottom: 4px;
+}
+
+.public-book-group h2 {
+  margin: 0;
+  font-family: "Poppins", sans-serif;
+  font-size: 1.4rem;
+}
+
+.public-book-subgroup {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 6px 0 2px;
+  font-weight: 600;
+  color: #33404d;
+}
+
+.public-book-subgroup span {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8a95a3;
+}
+
+.public-book-card {
+  display: grid;
+  grid-template-columns: auto 96px 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--gridline, #e6e6e6);
+  border-radius: 10px;
+  background: #fff;
+  break-inside: avoid;
+}
+
+.public-book-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: #5a6572;
+}
+
+.public-book-image {
+  width: 96px;
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f4f6f9;
+  border-radius: 8px;
+  overflow: hidden;
+  font-weight: 700;
+  color: #8b96a3;
+}
+
+.public-book-image img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.public-book-copy h3 {
+  margin: 0 0 2px;
+  font-size: 1rem;
+}
+
+.public-book-copy p {
+  margin: 0;
+  color: #5a6572;
+  font-size: 0.86rem;
+}
+
+.public-book-description {
+  margin-top: 4px !important;
+  color: #6b7785 !important;
+}
+
+@media print {
+  .public-book-actions,
+  .public-book-filters {
+    display: none !important;
+  }
+
+  .public-book {
+    max-width: none;
+    padding: 0;
+  }
+
+  .public-book-card {
+    border: 0;
+    border-bottom: 1px solid #ddd;
+    border-radius: 0;
+    padding: 6px 0;
+  }
+
+  .public-book-check {
+    display: none !important;
+  }
+
+  .public-book-card {
+    grid-template-columns: 80px 1fr;
+  }
+}
+
+.buy-book-link-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.buy-book-link-row input {
+  flex: 1 1 260px;
+  min-height: 34px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+}
+
+.buy-book-link-row button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--brand-gridline, #e3e8ef);
+  border-radius: 8px;
+  background: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}

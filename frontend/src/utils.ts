@@ -1,7 +1,7 @@
 import { DEFAULT_COMPANY_SLUG, NOT_ON_TRACK_STATUSES } from './constants'
 import type { SheetKey, TrackerItem, ViewerStatus } from './types'
 
-export type PublicCompanyPage = 'viewer' | 'survey'
+export type PublicCompanyPage = 'viewer' | 'survey' | 'book'
 export type PublicPagePath = '/viewer' | '/viewer/kanban' | '/survey'
 
 export type PublicRoute = {
@@ -9,10 +9,22 @@ export type PublicRoute = {
   page: PublicCompanyPage | null
   isKanban: boolean
   usesCompanyPrefix: boolean
+  /** Only for page === 'book': the token in /book/<token>. */
+  bookToken?: string
 }
 
 export function parsePublicRoute(pathname: string): PublicRoute {
   const [first = '', second = '', third = ''] = pathname.split('/').filter(Boolean)
+
+  if (first === 'book') {
+    return {
+      companySlug: DEFAULT_COMPANY_SLUG,
+      page: 'book',
+      isKanban: false,
+      usesCompanyPrefix: false,
+      bookToken: second,
+    }
+  }
 
   if (first === 'viewer' || first === 'survey') {
     return {

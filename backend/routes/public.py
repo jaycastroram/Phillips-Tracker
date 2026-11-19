@@ -8,6 +8,10 @@ from fastapi import APIRouter, HTTPException, status
 
 from config import IS_POSTGRES
 from database import (
+    apply_buy_book_layers,
+    buy_book_filter_fields,
+    buy_book_page_break_layers,
+    company_by_public_book_token,
     company_to_public,
     connect,
     ensure_default_company,
@@ -197,6 +201,47 @@ def _survey_items_response(company_id: int, q: str, surface: str, token: str = "
         "period": survey_period_to_public(period),
         "survey_open": True,
     }
+
+
+# ---------------------------------------------------------------------------
+# Public Buy Book (read-only, one token per company)
+# ---------------------------------------------------------------------------
+
+def _public_book_payload(company_id: int) -> dict:
+    """The book as a stranger may see it: items, order, layer breaks. Read only."""
+    with connect() as conn:
+        rows = execute(
+            conn,
+            """
+            SELECT * FROM survey_items
+            WHERE company_id = ? AND is_active = ? AND in_buy_book = ?
+            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
+            """,
+            (company_id, True, True),
+        ).fetchall()
+        fields = buy_book_filter_fields(conn, company_id)
+        layers = buy_book_page_break_layers(conn, company_id)
+        company = execute(
+            conn,
+            "SELECT * FROM companies WHERE id = ?",
+            (company_id,),
+        ).fetchone()
+    items = apply_buy_book_layers([survey_item_to_public(row, surface="buy-book") for row in rows], layers)
+    return {
+        "company": company_to_public(company),
+        "items": items,
+        "filter_fields": fields,
+        "page_break_layers": layers,
+    }
+
+
+@router.get("/book/{token}")
+def get_public_buy_book(token: str) -> dict:
+    with connect() as conn:
+        company = company_by_public_book_token(conn, token)
+    if company is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
+    return _public_book_payload(int(company["id"]))
 
 
 @router.get("/survey-items")

@@ -21,6 +21,8 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
   const [items, setItems] = useState<SurveyItem[]>([])
   const [filterFields, setFilterFields] = useState<SurveyFilterField[]>([])
   const [layers, setLayers] = useState<BuyBookLayer[]>(DEFAULT_PAGE_BREAK_LAYERS)
+  const [bookLink, setBookLink] = useState('')
+  const [linkBusy, setLinkBusy] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
@@ -61,6 +63,30 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
   useEffect(() => {
     loadLayout()
   }, [loadLayout])
+
+  useEffect(() => {
+    apiFetch('/admin/buy-book-link')
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.path) setBookLink(data.path)
+      })
+      .catch(() => undefined)
+  }, [apiFetch])
+
+  async function replaceBookLink() {
+    setLinkBusy(true)
+    try {
+      const res = await apiFetch('/admin/buy-book-link/rotate', { method: 'POST' })
+      if (!res.ok) throw new Error('Unable to replace the link.')
+      const data = await res.json()
+      setBookLink(data.path)
+      setMessage('New public book link created; the old one stopped working.')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to replace the link.')
+    } finally {
+      setLinkBusy(false)
+    }
+  }
 
   async function saveLayout(draftItems: SurveyItem[], draftFilters: SurveyFilterField[]) {
     setSaving(true)
@@ -110,6 +136,25 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
             <PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />
             {isAdmin && <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />}
             <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
+            <div className="survey-layout-filter-row">
+              <p className="survey-layout-filter-label">Public book link</p>
+              <p className="survey-layout-filter-note">
+                Read-only with no sign-in: anyone holding this link can open the book, tick items
+                and print. Replace it if it has travelled too far.
+              </p>
+              <div className="buy-book-link-row">
+                <input readOnly value={bookLink} />
+                <button type="button" onClick={() => navigator.clipboard?.writeText(window.location.origin + bookLink)}>
+                  Copy
+                </button>
+                <button type="button" onClick={() => window.open(window.location.origin + bookLink, '_blank', 'noopener')}>
+                  Open
+                </button>
+                <button type="button" disabled={linkBusy} onClick={replaceBookLink}>
+                  Replace
+                </button>
+              </div>
+            </div>
           </>
         )}
         includeLabel="In Buy Book"

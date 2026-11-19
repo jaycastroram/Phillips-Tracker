@@ -424,6 +424,8 @@ def _ensure_company_columns(conn) -> None:
     # The market a company sells into; the Buy Book cover prints it, and a
     # period's cover_json can override it for one book.
     ensure_column(conn, "companies", "market_label", "TEXT")
+    # The public Buy Book link: one opaque token per company, minted on demand.
+    ensure_column(conn, "companies", "public_book_token", "TEXT")
     ensure_column(conn, "users", "company_id", "INTEGER")
 
 

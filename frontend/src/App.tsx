@@ -21,7 +21,7 @@ import { AdminPage } from './pages/AdminPage'
 import { SurveysPage } from './pages/SurveysPage'
 import { SystemLogPage } from './pages/SystemLogPage'
 import { TrackerPage } from './pages/TrackerPage'
-import { SurveyPage, ViewerPage } from './publicPages'
+import { PublicBookPage, SurveyPage, ViewerPage } from './publicPages'
 import type {
   AppUser,
   CompanyInfo,
@@ -115,6 +115,7 @@ function App() {
   const publicRoute = useMemo(() => parsePublicRoute(currentPath), [currentPath])
   const { companySlug, page: publicPage, isKanban: isPublicKanbanPath } = publicRoute
   const isPublicViewerPath = publicPage === 'viewer'
+  const isPublicBookPath = publicPage === 'book'
   const isPublicSurveyPath = publicPage === 'survey'
   const isPublicSurface = isPublicViewerPath || isPublicSurveyPath
 
@@ -524,6 +525,10 @@ function App() {
     companyName: companyConfig.company_name,
     companyLogoUrl: companyConfig.logo_url,
     companyBannerUrl: companyConfig.banner_url,
+  }
+
+  if (isPublicBookPath) {
+    return <PublicBookPage token={publicRoute.bookToken ?? ''} />
   }
 
   if (isPublicSurveyPath) {

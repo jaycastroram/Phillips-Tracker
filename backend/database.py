@@ -725,6 +725,39 @@ def survey_filter_fields(conn: Any, company_id: int) -> list[str]:
     return normalize_filter_fields([str(f) for f in stored_fields])
 
 
+def public_book_token_for(conn: Any, company_id: int) -> str:
+    """The company's public Buy Book token, minted the first time it is asked for."""
+    row = execute(
+        conn,
+        "SELECT public_book_token FROM companies WHERE id = ?",
+        (company_id,),
+    ).fetchone()
+    token = str((row["public_book_token"] if row is not None else "") or "").strip()
+    if token:
+        return token
+    token = secrets.token_urlsafe(18)
+    execute(conn, "UPDATE companies SET public_book_token = ? WHERE id = ?", (token, company_id))
+    return token
+
+
+def company_by_public_book_token(conn: Any, token: str) -> Any:
+    """The company a public book link names, or None — no hint about other tenants."""
+    text = str(token or "").strip()
+    if not text:
+        return None
+    return execute(
+        conn,
+        "SELECT * FROM companies WHERE public_book_token = ?",
+        (text,),
+    ).fetchone()
+
+
+def rotate_public_book_token(conn: Any, company_id: int) -> str:
+    token = secrets.token_urlsafe(18)
+    execute(conn, "UPDATE companies SET public_book_token = ? WHERE id = ?", (token, company_id))
+    return token
+
+
 def ensure_buy_book_layout(conn: Any, company_id: int) -> Any:
     existing = execute(
         conn,

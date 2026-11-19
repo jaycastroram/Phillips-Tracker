@@ -9,7 +9,7 @@ import type {
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
-import { DEFAULT_SURVEY_QUESTIONS } from './constants'
+import { API_BASE, DEFAULT_SURVEY_QUESTIONS } from './constants'
 import {
   getViewerStatus,
   isImageReference,
@@ -936,4 +936,179 @@ export function ViewerPage({
       )}
     </main>
   )
+}
+
+// ---------------------------------------------------------------------------
+// Public Buy Book: a link a bar can open, tick through, and print.
+// Read-only — nothing here writes to the server.
+// ---------------------------------------------------------------------------
+
+type PublicBookPayload = {
+  company?: { name?: string; logo_url?: string; banner_url?: string }
+  items: SurveyItem[]
+  filter_fields?: SurveyFilterField[]
+  page_break_layers?: { field: string; new_page: boolean }[]
+}
+
+export function PublicBookPage({ token }: { token: string }) {
+  const [book, setBook] = useState<PublicBookPayload | null>(null)
+  const [error, setError] = useState('')
+  const [loading, setErrorLoading] = useState(true)
+  const [excluded, setExcluded] = useState<Set<number>>(new Set())
+  const [brand, setBrand] = useState('')
+  const [channel, setChannel] = useState('')
+  const [productType, setProductType] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API_BASE}/public/book/${encodeURIComponent(token)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error(res.status === 404 ? 'This book link is no longer valid.' : 'Unable to load the book.')
+        return res.json()
+      })
+      .then((data: PublicBookPayload) => {
+        if (!cancelled) setBook(data)
+      })
+      .catch((err: Error) => { if (!cancelled) setError(err.message) })
+      .finally(() => { if (!cancelled) setErrorLoading(false) })
+    return () => { cancelled = true }
+  }, [token])
+
+  const items = useMemo(() => {
+    const all = book?.items ?? []
+    return all.filter(
+      (item) =>
+        (!brand || (item.brand ?? '') === brand) &&
+        (!channel || (item.channel ?? '') === channel) &&
+        (!productType || (item.product_type ?? '') === productType),
+    )
+  }, [book, brand, channel, productType])
+
+  const brands = useMemo(() => uniqueValues(book?.items ?? [], 'brand'), [book])
+  const channels = useMemo(() => uniqueValues(book?.items ?? [], 'channel'), [book])
+  const types = useMemo(() => uniqueValues(book?.items ?? [], 'product_type'), [book])
+
+  const included = items.filter((item) => !excluded.has(item.id))
+
+  function toggle(id: number) {
+    setExcluded((current) => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  if (loading) return <main className="public-book"><p>Loading the book…</p></main>
+  if (error) return <main className="public-book"><p className="error">{error}</p></main>
+
+  return (
+    <main className="public-book">
+      <header className="public-book-header">
+        <div>
+          <p className="eyebrow">Buy Book</p>
+          <h1>{book?.company?.name || 'Buy Book'}</h1>
+          <p className="public-book-date">
+            {new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
+        <div className="public-book-actions">
+          <span>{included.length} of {items.length} items</span>
+          <button type="button" onClick={() => setExcluded(new Set())}>Select all</button>
+          <button type="button" onClick={() => setExcluded(new Set(items.map((item) => item.id)))}>Clear</button>
+          <button className="primary-action" type="button" onClick={() => window.print()}>Print</button>
+        </div>
+      </header>
+
+      <div className="public-book-filters">
+        <select aria-label="Brand" value={brand} onChange={(event) => setBrand(event.target.value)}>
+          <option value="">All brands</option>
+          {brands.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <select aria-label="Channel" value={channel} onChange={(event) => setChannel(event.target.value)}>
+          <option value="">All channels</option>
+          {channels.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+        <select aria-label="Product type" value={productType} onChange={(event) => setProductType(event.target.value)}>
+          <option value="">All product types</option>
+          {types.map((value) => <option key={value} value={value}>{value}</option>)}
+        </select>
+      </div>
+
+      <section className="public-book-list">
+        {(() => {
+          let lastSection = ''
+          return items.map((item) => {
+          const headers = item.group_headers ?? []
+          const skipped = excluded.has(item.id)
+          // A page that opens deeper in the stack repeats the whole path so the
+          // printed page is readable on its own; on a continuous list the same
+          // Brand heading twice in a row is just noise.
+          const visible = headers.filter((header) => {
+            if ((header.level ?? 0) !== 0) return true
+            if (header.label === lastSection) return false
+            lastSection = header.label
+            return true
+          })
+          return (
+            <div
+              key={item.id}
+              className={`public-book-entry${skipped ? ' is-excluded' : ''}`}
+              data-page-break={item.page_break_before ? 'true' : undefined}
+            >
+              {visible.map((header, depth) =>
+                (header.level ?? depth) === 0 ? (
+                  <div key={`${item.id}-h0`} className="public-book-group">
+                    <p className="eyebrow">{facetName(header.field)}</p>
+                    <h2>{header.label}</h2>
+                  </div>
+                ) : (
+                  <p key={`${item.id}-h${depth}`} className="public-book-subgroup">
+                    <span>{facetName(header.field)}</span>
+                    {header.label}
+                  </p>
+                ),
+              )}
+              <article className="public-book-card">
+                <label className="public-book-check">
+                  <input checked={!skipped} type="checkbox" onChange={() => toggle(item.id)} />
+                  <span>Include</span>
+                </label>
+                <div className="public-book-image">
+                  {isImageReference(item.image_url) ? (
+                    <img src={item.image_url} alt="" />
+                  ) : (
+                    <span>{(item.brand || 'SB').slice(0, 2).toUpperCase()}</span>
+                  )}
+                </div>
+                <div className="public-book-copy">
+                  <h3>{item.item_name}</h3>
+                  <p>{[item.brand, item.channel, item.product_type].filter(Boolean).join(' · ')}</p>
+                  {item.item_description && <p className="public-book-description">{item.item_description}</p>}
+                </div>
+              </article>
+            </div>
+          )
+          })
+        })()}
+        {items.length === 0 && <p>No items in this book yet.</p>}
+      </section>
+    </main>
+  )
+}
+
+function uniqueValues(items: SurveyItem[], key: 'brand' | 'channel' | 'product_type'): string[] {
+  const seen = new Set<string>()
+  for (const item of items) {
+    const value = String(item[key] ?? '').trim()
+    if (value) seen.add(value)
+  }
+  return [...seen].sort((a, b) => a.localeCompare(b))
+}
+
+function facetName(field: string) {
+  if (field === 'key_program') return 'Program'
+  if (field === 'product_type') return 'Type'
+  if (field === 'channel') return 'Channel'
+  return 'Brand'
 }
