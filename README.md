@@ -98,3 +98,33 @@ Render will:
 
 Before deploying publicly, set `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, and the
 `CLOUDINARY_*` values in Render.
+
+### NetSuite catalog sync
+
+The catalog reconciles against the NetSuite item master once a night (`render.yaml`
+cron `smartbuy-catalog-sync`, 07:00 UTC) and on demand from **Survey / Buy Book →
+Buy Book Layout → Sync from NetSuite**. Read-only towards NetSuite: SuiteQL
+queries only, nothing is ever written back.
+
+Set these on the web service **and** the cron job:
+
+- `NETSUITE_CONSUMER_KEY`, `NETSUITE_CONSUMER_SECRET`, `NETSUITE_TOKEN_ID`,
+  `NETSUITE_TOKEN_SECRET` — a token-based-auth (TBA) integration token whose role
+  has SuiteQL access. Read-only role; the app never posts a record.
+- `NETSUITE_REALM` — the account id (e.g. `1234567`), upper-cased here.
+- `NETSUITE_BASE_URL` — the REST base, e.g. `https://1234567.suitetalk.api.netsuite.com`.
+  Quotes and a pasted `htttps://` are repaired on read.
+- `NETSUITE_SYNC_COMPANY_SLUG` — the one company a run writes to (default: the
+  app's company).
+
+Run it by hand before trusting the cron:
+
+```
+python backend/scripts/sync_catalog.py                    # dry run, prints the report
+python backend/scripts/sync_catalog.py --apply            # writes
+python backend/scripts/sync_catalog.py --limit 200 --report /tmp/run.json
+```
+
+A dry run is the same code path inside a transaction that is rolled back, so it
+is an honest preview. `python backend/scripts/netsuite_sync.py` is the offline
+acceptance check (add `--live` for one real read when the credentials are set).
