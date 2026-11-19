@@ -12,9 +12,12 @@ type Props = {
   // The company the page is showing. The PDF has to be the same one, so it
   // travels in the body (the route takes no query parameters).
   companyId?: number | null
+  // Sync and Reset are admin routes. A viewer may open this page, so the
+  // controls are hidden rather than shown to answer 403.
+  isAdmin?: boolean
 }
 
-export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
+export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Props) {
   const [items, setItems] = useState<SurveyItem[]>([])
   const [filterFields, setFilterFields] = useState<SurveyFilterField[]>([])
   const [layers, setLayers] = useState<BuyBookLayer[]>(DEFAULT_PAGE_BREAK_LAYERS)
@@ -105,7 +108,7 @@ export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
         filterExtra={(
           <>
             <PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />
-            <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />
+            {isAdmin && <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />}
             <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
           </>
         )}
@@ -117,7 +120,7 @@ export function BuyBookLayoutPage({ apiFetch, companyId }: Props) {
         message={message || resetNote}
         saving={saving}
         onSave={saveLayout}
-        renderItemExtra={(item) =>
+        renderItemExtra={!isAdmin ? undefined : (item) =>
           item.netsuite_synced ? (
             <button
               className="secondary-button catalog-reset"
