@@ -363,6 +363,15 @@ def seed_sheet_statuses_if_empty(conn: Any, company_id: int) -> None:
 
 
 def sync_default_survey_items(conn: Any, company_id: int) -> None:
+    """Top up the demo catalog on boot — and stay out of the real one.
+
+    These twenty hand-written rows exist so a fresh install has something to
+    show. Any row carrying a NetSuite id belongs to the item master or to the
+    tracker link, not to this seed: the seed neither rewrites it nor retires it.
+    Before that rule, the blanket "deactivate everything whose name is not one
+    of mine" ran on every boot and would have deactivated an entire synced
+    catalog the first time the app restarted.
+    """
     active_item_names = []
 
     for item in DEFAULT_SURVEY_ITEMS:
@@ -372,6 +381,7 @@ def sync_default_survey_items(conn: Any, company_id: int) -> None:
             """
             SELECT id FROM survey_items
             WHERE company_id = ? AND lower(item_name) = lower(?)
+              AND COALESCE(netsuite_item_id, '') = ''
             ORDER BY id ASC LIMIT 1
             """,
             (company_id, item["item_name"]),
@@ -422,6 +432,7 @@ def sync_default_survey_items(conn: Any, company_id: int) -> None:
         UPDATE survey_items
         SET is_active = ?
         WHERE company_id = ? AND lower(item_name) NOT IN ({placeholders})
+          AND COALESCE(netsuite_item_id, '') = ''
         """,
         (False, company_id, *active_item_names),
     )
