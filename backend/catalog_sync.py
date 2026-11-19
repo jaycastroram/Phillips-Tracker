@@ -380,6 +380,34 @@ def _has_column(row: Any, name: str) -> bool:
         return name in row
 
 
+def _retire(conn: Any, company_id: int, rows: list[Any], reason: str, now: Any) -> int:
+    """Archive rows once. Never deletes, never reactivates."""
+    retired = 0
+    for row in rows:
+        if not _row_active(row):
+            continue
+        execute(
+            conn,
+            "UPDATE survey_items SET is_active = ?, archived_at = ?, updated_at = ? WHERE id = ?",
+            (_active_value(False), now, now, row["id"]),
+        )
+        _audit(
+            conn,
+            company_id,
+            AUDIT_RETIRED,
+            item_id=int(row["id"]),
+            before={"is_active": True, "netsuite_item_id": row["netsuite_item_id"]},
+            after={
+                "is_active": False,
+                "archived_at": now,
+                "reason": reason,
+                "netsuite_item_id": row["netsuite_item_id"],
+            },
+        )
+        retired += 1
+    return retired
+
+
 def sync_catalog(
     company: Any,
     *,
@@ -425,10 +453,12 @@ def sync_catalog(
         resolution = resolve_facets(conn, source, company_id, facet_value_ids(candidates))
         report.label_misses = _label_misses(candidates, resolution)
 
-        existing, _all_rows = _existing_rows(conn, company_id)
+        existing, all_rows = _existing_rows(conn, company_id)
         synced_at = now.isoformat()
+        seen: set[str] = set()
         for row in candidates:
             item = map_item(row, resolution, synced_at)
+            seen.add(item.netsuite_item_id)
             current = existing.get(item.netsuite_item_id)
             if current is None:
                 _create_row(conn, company_id, item, now)
@@ -443,8 +473,19 @@ def sync_catalog(
             else:
                 report.unchanged += 1
 
+        report.retired = _retire_missing(
+            conn,
+            company_id,
+            all_rows,
+            seen=seen,
+            inactive_ids=inactive_ids,
+            complete=complete,
+            now=now,
+        )
         if not complete:
-            report.notes.append("partial scan (--limit): item rows were not all read")
+            report.notes.append(
+                "partial scan (--limit): items that did not appear were not retired"
+            )
         report.duration = round(time.monotonic() - started, 2)
         _audit(conn, company_id, AUDIT_RUN, after=report.as_dict(), user_email=user_email)
         if apply:
@@ -472,6 +513,36 @@ def _label_misses(candidates: Iterable[dict[str, Any]], resolution: FacetResolut
             if ids.get(facet) and not resolution.label(facet, ids.get(facet)):
                 misses += 1
     return misses
+
+
+def _retire_missing(
+    conn: Any,
+    company_id: int,
+    rows: list[Any],
+    *,
+    seen: set[str],
+    inactive_ids: set[str],
+    complete: bool,
+    now: Any,
+) -> int:
+    """The one-way door: archive what NetSuite no longer offers as an item.
+
+    Only rows this sync owns — a non-empty snapshot — are candidates. A row a
+    person typed (or one the tracker link created) has no snapshot and is not
+    in the sync's hands, so a coincidental NetSuite id cannot cost it its
+    place. An empty scan is refused before this runs, so a bad night cannot
+    archive the catalog.
+    """
+    doomed = []
+    for row in rows:
+        netsuite_id = text(row["netsuite_item_id"])
+        if not netsuite_id or parse_snapshot(row["netsuite_synced_json"]) is None:
+            continue
+        if netsuite_id in inactive_ids:
+            doomed.append(row)
+        elif complete and netsuite_id not in seen:
+            doomed.append(row)
+    return _retire(conn, company_id, doomed, RETIRE_REASON, now)
 
 
 def reset_to_netsuite(conn: Any, row: Any, *, user_email: str = SYSTEM_USER_EMAIL) -> dict[str, Any]:

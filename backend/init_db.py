@@ -715,6 +715,9 @@ def init_db() -> None:
         # A row created without a usable NetSuite name: named ``Item <id>`` and
         # kept out of every book until someone names it.
         ensure_column(conn, "survey_items", "needs_name", "INTEGER NOT NULL DEFAULT 0")
+        # When a run retired the row. One-way: nothing ever clears it back to an
+        # active row except a person, and the next run retires it again.
+        ensure_column(conn, "survey_items", "archived_at", "TEXT")
         ensure_column(conn, "survey_responses", "survey_period_id", "INTEGER")
         _ensure_company_columns(conn)
         _ensure_survey_layout_columns(conn)
