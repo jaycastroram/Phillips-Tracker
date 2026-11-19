@@ -27,6 +27,14 @@ ALLOWED_CALL_SITES: dict[str, str] = {
     "backend/item_images.py": "HEAD only, to check that a media file answers 200",
     "backend/zoho_analytics.py": "Zoho Analytics: GET reads plus a Zoho token refresh",
     "backend/scripts/check_item_images.py": "test client against our own app",
+    "backend/netsuite.py": "read-only SuiteQL: one POST to .../query/v1/suiteql, which runs a query",
+}
+
+# A POST that is a read. SuiteQL takes its statement in a POST body, so the one
+# client necessarily "posts"; the guard treats it as read-only only while that
+# is the only write verb in the file and no other endpoint is addressed.
+READ_ONLY_POST_SITES = {
+    "backend/netsuite.py": "/services/rest",
 }
 
 OUTBOUND_PATTERNS = (
@@ -96,7 +104,24 @@ def main() -> int:
             print(f"  ok    {relative}  ({count}) — {reason}")
 
     for location in write_risks:
+        relative = location.split(":", 1)[0]
+        if relative in READ_ONLY_POST_SITES:
+            continue
         failures.append(f"{location}: a write verb sits next to a NetSuite/SuiteCommerce host")
+
+    for relative, endpoint in READ_ONLY_POST_SITES.items():
+        path = ROOT / relative
+        if not path.exists():
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        writes = re.findall(r"requests\.(put|patch|delete)\(|method\s*=\s*['\"](?:PUT|PATCH|DELETE)", text, re.I)
+        posts = re.findall(r"requests\.post\(", text)
+        if writes:
+            raise SystemExit(f"{path}: a read-only client calls a write verb: {writes}")
+        if len(posts) != 1:
+            failures.append(f"{relative}: {len(posts)} request call(s) in a query-only client; one read is expected")
+        if endpoint not in text:
+            failures.append(f"{relative}: does not address {endpoint}")
 
     # NetSuite credentials in the tree would mean a client capable of writing.
     # A credential is what would make a write possible; a column called
@@ -106,6 +131,10 @@ def main() -> int:
     )
     for path in iter_sources():
         if path.name == "check_netsuite_readonly.py":
+            continue
+        # The one client is where the credential names belong; what matters is
+        # that it cannot write, which the POST rule above proves.
+        if path.relative_to(ROOT).as_posix() == "backend/netsuite.py":
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         if credential_pattern.search(text):

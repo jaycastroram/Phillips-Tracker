@@ -3,4 +3,5 @@ uvicorn[standard]
 openpyxl
 psycopg[binary]
 cloudinary
+requests
 reportlab==5.1.0
