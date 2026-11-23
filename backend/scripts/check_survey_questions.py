@@ -343,7 +343,30 @@ def main() -> int:
               f"{two_scale_item['avg_attention']}/{two_scale_item['avg_engagement']}")
 
         # ------------------------------------------------------------------
-        print("\n6. Migrations do not rewrite an existing period")
+        print("\n6. The builder never ships the whole catalog")
+        detail = client.get(f"/api/admin/survey-periods/{period_all}", headers=headers)
+        detail_rows = detail.json().get("items", [])
+        catalog_count = client.get("/api/admin/survey-layout", headers=headers).json()["items"]
+        check("period detail returns only the period's items",
+              len(detail_rows) <= len(catalog_count) and all(row.get("in_survey") for row in detail_rows),
+              f"{len(detail_rows)} rows for a {len(catalog_count)}-item catalog")
+        # Per-row, not absolute: the guard is that the payload tracks the period,
+        # not the catalog behind it.
+        check("period detail stays lean per row",
+              len(detail.content) <= max(4_000, len(detail_rows) * 2_000),
+              f"{len(detail.content)/1e3:.0f} KB for {len(detail_rows)} rows")
+
+        empty = client.get("/api/admin/survey-catalog", headers=headers).json()
+        check("catalog search requires a term", empty.get("requires_search") is True and not empty.get("items"),
+              str(empty)[:80])
+        found = client.get("/api/admin/survey-catalog", headers=headers, params={"q": "a", "limit": 5}).json()
+        check("catalog search is paged", len(found.get("items", [])) <= 5, str(len(found.get("items", []))))
+        check("catalog search returns lean rows",
+              all("item_description" not in row and "image_url" not in row for row in found.get("items", [])),
+              str(found.get("items", [{}])[0])[:80] if found.get("items") else "no rows")
+
+        # ------------------------------------------------------------------
+        print("\n7. Migrations do not rewrite an existing period")
         before_json = questions_json_of(period_all)
         init_db()
         init_db()

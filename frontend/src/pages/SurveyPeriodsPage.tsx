@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { memo, useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { SurveyQuestionEditor } from '../components/SurveyQuestionEditor'
 import { DEFAULT_SURVEY_QUESTIONS } from '../constants'
 import { SurveyLayoutEditor } from '../surveyLayout'
@@ -29,6 +29,10 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
   const [editorItems, setEditorItems] = useState<SurveyItem[]>([])
   const [editorFilters, setEditorFilters] = useState<SurveyFilterField[]>([])
   const [editorQuestions, setEditorQuestions] = useState<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
+  // The item editor reads questions only when saving, so keeping the live copy
+  // in a ref stops a keystroke in a question from re-rendering 3,700 rows.
+  const questionsRef = useRef<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
+  questionsRef.current = editorQuestions
   const [editorLoading, setEditorLoading] = useState(false)
   const [editorSaving, setEditorSaving] = useState(false)
   const [editorMessage, setEditorMessage] = useState('')
@@ -154,7 +158,27 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     }
   }
 
-  async function savePeriodLayout(items: SurveyItem[], filterFields: SurveyFilterField[]) {
+  const addCatalogItem = useCallback((row: CatalogRow) => {
+    setEditorItems((current) => {
+      if (current.some((item) => item.id === row.id)) return current
+      const next: SurveyItem = {
+        ...row,
+        in_survey: true,
+        survey_sort_order: current.length + 1,
+        sort_order: current.length + 1,
+        response_width: 50,
+        page_break_before: false,
+        image_display_size: 'medium',
+        image_fit: 'contain',
+        image_url: '',
+        item_description: '',
+        is_active: true,
+      } as SurveyItem
+      return [...current, next]
+    })
+  }, [])
+
+  const savePeriodLayout = useCallback(async (items: SurveyItem[], filterFields: SurveyFilterField[]) => {
     if (editingPeriodId === null) return
     setEditorSaving(true)
     setEditorMessage('')
@@ -164,7 +188,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
         method: 'PUT',
         body: JSON.stringify({
           filter_fields: filterFields,
-          questions: editorQuestions,
+          questions: questionsRef.current,
           items: items.map((item) => ({
             catalog_item_id: item.id,
             in_survey: item.in_survey,
@@ -187,7 +211,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     } finally {
       setEditorSaving(false)
     }
-  }
+  }, [apiFetch, editingPeriodId])
 
   async function setPeriodStatus(period: SurveyPeriod, status: SurveyPeriod['status']) {
     setError('')
@@ -467,13 +491,15 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
           </p>
           {linkMessage && <p className="survey-link-message">{linkMessage}</p>}
           {!editorLoading && (
-            <SurveyQuestionEditor
+            <QuestionsPanel
+              key={editingPeriod.id}
               disabled={editingPeriod.status === 'closed' || editorSaving}
-              questions={editorQuestions}
+              initialQuestions={editorQuestions}
               onChange={setEditorQuestions}
             />
           )}
-          <SurveyLayoutEditor
+          <CatalogPicker apiFetch={apiFetch} disabled={editingPeriod.status === 'closed'} onAdd={addCatalogItem} />
+          <MemoSurveyLayoutEditor
             title={`Edit “${editingPeriod.name}”`}
             description={
               editingPeriod.status === 'closed'
@@ -493,5 +519,116 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
         </div>
       )}
     </div>
+  )
+}
+
+/** Owns the question list so editing a question does not touch the item list. */
+function QuestionsPanel({
+  disabled,
+  initialQuestions,
+  onChange,
+}: {
+  disabled: boolean
+  initialQuestions: SurveyQuestion[]
+  onChange: (questions: SurveyQuestion[]) => void
+}) {
+  const [questions, setQuestions] = useState<SurveyQuestion[]>(initialQuestions)
+  return (
+    <SurveyQuestionEditor
+      disabled={disabled}
+      questions={questions}
+      onChange={(next) => {
+        setQuestions(next)
+        onChange(next)
+      }}
+    />
+  )
+}
+
+const MemoSurveyLayoutEditor = memo(SurveyLayoutEditor)
+
+type CatalogRow = {
+  id: number
+  item_name: string
+  brand: string
+  channel: string
+  product_type: string
+  key_program: string
+  price: string
+  uom: string
+}
+
+/** Searches the catalog on demand; the browser never holds 3,700 rows at once. */
+function CatalogPicker({
+  apiFetch,
+  disabled,
+  onAdd,
+}: {
+  apiFetch: Props['apiFetch']
+  disabled: boolean
+  onAdd: (row: CatalogRow) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [rows, setRows] = useState<CatalogRow[]>([])
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  useEffect(() => {
+    const text = query.trim()
+    if (text.length < 2) {
+      setRows([])
+      setNote('')
+      return
+    }
+    const controller = new AbortController()
+    const timer = window.setTimeout(async () => {
+      setBusy(true)
+      try {
+        const res = await apiFetch(`/admin/survey-catalog?q=${encodeURIComponent(text)}&limit=25`, {
+          signal: controller.signal,
+        })
+        if (!res.ok) throw new Error('search failed')
+        const data = await res.json()
+        setRows(data.items ?? [])
+        setNote((data.total ?? 0) > 25 ? `Showing the first 25 of ${data.total}. Type more to narrow it.` : '')
+      } catch {
+        if (!controller.signal.aborted) setNote('Search failed.')
+      } finally {
+        if (!controller.signal.aborted) setBusy(false)
+      }
+    }, 250)
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [apiFetch, query])
+
+  return (
+    <section className="survey-catalog-picker">
+      <label>
+        <span className="survey-field-label">Add items</span>
+        <input
+          disabled={disabled}
+          placeholder="Search the catalog by name, brand, channel or program"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
+      {busy && <p className="survey-catalog-note">Searching…</p>}
+      {!busy && note && <p className="survey-catalog-note">{note}</p>}
+      {rows.length > 0 && (
+        <ul className="survey-catalog-results">
+          {rows.map((row) => (
+            <li key={row.id}>
+              <div>
+                <strong>{row.item_name}</strong>
+                <span>{[row.brand, row.channel, row.product_type].filter(Boolean).join(' · ')}</span>
+              </div>
+              <button type="button" onClick={() => onAdd(row)}>Add</button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   )
 }

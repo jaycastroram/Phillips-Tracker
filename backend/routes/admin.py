@@ -754,6 +754,59 @@ def create_survey_period(
     return {"period": created_public}
 
 
+@router.get("/survey-catalog")
+def search_survey_catalog(
+    q: str = Query(default=""),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    company_id: int | None = Query(default=None),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    """Search the catalog to add items to a survey. Lean rows, paged, on demand."""
+    company_id = resolve_scoped_company_id(user, company_id)
+    needle = q.strip().lower()
+    if not needle:
+        return {"items": [], "total": 0, "requires_search": True}
+
+    like = f"%{needle}%"
+    where = """
+        company_id = ? AND is_active = ?
+        AND (lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ?
+             OR lower(product_type) LIKE ? OR lower(key_program) LIKE ?)
+    """
+    args = (company_id, True, like, like, like, like, like)
+    with connect() as conn:
+        total = execute(conn, f"SELECT COUNT(*) AS n FROM survey_items WHERE {where}", args).fetchone()["n"]
+        rows = execute(
+            conn,
+            f"""
+            SELECT id, item_name, brand, channel, product_type, key_program, price, uom
+            FROM survey_items
+            WHERE {where}
+            ORDER BY item_name ASC, id ASC
+            LIMIT ? OFFSET ?
+            """,
+            (*args, limit, offset),
+        ).fetchall()
+    return {
+        "items": [
+            {
+                "id": row["id"],
+                "item_name": row["item_name"],
+                "brand": row["brand"],
+                "channel": row["channel"],
+                "product_type": row["product_type"],
+                "key_program": row["key_program"],
+                "price": row["price"],
+                "uom": row["uom"],
+            }
+            for row in rows
+        ],
+        "total": int(total),
+        "requires_search": False,
+    }
+
+
 @router.get("/survey-periods/{period_id}")
 def get_survey_period_detail(
     period_id: int,
@@ -766,40 +819,16 @@ def get_survey_period_detail(
         if period is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
         items = list_period_items(conn, period_id)
-        catalog_rows = execute(
+        catalog_total = execute(
             conn,
-            """
-            SELECT * FROM survey_items
-            WHERE company_id = ? AND is_active = ?
-            ORDER BY survey_sort_order ASC, sort_order ASC, id ASC
-            """,
+            "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ?",
             (company_id, True),
-        ).fetchall()
+        ).fetchone()["n"]
 
-    period_by_catalog = {row["catalog_item_id"]: row for row in items}
-    editor_items = []
-    for catalog in catalog_rows:
-        period_item = period_by_catalog.get(catalog["id"])
-        public = survey_item_to_public(catalog)
-        if period_item is not None:
-            public.update({
-                "in_survey": True,
-                "survey_sort_order": period_item["sort_order"],
-                "response_width": period_item["response_width"],
-                "page_break_before": bool(period_item["page_break_before"]),
-                "image_display_size": period_item["image_display_size"],
-                "image_fit": period_item["image_fit"],
-                "period_item_id": period_item["id"],
-            })
-        else:
-            public.update({
-                "in_survey": False,
-                "page_break_before": False,
-                "period_item_id": None,
-            })
-        editor_items.append(public)
-
-    editor_items.sort(key=lambda item: (0 if item["in_survey"] else 1, item["survey_sort_order"], item["id"]))
+    # The editor opens on this period's own items. The catalog is a search
+    # result (see search_survey_catalog): at 3,700 rows rendering all of them
+    # froze the browser, and none of those rows belong to this survey yet.
+    editor_items = [period_item_to_public(row) for row in items]
     period_public = survey_period_to_public(period, item_count=len(items))
     # The token is read-only here: this is the screen an editor copies the
     # survey link from. It stays out of survey_period_to_public() so the public
@@ -810,6 +839,7 @@ def get_survey_period_detail(
         "filter_fields": period_public["filter_fields"],
         "questions": period_public["questions"],
         "items": editor_items,
+        "catalog_total": int(catalog_total),
     }
 
 
