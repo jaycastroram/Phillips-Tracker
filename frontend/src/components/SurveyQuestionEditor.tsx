@@ -5,6 +5,8 @@ type Props = {
   disabled?: boolean
   onChange: (questions: SurveyQuestion[]) => void
   note?: string
+  /** Uploads one image and resolves to its URL. Omitted where it cannot work. */
+  uploadImage?: (file: File) => Promise<string>
 }
 
 const TYPE_OPTIONS: { value: SurveyQuestionType; label: string }[] = [
@@ -53,7 +55,7 @@ function newQuestion(type: SurveyQuestionType = 'yes_no'): SurveyQuestion {
   }
 }
 
-export function SurveyQuestionEditor({ questions, disabled = false, onChange, note }: Props) {
+export function SurveyQuestionEditor({ questions, disabled = false, onChange, note, uploadImage }: Props) {
   function updateQuestion(index: number, updates: Partial<SurveyQuestion>) {
     onChange(
       questions.map((question, questionIndex) =>
@@ -179,6 +181,51 @@ export function SurveyQuestionEditor({ questions, disabled = false, onChange, no
                   onChange={(event) => updateQuestion(index, { label: event.target.value })}
                 />
               </label>
+
+              {uploadImage && (
+                <div className="survey-question-image">
+                  {question.image_url ? (
+                    <>
+                      <img alt="" src={question.image_url} />
+                      <div>
+                        <span className="survey-field-label">Question image</span>
+                        <button
+                          className="survey-question-image-remove"
+                          disabled={disabled}
+                          type="button"
+                          onClick={() => updateQuestion(index, { image_url: '' })}
+                        >
+                          Remove image
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <span className="survey-field-label">Question image</span>
+                      <label className="survey-question-image-pick">
+                        <input
+                          accept="image/jpeg,image/png,image/webp"
+                          disabled={disabled}
+                          type="file"
+                          onChange={async (event) => {
+                            const file = event.target.files?.[0]
+                            if (!file) return
+                            try {
+                              const url = await uploadImage(file)
+                              if (url) updateQuestion(index, { image_url: url })
+                            } catch {
+                              updateQuestion(index, {})
+                            } finally {
+                              event.target.value = ''
+                            }
+                          }}
+                        />
+                        Choose image
+                      </label>
+                    </>
+                  )}
+                </div>
+              )}
 
               {isChoice && (
                 <div className="survey-question-options">

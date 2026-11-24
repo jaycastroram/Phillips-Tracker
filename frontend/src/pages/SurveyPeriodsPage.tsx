@@ -158,6 +158,18 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
     }
   }
 
+  const uploadQuestionImage = useCallback(async (file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    const res = await apiFetch('/uploads/survey-question', { method: 'POST', body })
+    if (!res.ok) {
+      const detail = await res.json().catch(() => null)
+      throw new Error(detail?.detail || 'Image upload failed.')
+    }
+    const data = await res.json()
+    return String(data.url || '')
+  }, [apiFetch])
+
   const addCatalogItem = useCallback((row: CatalogRow) => {
     setEditorItems((current) => {
       if (current.some((item) => item.id === row.id)) return current
@@ -496,6 +508,7 @@ export function SurveyPeriodsPage({ apiFetch }: Props) {
               disabled={editingPeriod.status === 'closed' || editorSaving}
               initialQuestions={editorQuestions}
               onChange={setEditorQuestions}
+              uploadImage={uploadQuestionImage}
             />
           )}
           <CatalogPicker apiFetch={apiFetch} disabled={editingPeriod.status === 'closed'} onAdd={addCatalogItem} />
@@ -527,16 +540,19 @@ function QuestionsPanel({
   disabled,
   initialQuestions,
   onChange,
+  uploadImage,
 }: {
   disabled: boolean
   initialQuestions: SurveyQuestion[]
   onChange: (questions: SurveyQuestion[]) => void
+  uploadImage: (file: File) => Promise<string>
 }) {
   const [questions, setQuestions] = useState<SurveyQuestion[]>(initialQuestions)
   return (
     <SurveyQuestionEditor
       disabled={disabled}
       questions={questions}
+      uploadImage={uploadImage}
       onChange={(next) => {
         setQuestions(next)
         onChange(next)

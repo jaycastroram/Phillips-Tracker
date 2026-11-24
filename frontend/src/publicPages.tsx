@@ -94,9 +94,13 @@ function SurveyQuestionFields({
     <div className="survey-dynamic-questions">
       {questions.map((question) => {
         const value = draft.answers[question.id]
+        const questionImage = question.image_url ? (
+          <img alt="" className="survey-question-image" src={question.image_url} />
+        ) : null
         if (question.type === 'text') {
           return (
             <label key={question.id} className="survey-feedback-field">
+              {questionImage}
               <span>
                 {question.label}
                 {question.required ? ' *' : ''}
@@ -113,6 +117,7 @@ function SurveyQuestionFields({
         if (question.type === 'scale') {
           return (
             <fieldset key={question.id}>
+              {questionImage}
               <legend>
                 {question.label}
                 {question.required ? ' *' : ''}
@@ -144,6 +149,7 @@ function SurveyQuestionFields({
         if (question.type === 'dropdown') {
           return (
             <label key={question.id} className="survey-dropdown-field">
+              {questionImage}
               <span>
                 {question.label}
                 {question.required ? ' *' : ''}
@@ -167,6 +173,7 @@ function SurveyQuestionFields({
           const selected = Array.isArray(value) ? value : value ? [String(value)] : []
           return (
             <fieldset key={question.id}>
+              {questionImage}
               <legend>
                 {question.label}
                 {question.required ? ' *' : ''}
@@ -195,6 +202,7 @@ function SurveyQuestionFields({
 
         return (
           <fieldset key={question.id}>
+            {questionImage}
             <legend>
               {question.label}
               {question.required ? ' *' : ''}

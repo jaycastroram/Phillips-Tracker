@@ -57,13 +57,15 @@ export function SurveysPage({
         >
           Create / Manage
         </button>
-        <button
-          className={tab === 'buy-book' ? 'active' : ''}
-          type="button"
-          onClick={() => setTab('buy-book')}
-        >
-          Buy Book Layout
-        </button>
+        {isAdmin && (
+          <button
+            className={tab === 'buy-book' ? 'active' : ''}
+            type="button"
+            onClick={() => setTab('buy-book')}
+          >
+            Buy Book Layout
+          </button>
+        )}
         <button
           className={tab === 'results' ? 'active' : ''}
           type="button"

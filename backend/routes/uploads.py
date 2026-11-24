@@ -23,12 +23,29 @@ except ImportError:
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
 
+SURVEY_FOLDERS = {"survey-questions"}
+
+
+@router.post("/survey-question")
+async def upload_survey_question_image(
+    file: UploadFile = File(...),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    """One image per survey question. Same Cloudinary account, its own folder."""
+    del user
+    return await _store(file, folder="smartbuy/survey-questions")
+
+
 @router.post("/visual-reference")
 async def upload_visual_reference(
     file: UploadFile = File(...),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
     del user
+    return await _store(file, folder="phillips-tracker/visual-references")
+
+
+async def _store(file: UploadFile, *, folder: str) -> dict:
     if cloudinary is None:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Cloudinary dependency is not installed")
     if not (CLOUDINARY_CLOUD_NAME and CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET):
@@ -43,7 +60,7 @@ async def upload_visual_reference(
     try:
         result = cloudinary.uploader.upload(
             io.BytesIO(contents),
-            folder="phillips-tracker/visual-references",
+            folder=folder,
             resource_type="image",
         )
     except Exception as exc:

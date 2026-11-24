@@ -516,6 +516,10 @@ def normalize_survey_questions(raw: Any) -> list[dict[str, Any]]:
         else:
             options = []
 
+        image_url = str(entry.get("image_url") or "").strip()
+        if image_url and not image_url.lower().startswith(("http://", "https://")):
+            image_url = ""
+
         normalized.append(
             {
                 "id": question_id,
@@ -523,6 +527,7 @@ def normalize_survey_questions(raw: Any) -> list[dict[str, Any]]:
                 "label": label[:240],
                 "required": bool(entry.get("required")),
                 "options": options,
+                "image_url": image_url[:500],
             }
         )
 

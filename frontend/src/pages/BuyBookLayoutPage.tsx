@@ -134,8 +134,12 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
         filterExtra={(
           <>
             <PageBreakLayers layers={layers} onChange={setLayers} saving={saving} />
-            {isAdmin && <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />}
-            <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
+            {isAdmin && (
+              <>
+                <CatalogSyncPanel apiFetch={apiFetch} onDone={loadLayout} />
+                <DownloadBookButton apiFetch={apiFetch} companyId={companyId} />
+              </>
+            )}
             <div className="survey-layout-filter-row">
               <p className="survey-layout-filter-label">Public book link</p>
               <p className="survey-layout-filter-note">

@@ -124,6 +124,8 @@ export type SurveyQuestion = {
   label: string
   required: boolean
   options: string[]
+  /** Optional Cloudinary image shown above the question. */
+  image_url?: string
 }
 
 export type SurveyPeriod = {

@@ -117,6 +117,7 @@ class SurveyQuestion(BaseModel):
     label: str = Field(min_length=1, max_length=240)
     required: bool = False
     options: list[str] = []
+    image_url: str = ""
 
 
 class SurveyPeriodCreate(BaseModel):

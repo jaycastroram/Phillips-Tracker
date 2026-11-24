@@ -571,6 +571,17 @@ function App() {
     setRefreshItemsToken((tokenValue) => tokenValue + 1)
   }
 
+  async function openBuyBook() {
+    try {
+      const res = await apiFetch('/admin/buy-book-link')
+      if (!res.ok) throw new Error('no link')
+      const data = await res.json()
+      if (data?.path) window.open(data.path, '_blank', 'noopener')
+    } catch {
+      setError('Could not open the public Buy Book link.')
+    }
+  }
+
   function openPublicPath(path: string) {
     const slug =
       (isAdmin && adminWorkingCompany?.company_slug)
@@ -718,7 +729,9 @@ function App() {
           <summary>Menu</summary>
           <nav className="app-nav" aria-label="Primary navigation">
             <button className={page === 'tracker' ? 'active' : ''} type="button" onClick={() => setPage('tracker')}>Tracker</button>
-            <button className={page === 'surveys' ? 'active' : ''} type="button" onClick={() => setPage('surveys')}>Survey/Buy Book Edit</button>
+            {isAdmin && (
+              <button className={page === 'surveys' ? 'active' : ''} type="button" onClick={() => setPage('surveys')}>Survey/Buy Book Edit</button>
+            )}
             {isAdmin && <>
               <button className={page === 'admin-users' ? 'active' : ''} type="button" onClick={() => setPage('admin-users')}>Admin Settings</button>
               <button className={page === 'system-log' ? 'active' : ''} type="button" onClick={() => setPage('system-log')}>System Log</button>
@@ -726,6 +739,14 @@ function App() {
             <button className="nav-external" type="button" onClick={() => openPublicPath('/viewer')}>
               Viewer <ExternalLinkIcon />
             </button>
+            <button className="nav-external" type="button" onClick={() => openPublicPath('/survey')}>
+              Survey <ExternalLinkIcon />
+            </button>
+            {isAdmin && (
+              <button className="nav-external" type="button" onClick={openBuyBook}>
+                Buy Book <ExternalLinkIcon />
+              </button>
+            )}
             <button type="button" onClick={handleLogout}>Log Out</button>
           </nav>
         </details>
