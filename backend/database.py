@@ -1588,6 +1588,17 @@ def resolve_buy_book_period(conn: Any, company_id: int, period_id: int | None = 
     return ensure_legacy_survey_period(conn, company_id)
 
 
+def buy_book_pdf_period_rows(conn: Any, company_id: int, period_id: str) -> list[Any]:
+    """The catalog rows the export places in one buy-in period.
+
+    The PDF renders from this when a period is chosen, so a period book is that
+    period's items rather than the whole catalog under a period's name.
+    """
+    from buy_book_periods import period_item_rows
+
+    return period_item_rows(conn, company_id, period_id)
+
+
 def buy_book_pdf_rows(conn: Any, company_id: int, item_ids: list[int] | None = None) -> list[Any]:
     """The book's items, in catalog order.
 
