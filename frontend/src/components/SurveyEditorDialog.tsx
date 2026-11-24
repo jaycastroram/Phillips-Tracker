@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { SurveyQuestionEditor } from './SurveyQuestionEditor'
 import { Modal } from './Modal'
 import { DEFAULT_SURVEY_QUESTIONS } from '../constants'
@@ -77,19 +77,50 @@ export function SurveyEditorDialog({
   const [expandedKey, setExpandedKey] = useState<string | null>(initial.items[0]?.key ?? null)
   const [questionsFor, setQuestionsFor] = useState<string | null>(null)
   const [itemError, setItemError] = useState('')
+  const [bulkNote, setBulkNote] = useState('')
+  const poolIdsRef = useRef<string[]>(questions.map((question) => question.id))
 
-  // A question removed from the pool must not stay ticked on an item: the
-  // server drops unknown ticks too, and the count would lie until it did.
+  // Keep the items in step with the pool: a question added here ticks every
+  // item at once (the server does the same for a save that arrives without
+  // it), and a question removed from the pool stops being ticked anywhere.
+  // Questions that were already in the pool keep each item's own choice.
   useEffect(() => {
-    const poolIds = new Set(questions.map((question) => question.id))
+    const poolIds = questions.map((question) => question.id)
+    const alive = new Set(poolIds)
+    const added = poolIds.filter((questionId) => !poolIdsRef.current.includes(questionId))
+    poolIdsRef.current = poolIds
     setItems((current) =>
-      current.map((item) =>
-        item.question_ids.every((questionId) => poolIds.has(questionId))
-          ? item
-          : { ...item, question_ids: item.question_ids.filter((questionId) => poolIds.has(questionId)) },
-      ),
+      current.map((item) => {
+        const ticked = item.question_ids.filter((questionId) => alive.has(questionId))
+        const next = [...ticked, ...added.filter((questionId) => !ticked.includes(questionId))]
+        const unchanged =
+          next.length === item.question_ids.length
+          && next.every((questionId, index) => questionId === item.question_ids[index])
+        return unchanged ? item : { ...item, question_ids: next }
+      }),
     )
+    if (added.length > 0) {
+      setBulkNote(
+        added.length === 1
+          ? 'The new question is ticked on every item.'
+          : `${added.length} new questions are ticked on every item.`,
+      )
+    }
   }, [questions])
+
+  const everyItemAsksEverything =
+    items.length > 0 && questions.length > 0
+    && items.every((item) => item.question_ids.length === questions.length)
+
+  function askEverything() {
+    const poolIds = questions.map((question) => question.id)
+    setItems((current) => current.map((item) => ({ ...item, question_ids: [...poolIds] })))
+    setBulkNote(
+      poolIds.length === 0
+        ? 'There are no questions to ask yet.'
+        : `Every item now asks all ${poolIds.length} questions.`,
+    )
+  }
 
   function updateItem(key: string, updates: Partial<SurveyItemDraft>) {
     setItems((current) => current.map((item) => (item.key === key ? { ...item, ...updates } : item)))
@@ -229,13 +260,31 @@ export function SurveyEditorDialog({
                 <h3>Items</h3>
                 <p className="survey-section-note">
                   One card per item on the public survey, in this order. Each item asks
-                  the questions ticked on it.
+                  the questions ticked on it — use Questions to change one item.
                 </p>
               </div>
-              <span className="survey-question-count">
-                {items.length} {items.length === 1 ? 'item' : 'items'}
-              </span>
+              <div className="survey-items-head-actions">
+                <button
+                  className="survey-bulk-all"
+                  type="button"
+                  disabled={saving || items.length === 0 || questions.length === 0 || everyItemAsksEverything}
+                  title="Tick every question on every item below"
+                  onClick={askEverything}
+                >
+                  {questions.length > 0
+                    ? `Ask all ${questions.length} questions on every item`
+                    : 'Ask all questions on every item'}
+                </button>
+                <span className="survey-question-count">
+                  {items.length} {items.length === 1 ? 'item' : 'items'}
+                </span>
+              </div>
             </div>
+            {bulkNote && (
+              <p className="survey-bulk-note" role="status">
+                {bulkNote}
+              </p>
+            )}
 
             <ol className="survey-item-list">
               {items.map((item, index) => {

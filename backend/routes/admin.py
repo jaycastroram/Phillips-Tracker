@@ -962,6 +962,20 @@ def update_survey_period_layout(
         name = payload.name.strip() if payload.name is not None else period["name"]
         if not name:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Survey name is required")
+
+        # A question added to the pool applies to every item at once. Without
+        # this, a new question is ticked nowhere and the survey silently skips
+        # it - including when a stale dialog (or a direct API save) sends an
+        # item without it. Questions that were already in the pool are left
+        # exactly as the items had them: a question unticked on one item stays
+        # unticked there.
+        previous_pool_ids = {question["id"] for question in parse_survey_questions(period["questions_json"])}
+        added_ids = [question_id for question_id in pool_ids if question_id not in previous_pool_ids]
+        if added_ids:
+            for item in items:
+                ticked = list(item.question_ids or [])
+                item.question_ids = ticked + [qid for qid in added_ids if qid not in ticked]
+
         execute(
             conn,
             """

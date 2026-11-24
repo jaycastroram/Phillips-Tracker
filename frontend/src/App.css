@@ -4426,6 +4426,47 @@ img.survey-question-image {
   margin-bottom: 10px;
 }
 
+.survey-items-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+/* Select-all for the whole items list: one click, every item asks every
+   question in the pool. The per-item Questions control stays the fine tool. */
+.survey-bulk-all {
+  padding: 7px 12px;
+  border: 1px solid rgba(220, 38, 38, 0.45);
+  border-radius: 999px;
+  background: #fff;
+  color: #b91c1c;
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.survey-bulk-all:hover:not(:disabled) {
+  background: #fff5f5;
+}
+
+.survey-bulk-all:disabled {
+  border-color: var(--brand-gridline);
+  color: #9ca3af;
+  cursor: default;
+}
+
+.survey-bulk-note {
+  margin: -4px 0 10px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #1a6b3c;
+}
+
 .survey-items-head h3 {
   margin: 0;
   font-size: 0.95rem;

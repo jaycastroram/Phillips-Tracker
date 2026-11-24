@@ -184,6 +184,7 @@ def main() -> int:
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
 
     period_id: int | None = None
+    extra_periods: list[int] = []
     try:
         # ------------------------------------------------------------------
         print("\n1. The builder creates a survey with two items over one pool")
@@ -515,7 +516,174 @@ def main() -> int:
               str(tally_of(hoodie_latest, "interest")["choices"]))
 
         # ------------------------------------------------------------------
-        print("\n8. The migration is idempotent")
+        print("\n8. A question added to the pool reaches every item")
+
+        def create_survey(name: str, item_specs: list[dict[str, Any]]) -> tuple[int, list[int]]:
+            response = client.post(
+                "/api/admin/survey-periods",
+                headers=headers,
+                json={
+                    "name": name,
+                    "open_immediately": True,
+                    "questions": POOL,
+                    "items": item_specs,
+                },
+            )
+            if response.status_code != 201:
+                raise SystemExit(f"could not create {name}: {response.status_code} {response.text[:240]}")
+            new_id = int(response.json()["period"]["id"])
+            extra_periods.append(new_id)
+            detail = client.get(f"/api/admin/survey-periods/{new_id}", headers=headers).json()
+            return new_id, [
+                int(item["id"]) for item in detail["items"]
+                if item["item_name"] in {spec["item_name"] for spec in item_specs}
+            ]
+
+        added_period, added_items = create_survey("check-added-question", [
+            # The mat asks three of the four questions; the presenter asks one.
+            {"item_name": "Ask Most", "cost": "$7.45", "item_number": "30001",
+             "question_ids": ["interest", "attention_1", "notes"]},
+            {"item_name": "Ask One", "cost": "$6.00", "item_number": "30002",
+             "question_ids": ["interest"]},
+        ])
+        most_id, one_id = added_items
+        added_detail = client.get(f"/api/admin/survey-periods/{added_period}", headers=headers).json()
+        check("the survey starts with two items asking different sets",
+              [len(item["question_ids"]) for item in added_detail["items"]] == [3, 1],
+              str([len(item["question_ids"]) for item in added_detail["items"]]))
+
+        # The stale-client save: a new pool question, and items that know
+        # nothing about it (a dialog opened before it existed).
+        new_question = {
+            "id": "colour_fit",
+            "type": "single_choice",
+            "label": "How is the colour?",
+            "required": False,
+            "options": ["Too light", "Just right", "Too dark"],
+        }
+        stale = client.put(
+            f"/api/admin/survey-periods/{added_period}/layout",
+            headers=headers,
+            json={
+                "name": "check-added-question",
+                "questions": POOL + [new_question],
+                "items": [
+                    {"id": most_id, "item_name": "Ask Most", "cost": "$7.45", "item_number": "30001",
+                     "image_url": "", "item_description": "",
+                     "question_ids": ["interest", "attention_1", "notes"]},
+                    {"id": one_id, "item_name": "Ask One", "cost": "$6.00", "item_number": "30002",
+                     "image_url": "", "item_description": "", "question_ids": ["interest"]},
+                ],
+            },
+        )
+        check("the save with a new question -> 200", stale.status_code == 200,
+              f"{stale.status_code} {stale.text[:200]}")
+        after_add = client.get(f"/api/admin/survey-periods/{added_period}", headers=headers).json()
+        after_by_id = {int(item["id"]): item for item in after_add["items"]}
+        check("every item now asks the new question",
+              all("colour_fit" in after_by_id[item_id]["question_ids"] for item_id in (most_id, one_id)),
+              str({item_id: after_by_id[item_id]["question_ids"] for item_id in (most_id, one_id)}))
+        check("the item that asked three now asks four",
+              len(after_by_id[most_id]["question_ids"]) == 4,
+              str(after_by_id[most_id]["question_ids"]))
+        check("the item that asked one now asks two",
+              len(after_by_id[one_id]["question_ids"]) == 2,
+              str(after_by_id[one_id]["question_ids"]))
+        check("a question unticked before the add stays unticked",
+              "size_fit" not in after_by_id[most_id]["question_ids"]
+              and "size_fit" not in after_by_id[one_id]["question_ids"],
+              str({item_id: after_by_id[item_id]["question_ids"] for item_id in (most_id, one_id)}))
+
+        added_public = client.get(
+            f"/api/public/{args.company}/survey-items", params={"surface": "survey"}
+        ).json()
+        public_most = item_named(added_public, "Ask Most")
+        public_one = item_named(added_public, "Ask One")
+        check("the public page asks the new question on every item",
+              all("colour_fit" in [question["id"] for question in item["questions"]]
+                  for item in (public_most, public_one)),
+              str({item["item_name"]: [q["id"] for q in item["questions"]] for item in (public_most, public_one)}))
+        check("the public page still skips the unticked question",
+              "size_fit" not in [question["id"] for question in public_most["questions"]],
+              str([question["id"] for question in public_most["questions"]]))
+
+        answered = client.post(
+            f"/api/public/{args.company}/survey-responses",
+            json={
+                "email": "added@example.com",
+                "answers": {
+                    str(most_id): {"interest": "Yes", "colour_fit": "Just right"},
+                    str(one_id): {"interest": "No", "colour_fit": "Too dark"},
+                },
+            },
+        )
+        check("the new question can be answered on both items", answered.status_code == 200,
+              f"{answered.status_code} {answered.text[:160]}")
+        added_results = results(client, headers, added_period)
+        most_result = item_named(added_results, "Ask Most")
+        one_result = item_named(added_results, "Ask One")
+        check("the new question is tallied on every item",
+              choice_count(tally_of(most_result, "colour_fit"), "Just right") == 1
+              and choice_count(tally_of(one_result, "colour_fit"), "Too dark") == 1,
+              f"{tally_of(most_result, 'colour_fit')['choices']} / {tally_of(one_result, 'colour_fit')['choices']}")
+
+        # The Items header action: every item ticked for the whole pool. It is
+        # the same save the button sends.
+        whole_pool = [question["id"] for question in after_add["questions"]]
+        bulk = client.put(
+            f"/api/admin/survey-periods/{added_period}/layout",
+            headers=headers,
+            json={
+                "name": "check-added-question",
+                "questions": POOL + [new_question],
+                "items": [
+                    {"id": most_id, "item_name": "Ask Most", "cost": "$7.45", "item_number": "30001",
+                     "image_url": "", "item_description": "", "question_ids": whole_pool},
+                    {"id": one_id, "item_name": "Ask One", "cost": "$6.00", "item_number": "30002",
+                     "image_url": "", "item_description": "", "question_ids": whole_pool},
+                ],
+            },
+        )
+        check("the all-items save -> 200", bulk.status_code == 200, f"{bulk.status_code} {bulk.text[:160]}")
+        bulked = client.get(f"/api/admin/survey-periods/{added_period}", headers=headers).json()
+        check("every item asks the whole pool after the bulk save",
+              all(sorted(item["question_ids"]) == sorted(whole_pool) for item in bulked["items"]),
+              str([len(item["question_ids"]) for item in bulked["items"]]))
+        bulked_public = client.get(
+            f"/api/public/{args.company}/survey-items", params={"surface": "survey"}
+        ).json()
+        check("the public page asks the whole pool on every item",
+              all(len(item["questions"]) == len(whole_pool) for item in bulked_public["items"]),
+              str([len(item["questions"]) for item in bulked_public["items"]]))
+
+        # And the reverse: a save that leaves a question out for one item keeps
+        # it out. Only *new* questions are added on save.
+        trim = client.put(
+            f"/api/admin/survey-periods/{added_period}/layout",
+            headers=headers,
+            json={
+                "name": "check-added-question",
+                "questions": POOL + [new_question],
+                "items": [
+                    {"id": most_id, "item_name": "Ask Most", "cost": "$7.45", "item_number": "30001",
+                     "image_url": "", "item_description": "", "question_ids": ["interest"]},
+                    {"id": one_id, "item_name": "Ask One", "cost": "$6.00", "item_number": "30002",
+                     "image_url": "", "item_description": "", "question_ids": whole_pool},
+                ],
+            },
+        )
+        check("a save that drops a tick -> 200", trim.status_code == 200, f"{trim.status_code} {trim.text[:160]}")
+        trimmed = client.get(f"/api/admin/survey-periods/{added_period}", headers=headers).json()
+        trimmed_by_id = {int(item["id"]): item for item in trimmed["items"]}
+        check("an existing question is not re-ticked by a save",
+              trimmed_by_id[most_id]["question_ids"] == ["interest"],
+              str(trimmed_by_id[most_id]["question_ids"]))
+        check("the other item keeps its whole pool",
+              len(trimmed_by_id[one_id]["question_ids"]) == len(whole_pool),
+              str(trimmed_by_id[one_id]["question_ids"]))
+
+        # ------------------------------------------------------------------
+        print("\n9. The migration is idempotent")
         item_columns = column_names("survey_period_items")
         answer_columns = column_names("survey_answers")
         tick_columns = column_names("survey_period_item_questions")
@@ -566,7 +734,17 @@ def main() -> int:
                 execute(conn, "DELETE FROM survey_responses WHERE survey_period_id = ?", (period_id,))
                 execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
                 execute(conn, "DELETE FROM survey_periods WHERE id = ?", (period_id,))
-            print("\n(created survey and its responses removed)")
+                for extra_id in extra_periods:
+                    execute(
+                        conn,
+                        "DELETE FROM survey_answers WHERE response_id IN"
+                        " (SELECT id FROM survey_responses WHERE survey_period_id = ?)",
+                        (extra_id,),
+                    )
+                    execute(conn, "DELETE FROM survey_responses WHERE survey_period_id = ?", (extra_id,))
+                    execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (extra_id,))
+                    execute(conn, "DELETE FROM survey_periods WHERE id = ?", (extra_id,))
+            print("\n(created surveys and their responses removed)")
 
     print()
     if FAILURES:
