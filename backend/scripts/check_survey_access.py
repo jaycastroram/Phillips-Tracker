@@ -132,24 +132,6 @@ def submit(client: TestClient, slug: str, token: str | None, item_id: int, email
     )
 
 
-def submit_submission(client: TestClient, slug: str, answer: str, email: str = "upsert@example.com") -> Any:
-    """One filled-in survey through the static link — no token, no item id."""
-    return client.post(
-        f"/api/public/{slug}/survey-submissions",
-        json={"email": email, "answers": {"interest": answer}},
-    )
-
-
-def submission_rows(period_id: int) -> list[dict[str, Any]]:
-    with connect() as conn:
-        rows = execute(
-            conn,
-            "SELECT id, email, answers_json FROM survey_submissions WHERE survey_period_id = ? ORDER BY id ASC",
-            (period_id,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def answer_rows(period_id: int) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = execute(
@@ -348,10 +330,8 @@ def main() -> int:
         public = survey_get(client, slug, token)
         check("valid token -> 200", public.status_code == 200, str(public.status_code))
         payload = public.json()
-        check("payload is open and carries the question list",
-              payload.get("survey_open") is True and bool(payload.get("questions")),
+        check("payload is open and carries items", payload.get("survey_open") is True and bool(payload.get("items")),
               str(payload)[:160])
-        check("a survey carries no item list", payload.get("items") == [], str(payload.get("items"))[:80])
         check("payload carries the period's questions",
               [q["id"] for q in payload.get("questions", [])] == ["interest"],
               str(payload.get("questions"))[:120])
@@ -374,8 +354,7 @@ def main() -> int:
               "not found" in str(unknown.json().get("detail", "")).lower(), str(unknown.json())[:120])
         anon_default = survey_get(client, slug, None).json()
         check("the anonymous link reads the same open period on the real company",
-              anon_default.get("survey_open") is True
-              and (anon_default.get("period") or {}).get("id") == period_id,
+              anon_default.get("survey_open") is True and bool(anon_default.get("items")),
               str(anon_default)[:160])
 
         # --------------------------------------------------------------
@@ -440,21 +419,24 @@ def main() -> int:
         check("unique answer index present", index_present("survey_responses_unique_answer_idx"))
 
         # --------------------------------------------------------------
-        print("\n10. Two submissions from one shopper: two rows, both counted")
+        print("\n10. Two answers for one shopper and item: one row, last write wins")
         upsert_id = create_period(client, headers, "access-check-upsert")
         created_periods.append(upsert_id)
-        first = submit_submission(client, slug, "Yes")
-        check("first submission -> 201", first.status_code == 201, str(first.status_code))
-        second = submit_submission(client, slug, "No")
-        check("second submission -> 201", second.status_code == 201, str(second.status_code))
-        rows = submission_rows(upsert_id)
-        check("one row per submission", len(rows) == 2, f"{len(rows)} rows")
+        upsert_token = token_of(client, headers, upsert_id)
+        first = submit(client, slug, upsert_token, item_id, test_email, "Yes")
+        check("first answer -> 200", first.status_code == 200, str(first.status_code))
+        second = submit(client, slug, upsert_token, item_id, test_email, "No")
+        check("second answer -> 200", second.status_code == 200, str(second.status_code))
+        rows = answer_rows(upsert_id)
+        check("one row for the pair", len(rows) == 1, f"{len(rows)} rows")
+        check("the second answer is stored", bool(rows) and '"interest": "No"' in rows[0]["answers_json"],
+              rows[0]["answers_json"] if rows else "no row")
         results = client.get("/api/admin/survey-results", headers=headers, params={"period_id": upsert_id}).json()
         summary = results.get("summary", {})
-        check("results count both submissions", summary.get("total_responses") == 2, str(summary)[:120])
-        check("both share one respondent", summary.get("unique_respondents") == 1, str(summary)[:120])
-        check("the tallies read the stored answers", summary.get("total_not_interested") == 1
-              and summary.get("total_interested") == 1, str(summary)[:160])
+        check("results count one response", summary.get("total_responses") == 1, str(summary)[:120])
+        check("results count one unique respondent", summary.get("unique_respondents") == 1, str(summary)[:120])
+        check("results read the stored (second) answer", summary.get("total_not_interested") == 1
+              and summary.get("total_interested") == 0, str(summary)[:120])
 
         # --------------------------------------------------------------
         print("\n11. Duplicate rows seeded before the index -> highest id survives")
@@ -504,11 +486,9 @@ def main() -> int:
         book = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"})
         check("surface=buy-book -> 200", book.status_code == 200, str(book.status_code))
         book_body = book.json()
-        # The book is now one buy-in period, not the catalog. With no export in
-        # place it is empty and says so — never all 3,700 rows.
-        check("no buy-in period data -> an empty book, not the catalog",
-              (book_body.get("items") or []) == [] and book_body.get("no_period_data") is True,
-              f"{len(book_body.get('items') or [])} of {buy_book_rows} catalog rows")
+        check("the buy book carries every active in-buy-book item",
+              len(book_body.get("items") or []) == buy_book_rows,
+              f"{len(book_body.get('items') or [])} vs {buy_book_rows}")
         check("the pre-0013 payload keys are back",
               {"items", "filter_fields", "group_by", "page_break_layers"} <= set(book_body),
               sorted(book_body.keys()))
@@ -521,7 +501,7 @@ def main() -> int:
         unprefixed = client.get("/api/public/survey-items", params={"surface": "buy-book", "k": "abc"})
         check("the unprefixed API form serves the default company's book",
               unprefixed.status_code == 200
-              and "items" in unprefixed.json(),
+              and len(unprefixed.json().get("items") or []) == buy_book_rows,
               str(unprefixed.status_code))
 
         # --------------------------------------------------------------

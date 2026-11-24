@@ -187,46 +187,6 @@ def _create_survey_periods_tables(conn) -> None:
         """)
 
 
-def _create_survey_submissions_table(conn) -> None:
-    """One row per filled-in survey.
-
-    A survey is a name plus an ordered list of questions; a respondent answers
-    that list once and submits one row here. This is deliberately separate from
-    ``survey_responses``, whose ``survey_item_id NOT NULL`` key ties a row to a
-    catalog item in a period snapshot — the shape a standalone survey no longer
-    has. Nothing reads or writes the old table from the public survey page.
-    """
-    if IS_POSTGRES:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS survey_submissions (
-                id SERIAL PRIMARY KEY,
-                company_id INTEGER NOT NULL,
-                survey_period_id INTEGER NOT NULL
-                    REFERENCES survey_periods(id) ON DELETE CASCADE,
-                email TEXT NOT NULL DEFAULT '',
-                answers_json TEXT NOT NULL DEFAULT '{}',
-                submitted_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-    else:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS survey_submissions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                company_id INTEGER NOT NULL,
-                survey_period_id INTEGER NOT NULL,
-                email TEXT NOT NULL DEFAULT '',
-                answers_json TEXT NOT NULL DEFAULT '{}',
-                submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (survey_period_id) REFERENCES survey_periods(id) ON DELETE CASCADE
-            )
-        """)
-    execute(
-        conn,
-        "CREATE INDEX IF NOT EXISTS survey_submissions_period_idx"
-        " ON survey_submissions (company_id, survey_period_id, submitted_at)",
-    )
-
-
 def _create_core_tables(conn) -> None:
     if IS_POSTGRES:
         conn.execute("""
@@ -751,7 +711,6 @@ def init_db() -> None:
         _create_survey_layouts_table(conn)
         _create_core_tables(conn)
         _create_survey_periods_tables(conn)
-        _create_survey_submissions_table(conn)
         _create_netsuite_item_images_table(conn)
         _create_netsuite_facet_values_table(conn)
 

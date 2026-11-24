@@ -402,33 +402,24 @@ def main() -> int:
               buy_book_row is not None and buy_book_row.get("image_url") == expected,
               repr(buy_book_row.get("image_url") if buy_book_row else None))
 
-        print("\n5. A survey no longer copies items, so the catalog row is the only copy")
+        print("\n5. Publish snapshot (draft period row, not the page — copies the stored URL)")
         period_response = client.post(
             "/api/admin/survey-periods",
             headers=headers,
             json={"name": "check_item_images", "open_immediately": False},
         )
-        check("create draft survey", period_response.status_code == 201, f"HTTP {period_response.status_code}")
+        check("create draft period", period_response.status_code == 201, f"HTTP {period_response.status_code}")
         if period_response.status_code == 201:
             period_id = int(period_response.json()["period"]["id"])
             with connect() as conn:
-                # The survey is a question list now: publishing stores no item
-                # snapshot, so the item's image lives on the catalog row and is
-                # served by the catalog/buy-book views asserted above.
-                copied = execute(
+                snapshot = execute(
                     conn,
-                    "SELECT image_url FROM survey_period_items WHERE survey_period_id = ?",
-                    (period_id,),
-                ).fetchall()
-                stored_row = execute(
-                    conn,
-                    "SELECT image_url FROM survey_items WHERE id = ?",
-                    (survey_item_id,),
+                    "SELECT image_url FROM survey_period_items WHERE survey_period_id = ? AND catalog_item_id = ?",
+                    (period_id, survey_item_id),
                 ).fetchone()
-            check("a new survey copies no item snapshot", copied == [], f"{len(copied)} rows")
-            check("the catalog row still carries the record URL",
-                  stored_row is not None and stored_row["image_url"] == expected,
-                  repr(stored_row["image_url"] if stored_row else None))
+            check("period row carries the record URL",
+                  snapshot is not None and snapshot["image_url"] == expected,
+                  repr(snapshot["image_url"] if snapshot else None))
     finally:
         if not args.keep_changes:
             with connect() as conn:

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import type {
   KanbanColumn,
   SurveyFilterField,
+  SurveyInterest,
   SurveyItem,
   SurveyAnswerValue,
   SurveyQuestion,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
-import { API_BASE } from './constants'
+import { API_BASE, DEFAULT_SURVEY_QUESTIONS } from './constants'
 import {
   getViewerStatus,
   isImageReference,
@@ -36,11 +37,6 @@ type PublicBrandProps = {
 
 type BuyBookPageProps = PublicBrandProps & {
   surveyItems: SurveyItem[]
-  /** The buy-in periods the book can show, newest first. */
-  periods: { id: string; name: string; item_count?: number }[]
-  periodId: string
-  onPeriodChange: (periodId: string) => void
-  noPeriodData: boolean
   surveyFilterFields: SurveyFilterField[]
   surveyLoading: boolean
   surveyError: string
@@ -52,28 +48,44 @@ type BuyBookPageProps = PublicBrandProps & {
 }
 
 type SurveyPageProps = PublicBrandProps & {
+  surveyItems: SurveyItem[]
+  surveyFilterFields: SurveyFilterField[]
   surveyQuestions: SurveyQuestion[]
   surveyLoading: boolean
   surveyError: string
   surveyMessage: string
+  surveyQuery: string
+  selectedSurveyItemIds: number[]
   isSubmittingSurvey: boolean
   surveyEmail: string
   setSurveyEmail: (email: string) => void
+  setSurveyQuery: Dispatch<SetStateAction<string>>
   surveyOpen?: boolean
   surveyClosedMessage?: string
-  /** The answers collected so far, keyed by question id. */
-  answers: Record<string, SurveyAnswerValue>
-  onAnswer: (questionId: string, value: SurveyAnswerValue) => void
-  onSubmit: () => void
+  toggleSurveyItem: (itemId: number) => void
+  submitSurveyResponse: () => void
+  bulkUpdateSurveyInterest: (interest: Exclude<SurveyInterest, ''>) => void
+  getSurveyResponse: (itemId: number) => SurveyResponseDraft
+  updateSurveyResponse: (itemId: number, updates: Partial<SurveyResponseDraft>) => void
+}
+
+const INTEREST_TYPES: SurveyQuestion['type'][] = ['yes_no', 'single_choice', 'dropdown']
+
+function findInterestQuestion(questions: SurveyQuestion[]) {
+  return (
+    questions.find((question) => question.id === 'interest' && INTEREST_TYPES.includes(question.type)) ??
+    questions.find((question) => INTEREST_TYPES.includes(question.type)) ??
+    null
+  )
 }
 
 function SurveyQuestionFields({
-  itemId = 0,
+  itemId,
   questions,
   draft,
   onAnswer,
 }: {
-  itemId?: number
+  itemId: number
   questions: SurveyQuestion[]
   draft: SurveyResponseDraft
   onAnswer: (questionId: string, value: SurveyAnswerValue) => void
@@ -502,10 +514,6 @@ export function BuyBookPage({
   companyBannerUrl,
   surveyItems,
   surveyFilterFields,
-  periods,
-  periodId,
-  onPeriodChange,
-  noPeriodData,
   surveyLoading,
   surveyError,
   surveyQuery,
@@ -546,21 +554,6 @@ export function BuyBookPage({
 
       <section className="viewer-toolbar buy-book-toolbar">
         <div className="buy-book-filter-group">
-          <label className="buy-book-period-field">
-            Buy-in period
-            <select
-              value={periodId}
-              onChange={(event) => onPeriodChange(event.target.value)}
-              disabled={periods.length === 0}
-            >
-              {periods.length === 0 && <option value="">No buy-in periods yet</option>}
-              {periods.map((period) => (
-                <option key={period.id} value={period.id}>
-                  {period.name}
-                </option>
-              ))}
-            </select>
-          </label>
           <label>
             Search
             <input
@@ -702,11 +695,7 @@ export function BuyBookPage({
           )
         })}
         {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
-          <div className="empty-state">
-            {noPeriodData
-              ? 'No buy-in periods have been imported yet, so this book is empty.'
-              : `No items in the selected buy-in period${periodId ? ` (${periodId})` : ''}.`}
-          </div>
+          <div className="empty-state">No buy book items found.</div>
         )}
       </section>
       <PublicFooter />
@@ -725,20 +714,33 @@ export function SurveyPage({
   companyName,
   companyLogoUrl,
   companyBannerUrl,
+  surveyItems,
+  surveyFilterFields,
   surveyQuestions,
   surveyLoading,
   surveyError,
   surveyMessage,
+  surveyQuery,
+  selectedSurveyItemIds,
   isSubmittingSurvey,
   surveyEmail,
   setSurveyEmail,
+  setSurveyQuery,
   surveyOpen = true,
   surveyClosedMessage = 'No survey is open right now.',
-  answers,
-  onAnswer,
-  onSubmit,
+  toggleSurveyItem,
+  submitSurveyResponse,
+  bulkUpdateSurveyInterest,
+  getSurveyResponse,
+  updateSurveyResponse,
 }: SurveyPageProps) {
-  const questions = surveyQuestions
+  const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
+  const questions = surveyQuestions.length > 0 ? surveyQuestions : DEFAULT_SURVEY_QUESTIONS
+  const interestQuestion = findInterestQuestion(questions)
+  const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
+  const [currentPage, setCurrentPage] = useState(0)
+  const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
+  const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
   const brandHeader = resolvePublicBrandHeader(
     companyBannerUrl,
     companyLogoUrl,
@@ -746,6 +748,37 @@ export function SurveyPage({
     PRE_BUY_SURVEY_HEADER_LOGO,
     'SmartBuy Pre Buy Survey',
   )
+  useEffect(() => {
+    setCurrentPage(0)
+  }, [surveyFilters.filteredItems])
+  const allVisibleSelected =
+    surveyFilters.filteredItems.length > 0 &&
+    surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
+
+  function toggleVisibleSurveyItems() {
+    surveyFilters.filteredItems.forEach((item) => {
+      const isSelected = selectedSurveyItemIds.includes(item.id)
+      if (allVisibleSelected ? isSelected : !isSelected) toggleSurveyItem(item.id)
+    })
+  }
+
+  function answerQuestion(itemId: number, questionId: string, value: SurveyAnswerValue) {
+    if (!selectedSurveyItemIds.includes(itemId)) toggleSurveyItem(itemId)
+    const draft = getSurveyResponse(itemId)
+    const nextAnswers = { ...draft.answers, [questionId]: value }
+    const updates: Partial<SurveyResponseDraft> = { answers: nextAnswers }
+    if (interestQuestion && questionId === interestQuestion.id) {
+      const yes = interestQuestion.options[0] || 'Yes'
+      const no = interestQuestion.options[1] || 'No'
+      updates.interest =
+        value === yes ? 'Interested' : value === no ? 'Not Interested' : ''
+    }
+    const textQuestion = questions.find((question) => question.type === 'text' && question.id === questionId)
+    if (textQuestion) {
+      updates.notes = String(value ?? '')
+    }
+    updateSurveyResponse(itemId, updates)
+  }
 
   if (!surveyLoading && !surveyOpen) {
     return (
@@ -757,84 +790,179 @@ export function SurveyPage({
     )
   }
 
-  const missing = questions.filter((question) => {
-    if (!question.required) return false
-    const value = answers[question.id]
-    if (Array.isArray(value)) return value.length === 0
-    return value === undefined || value === null || String(value).trim() === ''
-  })
-
   return (
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader {...brandHeader} />
 
-      <section className="survey-standalone">
-        <div className="survey-standalone-head">
-          <h1>Tell us what you think</h1>
-          <p>Answer the questions below and submit once. It takes a couple of minutes.</p>
+      <section className="survey-toolbar">
+        {/* Row 1: Search + Filters */}
+        <div className="survey-toolbar-filters">
+          <label>
+            Search
+            <input
+              value={surveyQuery}
+              onChange={(event) => setSurveyQuery(event.target.value)}
+              placeholder="Item, brand, channel, description..."
+            />
+          </label>
+          <SurveyFilterControls {...surveyFilters} />
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={() => {
+              setSurveyQuery('')
+              surveyFilters.resetFilters()
+            }}
+          >
+            Reset
+          </button>
+          <span className="survey-item-count">
+            {surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}
+          </span>
         </div>
 
-        {surveyLoading && <p className="empty-state">Loading the survey…</p>}
-        {!surveyLoading && questions.length === 0 && (
-          <div className="empty-state">This survey has no questions yet.</div>
-        )}
-
-        <form
-          className="survey-standalone-form"
-          onSubmit={(event) => {
-            event.preventDefault()
-            onSubmit()
-          }}
-        >
-          {questions.map((question) => (
-            <div key={question.id} className="survey-standalone-question">
-              <SurveyQuestionFields
-                itemId={0}
-                questions={[question]}
-                draft={{ interest: '', notes: '', answers }}
-                onAnswer={onAnswer}
-              />
-            </div>
-          ))}
-
-          {questions.length > 0 && (
+        {/* Row 2: Selection actions + Email + Submit */}
+        <div className="survey-toolbar-actions">
+          <button
+            className="secondary-action"
+            type="button"
+            onClick={toggleVisibleSurveyItems}
+            disabled={surveyFilters.filteredItems.length === 0}
+          >
+            {allVisibleSelected ? 'Clear Selection' : 'Select All'}
+          </button>
+          {interestQuestion && (
             <>
-              <label className="survey-email-field survey-standalone-email">
-                <span>Your Email (optional)</span>
-                <input
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="you@example.com"
-                  type="email"
-                  value={surveyEmail}
-                  onChange={(event) => setSurveyEmail(event.target.value)}
-                />
-              </label>
-
-              {surveyError && <div className="error">{surveyError}</div>}
-              {surveyMessage && <div className="success">{surveyMessage}</div>}
-
               <button
-                className="primary-action survey-standalone-submit"
-                type="submit"
-                disabled={isSubmittingSurvey || missing.length > 0}
-                title={missing.length > 0 ? 'Answer the required questions first' : undefined}
+                className="secondary-action"
+                type="button"
+                onClick={() => bulkUpdateSurveyInterest('Interested')}
+                disabled={selectedSurveyItemIds.length === 0}
               >
-                {isSubmittingSurvey ? 'Submitting…' : 'Submit response'}
+                Mark Interested
               </button>
-              {missing.length > 0 && (
-                <p className="survey-standalone-hint">
-                  {missing.length === 1
-                    ? 'One required question still needs an answer.'
-                    : `${missing.length} required questions still need an answer.`}
-                </p>
-              )}
+              <button
+                className="secondary-action"
+                type="button"
+                onClick={() => bulkUpdateSurveyInterest('Not Interested')}
+                disabled={selectedSurveyItemIds.length === 0}
+              >
+                Mark Not Interested
+              </button>
             </>
           )}
-        </form>
+          <div className="survey-toolbar-spacer" />
+          <label className="survey-email-field">
+            <span>Your Email <span className="survey-email-required" aria-label="required">*</span></span>
+            <input
+              autoComplete="email"
+              inputMode="email"
+              placeholder="you@example.com"
+              required
+              type="email"
+              value={surveyEmail}
+              onChange={(event) => setSurveyEmail(event.target.value)}
+            />
+          </label>
+          <button className="secondary-action" type="button" onClick={() => window.print()}>
+            Print Survey
+          </button>
+          <button
+            className="primary-action"
+            type="button"
+            onClick={submitSurveyResponse}
+            disabled={selectedSurveyItemIds.length === 0 || isSubmittingSurvey}
+          >
+            {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
+          </button>
+        </div>
       </section>
 
+      <div className="survey-pager">
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage === 0}
+          onClick={() => setCurrentPage(Math.max(safePage - 1, 0))}
+        >
+          Back
+        </button>
+        <span>
+          Page {pages.length === 0 ? 0 : safePage + 1} of {pages.length}
+        </span>
+        <button
+          className="secondary-action"
+          type="button"
+          disabled={safePage >= pages.length - 1}
+          onClick={() => setCurrentPage(Math.min(safePage + 1, pages.length - 1))}
+        >
+          Next
+        </button>
+      </div>
+
+      {surveyError && <div className="error">{surveyError}</div>}
+      {surveyMessage && <div className="success">{surveyMessage}</div>}
+
+      <section className="survey-grid" aria-label="Survey items">
+        {surveyFilters.filteredItems.map((item, index) => {
+          const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
+          return (
+          <article
+            key={item.id}
+            className={`survey-card${item.page_break_before && index > 0 ? ' survey-page-break' : ''}${
+              pageIndex === safePage ? '' : ' survey-page-hidden'
+            }`}
+            style={{ '--response-width': `${item.response_width || 36}%` } as React.CSSProperties}
+          >
+            <label className="survey-select">
+              <input
+                checked={selectedSurveyItemIds.includes(item.id)}
+                type="checkbox"
+                onChange={() => toggleSurveyItem(item.id)}
+              />
+              <span>Select</span>
+            </label>
+            <button
+              className="survey-image image-preview-trigger"
+              type="button"
+              onClick={() => {
+                if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
+              }}
+            >
+              {isImageReference(item.image_url) ? (
+                <img src={item.image_url} alt="" />
+              ) : (
+                <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
+              )}
+            </button>
+            <div className="survey-card-copy">
+              <h2>{item.item_name}</h2>
+              <p>{item.item_description || 'No description provided yet.'}</p>
+            </div>
+            <div className="survey-inline-response">
+              <h3>Response</h3>
+              <SurveyQuestionFields
+                itemId={item.id}
+                questions={questions}
+                draft={getSurveyResponse(item.id)}
+                onAnswer={(questionId, value) => answerQuestion(item.id, questionId, value)}
+              />
+            </div>
+          </article>
+          )
+        })}
+        {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
+          <div className="empty-state">No survey items found.</div>
+        )}
+      </section>
       <PublicFooter />
+      {previewImage && (
+        <ImageLightbox
+          imageUrl={previewImage.url}
+          title={previewImage.title}
+          onClose={() => setPreviewImage(null)}
+        />
+      )}
     </main>
   )
 }
@@ -1043,9 +1171,6 @@ type PublicBookPayload = {
   items: SurveyItem[]
   filter_fields?: SurveyFilterField[]
   page_break_layers?: { field: string; new_page: boolean }[]
-  periods?: { id: string; name: string; item_count?: number }[]
-  period_id?: string | null
-  no_period_data?: boolean
 }
 
 export function PublicBookPage({ token }: { token: string }) {
@@ -1057,26 +1182,20 @@ export function PublicBookPage({ token }: { token: string }) {
   const [channel, setChannel] = useState('')
   const [productType, setProductType] = useState('')
 
-  const [periodId, setPeriodId] = useState('')
-
   useEffect(() => {
     let cancelled = false
-    setErrorLoading(true)
-    const params = periodId ? `?period=${encodeURIComponent(periodId)}` : ''
-    fetch(`${API_BASE}/public/book/${encodeURIComponent(token)}${params}`)
+    fetch(`${API_BASE}/public/book/${encodeURIComponent(token)}`)
       .then((res) => {
         if (!res.ok) throw new Error(res.status === 404 ? 'This book link is no longer valid.' : 'Unable to load the book.')
         return res.json()
       })
       .then((data: PublicBookPayload) => {
-        if (cancelled) return
-        setBook(data)
-        if (typeof data.period_id === 'string' && data.period_id !== periodId) setPeriodId(data.period_id)
+        if (!cancelled) setBook(data)
       })
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setErrorLoading(false) })
     return () => { cancelled = true }
-  }, [token, periodId])
+  }, [token])
 
   const items = useMemo(() => {
     const all = book?.items ?? []
@@ -1125,18 +1244,6 @@ export function PublicBookPage({ token }: { token: string }) {
       </header>
 
       <div className="public-book-filters">
-        <select
-          aria-label="Buy-in period"
-          className="public-book-period"
-          disabled={(book?.periods ?? []).length === 0}
-          value={periodId}
-          onChange={(event) => { setPeriodId(event.target.value); setExcluded(new Set()) }}
-        >
-          {(book?.periods ?? []).length === 0 && <option value="">No buy-in periods yet</option>}
-          {(book?.periods ?? []).map((period) => (
-            <option key={period.id} value={period.id}>{period.name}</option>
-          ))}
-        </select>
         <select aria-label="Brand" value={brand} onChange={(event) => setBrand(event.target.value)}>
           <option value="">All brands</option>
           {brands.map((value) => <option key={value} value={value}>{value}</option>)}
@@ -1207,13 +1314,7 @@ export function PublicBookPage({ token }: { token: string }) {
           )
           })
         })()}
-        {items.length === 0 && (
-          <p>
-            {book?.no_period_data
-              ? 'No buy-in periods have been imported yet, so this book is empty.'
-              : 'No items in the selected buy-in period.'}
-          </p>
-        )}
+        {items.length === 0 && <p>No items in this book yet.</p>}
       </section>
     </main>
   )
