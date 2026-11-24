@@ -6,10 +6,17 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
+from buy_book_periods import (
+    default_period_id,
+    list_periods,
+    period_by_id,
+    period_item_rows,
+)
 from config import IS_POSTGRES
 from database import (
     apply_buy_book_layers,
     buy_book_filter_fields,
+    buy_book_period_facets,
     buy_book_page_break_layers,
     company_by_public_book_token,
     company_to_public,
@@ -236,45 +243,111 @@ def _no_open_survey_payload() -> dict:
     }
 
 
-def _legacy_buy_book_payload(company_id: int, q: str) -> dict:
-    """The buy book exactly as 128aa1e served it, behind the company flag.
-
-    Restored from the pre-0013 branch: active items marked for the buy book, in
-    buy-book order, with the filtered fields and the layer stack the page draws
-    its headings and breaks from. No token is read — the key never gated it.
-    """
-    clauses = ["company_id = ?", "is_active = ?", "in_buy_book = ?"]
-    args: list[Any] = [company_id, True, 1]
-    if q.strip():
-        like = f"%{q.strip().lower()}%"
-        clauses.append(
-            "(lower(item_name) LIKE ? OR lower(brand) LIKE ? OR lower(channel) LIKE ? OR "
-            "lower(product_type) LIKE ? OR lower(key_program) LIKE ? OR lower(item_description) LIKE ?)"
-        )
-        args.extend([like] * 6)
-    with connect() as conn:
-        rows = execute(
-            conn,
-            f"SELECT * FROM survey_items WHERE {' AND '.join(clauses)} "
-            "ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC",
-            args,
-        ).fetchall()
-        fields = buy_book_filter_fields(conn, company_id)
-        layers = buy_book_page_break_layers(conn, company_id)
-    group_by = layers[0]["field"] if layers else "brand"
-    items = apply_buy_book_layers(
-        [survey_item_to_public(row, surface="buy-book") for row in rows],
-        layers,
-    )
+def _buy_book_period_summary(period: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The public shape of one buy-in period: what a drop-down needs, nothing more."""
+    if period is None:
+        return None
     return {
-        "items": items,
-        "filter_fields": fields,
-        "group_by": group_by,
-        "page_break_layers": layers,
+        "id": period["id"],
+        "name": period["name"],
+        "starts_on": period.get("starts_on", ""),
+        "ends_on": period.get("ends_on", ""),
+        "item_count": int(period.get("item_count") or 0),
     }
 
 
-def _survey_items_response(company: Any, q: str, surface: str, token: str = "") -> dict:
+def _buy_book_scope(company: Any) -> tuple[str, str]:
+    """The export scope of one storefront: the company's name and slug."""
+    return (
+        str(row_value(company, "name", "") or ""),
+        str(row_value(company, "slug", "") or ""),
+    )
+
+
+def _buy_book_empty_message(periods: list[dict[str, Any]], selected: dict[str, Any] | None,
+                            item_count: int, filtered: int) -> str:
+    if not periods:
+        return "No buy-in periods are loaded for this storefront yet."
+    if selected is None:
+        return "No buy-in period is selected."
+    if item_count == 0:
+        return "This buy-in period has no items."
+    if filtered == 0:
+        return "No items match this search in the selected buy-in period."
+    return ""
+
+
+def _buy_book_period_payload(company: Any, period_ref: str = "", q: str = "") -> dict:
+    """The book for one buy-in period of one storefront. Read only.
+
+    ``period_ref`` is a period id or name from ``list_periods``; blank means
+    the newest period that has items. A period that is not this storefront's
+    is a 404, never a fallback to the newest one. Membership comes from the
+    NetSuite export datasets through ``buy_book_periods``, so the book is a
+    period's items and never the whole catalog; with no period data the book
+    is empty and says so.
+    """
+    company_id = int(company["id"])
+    company_name, company_slug = _buy_book_scope(company)
+    periods = list_periods(company_name, company_slug)
+
+    requested = str(period_ref or "").strip()
+    selected: dict[str, Any] | None = None
+    if requested:
+        selected = period_by_id(requested, company_name, company_slug)
+        if selected is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
+    else:
+        default_id = default_period_id(periods)
+        selected = next((period for period in periods if period["id"] == default_id), None)
+
+    with connect() as conn:
+        fields = buy_book_filter_fields(conn, company_id)
+        layers = buy_book_page_break_layers(conn, company_id)
+        company_row = execute(conn, "SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
+        rows = (
+            period_item_rows(conn, company_id, selected["id"],
+                             company_name=company_name, company_slug=company_slug)
+            if selected is not None
+            else []
+        )
+
+    items = [survey_item_to_public(row, surface="buy-book") for row in rows]
+    # Facets are the period's own: computed before any search, so the controls
+    # offer exactly the values the period holds.
+    facets = buy_book_period_facets(items)
+    book_items = apply_buy_book_layers(items, layers)
+    needle = q.strip().lower()
+    if needle:
+        book_items = [item for item in book_items if _survey_item_matches(item, needle)]
+
+    return {
+        "company": company_to_public(company_row),
+        "period": _buy_book_period_summary(selected),
+        "periods": [_buy_book_period_summary(period) for period in periods],
+        "items": book_items,
+        "filter_fields": fields,
+        "group_by": layers[0]["field"] if layers else "none",
+        "page_break_layers": layers,
+        "facets": facets,
+        "no_period_data": not periods,
+        "message": _buy_book_empty_message(periods, selected, len(items), len(book_items)),
+    }
+
+
+def _legacy_buy_book_payload(company: Any, q: str, period_ref: str = "") -> dict:
+    """The buy book the pre-0013 link served, behind the company flag.
+
+    The payload keeps 128aa1e's keys, but the items are one buy-in period's
+    members rather than every active in-buy-book row: the old link now opens
+    the same period-scoped book as the token page. No token is read — the key
+    never gated it.
+    """
+    return _buy_book_period_payload(company, period_ref, q)
+
+
+def _survey_items_response(company: Any, q: str, surface: str, token: str = "",
+                           period: str = "") -> dict:
     if surface not in {"", "survey", "buy-book"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown survey surface")
 
@@ -283,7 +356,7 @@ def _survey_items_response(company: Any, q: str, surface: str, token: str = "") 
     if surface == "buy-book":
         if not _legacy_public_link(company, "legacy_public_buy_book"):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Buy book not found")
-        return _legacy_buy_book_payload(company_id, q)
+        return _legacy_buy_book_payload(company, q, period)
 
     text = str(token or "").strip()
     if text:
@@ -318,48 +391,46 @@ def _survey_items_response(company: Any, q: str, surface: str, token: str = "") 
 # Public Buy Book (read-only, one token per company)
 # ---------------------------------------------------------------------------
 
-def _public_book_payload(company_id: int) -> dict:
-    """The book as a stranger may see it: items, order, layer breaks. Read only."""
-    with connect() as conn:
-        rows = execute(
-            conn,
-            """
-            SELECT * FROM survey_items
-            WHERE company_id = ? AND is_active = ? AND in_buy_book = ?
-            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
-            """,
-            # in_buy_book is an INTEGER column on Postgres; a bool here is a type error.
-            (company_id, True, 1),
-        ).fetchall()
-        fields = buy_book_filter_fields(conn, company_id)
-        layers = buy_book_page_break_layers(conn, company_id)
-        company = execute(
-            conn,
-            "SELECT * FROM companies WHERE id = ?",
-            (company_id,),
-        ).fetchone()
-    items = apply_buy_book_layers([survey_item_to_public(row, surface="buy-book") for row in rows], layers)
-    return {
-        "company": company_to_public(company),
-        "items": items,
-        "filter_fields": fields,
-        "page_break_layers": layers,
-    }
-
-
-@router.get("/book/{token}")
-def get_public_buy_book(token: str) -> dict:
+def _buy_book_company_by_token(token: str) -> Any:
     with connect() as conn:
         company = company_by_public_book_token(conn, token)
     if company is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Book not found")
-    return _public_book_payload(int(company["id"]))
+    return company
+
+
+@router.get("/buy-book/periods")
+def list_public_buy_book_periods(company: str = "", token: str = "") -> dict:
+    """The buy-in periods of one storefront, newest first.
+
+    Scope comes from the book token when one is given (a credential always
+    wins), else the company slug, else the default company. Each period
+    carries its id, name, dates and the number of items the export places in
+    it, so a page can show the drop-down without loading a book.
+    """
+    scoped = _buy_book_company_by_token(token) if token.strip() else (
+        _get_company(company) if company.strip() else _default_company()
+    )
+    company_name, company_slug = _buy_book_scope(scoped)
+    periods = list_periods(company_name, company_slug)
+    return {
+        "company": company_to_public(scoped),
+        "periods": [_buy_book_period_summary(period) for period in periods],
+        "selected_period_id": default_period_id(periods),
+        "no_period_data": not periods,
+    }
+
+
+@router.get("/book/{token}")
+def get_public_buy_book(token: str, period: str = "") -> dict:
+    company = _buy_book_company_by_token(token)
+    return _buy_book_period_payload(company, period)
 
 
 @router.get("/survey-items")
-def list_public_survey_items(q: str = "", surface: str = "", t: str = "") -> dict:
+def list_public_survey_items(q: str = "", surface: str = "", t: str = "", period: str = "") -> dict:
     # k= is accepted and ignored: no column on this side ever gated the book.
-    return _survey_items_response(_default_company(), q, surface, t)
+    return _survey_items_response(_default_company(), q, surface, t, period)
 
 
 @router.get("/{company_slug}/survey-items")
@@ -368,8 +439,9 @@ def list_public_company_survey_items(
     q: str = "",
     surface: str = "",
     t: str = "",
+    period: str = "",
 ) -> dict:
-    return _survey_items_response(_get_company(company_slug), q, surface, t)
+    return _survey_items_response(_get_company(company_slug), q, surface, t, period)
 
 
 # ---------------------------------------------------------------------------

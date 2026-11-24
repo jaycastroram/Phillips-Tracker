@@ -146,6 +146,22 @@ export type SurveyPeriod = {
   updated_at: string
 }
 
+/** One buy-in period of a storefront, as the public book's drop-down reads it. */
+export type BuyBookPeriod = {
+  id: string
+  name: string
+  starts_on: string
+  ends_on: string
+  item_count: number
+}
+
+/** The brand / channel / product-type values present in one buy-in period. */
+export type BuyBookFacets = {
+  brand: string[]
+  channel: string[]
+  product_type: string[]
+}
+
 /** One item a survey owns: a mocked-up product, not a catalog row. */
 export type SurveyOwnedItem = {
   id: number

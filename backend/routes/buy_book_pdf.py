@@ -10,20 +10,24 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
 
 from buy_book_pdf import buy_book_filename, expected_page_count, render_buy_book_pdf
+from buy_book_periods import period_by_id
 from database import (
     apply_buy_book_layers,
     buy_book_page_break_layers,
     buy_book_pdf_rows,
     connect,
+    execute,
     fetch_company_by_id,
     resolve_buy_book_cover,
     resolve_buy_book_period,
     buy_book_pdf_period_rows,
     resolve_scoped_company_id,
+    row_value,
     survey_item_to_public,
     write_audit_log,
 )
@@ -31,6 +35,30 @@ from models import BuyBookPdfRequest
 from routes.auth import require_admin
 
 router = APIRouter(prefix="/api/admin", tags=["buy-book"])
+
+
+def _export_period_cover(conn: Any, company_id: int, export_period: dict) -> dict:
+    """A cover-shaped period for a buy-in period that lives only in the exports.
+
+    The stored cover of a survey period with the same name is reused when one
+    exists, so a book keeps the artwork someone set up for it; otherwise the
+    default cover is built from the export's name and dates.
+    """
+    stored = execute(
+        conn,
+        """
+        SELECT cover_json FROM survey_periods
+        WHERE company_id = ? AND lower(name) = lower(?)
+        ORDER BY id DESC LIMIT 1
+        """,
+        (company_id, str(export_period["name"])),
+    ).fetchone()
+    return {
+        "name": str(export_period["name"]),
+        "opens_at": export_period.get("starts_on", "") or "",
+        "closes_at": export_period.get("ends_on", "") or "",
+        "cover_json": row_value(stored, "cover_json", "") or "",
+    }
 
 
 @router.post("/buy-book/pdf")
@@ -56,7 +84,25 @@ def create_buy_book_pdf(
         if company is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Company not found")
 
-        period = resolve_buy_book_period(conn, company_id, request.period_id)
+        export_period = None
+        if str(request.buy_in_period or "").strip():
+            export_period = period_by_id(
+                str(request.buy_in_period),
+                str(row_value(company, "name", "") or ""),
+                str(row_value(company, "slug", "") or ""),
+            )
+            if export_period is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
+
+        if request.period_id is not None:
+            # A stored period still supplies the cover when one is named.
+            period = resolve_buy_book_period(conn, company_id, request.period_id)
+        elif export_period is not None:
+            # No stored period: label the book from the buy-in period itself,
+            # reusing a stored cover when a period of the same name has one.
+            period = _export_period_cover(conn, company_id, export_period)
+        else:
+            period = resolve_buy_book_period(conn, company_id, None)
         if period is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
 
@@ -64,10 +110,23 @@ def create_buy_book_pdf(
             # An explicit list is the selection: an empty one is a refusal, not
             # a request for everything.
             rows = buy_book_pdf_rows(conn, company_id, request.item_ids)
-        elif request.period_id is not None:
+        elif export_period is not None:
             # A period book is that period's items, the same membership the page
             # reads - not the whole catalog with a period name on the cover.
-            rows = buy_book_pdf_period_rows(conn, company_id, str(period["id"]))
+            rows = buy_book_pdf_period_rows(conn, company_id, str(export_period["id"]))
+        elif request.period_id is not None:
+            # A stored period has no export membership of its own; try its
+            # name, and keep the whole book when the exports know no such period.
+            named = period_by_id(
+                str(row_value(period, "name", "") or ""),
+                str(row_value(company, "name", "") or ""),
+                str(row_value(company, "slug", "") or ""),
+            )
+            rows = (
+                buy_book_pdf_period_rows(conn, company_id, str(named["id"]))
+                if named is not None and named.get("item_count")
+                else buy_book_pdf_rows(conn, company_id, None)
+            )
         else:
             rows = buy_book_pdf_rows(conn, company_id, None)
         if not rows:

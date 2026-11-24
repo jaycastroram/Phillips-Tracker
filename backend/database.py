@@ -1014,6 +1014,30 @@ def apply_buy_book_layers(items: list[dict[str, Any]], layers: list[dict[str, An
     return grouped
 
 
+BUY_BOOK_FACET_FIELDS = ("brand", "channel", "product_type")
+
+
+def buy_book_period_facets(items: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """The brand / channel / product-type values present among these items.
+
+    The book's drop-downs are built from one buy-in period's items, so a value
+    from another period - or from the catalog but not this period - is never
+    offered. Folded case and spacing match the layer grouping's: "Tito's",
+    "TITO'S " and "tito's" are one value, shown with the first spelling seen.
+    """
+    values: dict[str, dict[str, str]] = {field: {} for field in BUY_BOOK_FACET_FIELDS}
+    for item in items:
+        for field in BUY_BOOK_FACET_FIELDS:
+            display = " ".join(str(item.get(field) or "").split())
+            if not display:
+                continue
+            values[field].setdefault(_layer_key(display), display)
+    return {
+        field: [values[field][key] for key in sorted(values[field])]
+        for field in BUY_BOOK_FACET_FIELDS
+    }
+
+
 def _carry_group_path(
     previous: list[dict[str, Any]], headers: list[dict[str, Any]], levels: int
 ) -> list[dict[str, Any]]:

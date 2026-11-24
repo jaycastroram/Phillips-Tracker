@@ -517,22 +517,29 @@ def main() -> int:
         check("no key field in the public config or company list", exposed == [], str(exposed))
         check("no buy_book_key column was added", "buy_book_key" not in columns, str(columns)[:160])
         with connect() as conn:
-            buy_book_rows = int(execute(
-                conn,
-                "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ? AND in_buy_book = ?",
-                (company_id, True, 1),
-            ).fetchone()["n"])
+            allowed_book_rows = {
+                int(row["id"]) for row in execute(
+                    conn,
+                    "SELECT id FROM survey_items WHERE company_id = ? AND is_active = ? AND in_buy_book = ?",
+                    (company_id, True, 1),
+                ).fetchall()
+            }
         book = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book"})
         check("surface=buy-book -> 200", book.status_code == 200, str(book.status_code))
         book_body = book.json()
-        check("the buy book carries every active in-buy-book item",
-              len(book_body.get("items") or []) == buy_book_rows,
-              f"{len(book_body.get('items') or [])} vs {buy_book_rows}")
+        returned = {int(row["id"]) for row in book_body.get("items") or []}
+        # The book is one buy-in period's members, so it can never show a row
+        # that is inactive or outside the buy book - and never the whole catalog.
+        check("the buy book only carries active in-buy-book rows",
+              returned <= allowed_book_rows, f"{len(returned - allowed_book_rows)} stray rows")
         check("the pre-0013 payload keys are back",
               {"items", "filter_fields", "group_by", "page_break_layers"} <= set(book_body),
               sorted(book_body.keys()))
-        check("group_by names a layer, defaulting to brand",
-              bool(book_body.get("group_by")), str(book_body.get("group_by")))
+        check("the payload names its buy-in period scope",
+              {"period", "periods", "no_period_data"} <= set(book_body),
+              sorted(book_body.keys()))
+        check("group_by names a layer, or none when ungrouped",
+              isinstance(book_body.get("group_by"), str), str(book_body.get("group_by")))
         book_key = client.get(f"/api/public/{slug}/survey-items", params={"surface": "buy-book", "k": "abc"})
         check("?k= is accepted and ignored", book_key.status_code == 200
               and (book_key.json().get("items") or []) == (book_body.get("items") or []),
@@ -540,7 +547,7 @@ def main() -> int:
         unprefixed = client.get("/api/public/survey-items", params={"surface": "buy-book", "k": "abc"})
         check("the unprefixed API form serves the default company's book",
               unprefixed.status_code == 200
-              and len(unprefixed.json().get("items") or []) == buy_book_rows,
+              and len(unprefixed.json().get("items") or []) == len(book_body.get("items") or []),
               str(unprefixed.status_code))
 
         # --------------------------------------------------------------

@@ -134,3 +134,27 @@ python backend/scripts/sync_catalog.py --limit 200 --report /tmp/run.json
 A dry run is the same code path inside a transaction that is rolled back, so it
 is an honest preview. `python backend/scripts/check_catalog_sync.py` is the offline
 acceptance check (add `--live` for one real read when the credentials are set).
+
+### Buy Book and buy-in periods
+
+The Buy Book a customer opens is one buy-in period, never the whole storefront.
+Period membership comes from the NetSuite export datasets under `data/exports/`
+(`periods/` and `items/`, latest CSV by name; `SMARTBUY_EXPORTS_DIR` overrides the
+folder), read by `backend/buy_book_periods.py`. There are no period tables yet, so
+swapping to tables later is a change to that one module.
+
+- `GET /api/public/buy-book/periods?company=<slug>` (or `?token=<book token>`)
+  lists that storefront's periods, newest first, each with its id, name, dates and
+  item count. A period with no members is listed but never opens a link by default.
+- `GET /api/public/book/<token>?period=<id>` and the static link's
+  `/api/public/<slug>/survey-items?surface=buy-book&period=<id>` both return one
+  period's items. With no `period`, the newest period that has items is used; a
+  period id from another storefront, or an unknown one, is a 404. No period data
+  is an empty book that says so — never the catalog.
+- `brand`, `channel` and `product_type` in the payload (`facets`) are computed from
+  the selected period's items only.
+- `POST /api/admin/buy-book/pdf` takes `buy_in_period` (an export period id or name)
+  and prints that period's items; `period_id` still names the stored cover.
+
+`python backend/scripts/check_buy_book_period_scope.py` proves the scope end to end
+on SQLite and Postgres 16.

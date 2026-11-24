@@ -4103,6 +4103,12 @@ td textarea {
   font-size: 0.9rem;
 }
 
+.public-book-period {
+  margin: 2px 0 0;
+  color: #1f2a37;
+  font-weight: 700;
+}
+
 .public-book-actions {
   display: flex;
   align-items: center;
@@ -4113,6 +4119,12 @@ td textarea {
 .public-book-actions span {
   color: #5a6879;
   font-size: 0.85rem;
+}
+
+.public-book-actions button.primary-action {
+  background: var(--brand-red);
+  border-color: var(--brand-red);
+  color: var(--brand-white);
 }
 
 .public-book-actions button {

@@ -22,6 +22,7 @@ import { TrackerPage } from './pages/TrackerPage'
 import { BuyBookPage, PublicBookPage, SurveyPage, ViewerPage } from './publicPages'
 import type {
   AppUser,
+  BuyBookPeriod,
   CompanyInfo,
   EditableField,
   KanbanColumn,
@@ -65,6 +66,13 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('')
   const [publicItems, setPublicItems] = useState<TrackerItem[]>([])
   const [surveyItems, setSurveyItems] = useState<SurveyItem[]>([])
+  const [surveyPeriods, setSurveyPeriods] = useState<BuyBookPeriod[]>([])
+  // '' asks the server for the newest period with items; the payload then
+  // names the period the page is actually showing.
+  const [surveyPeriodId, setSurveyPeriodId] = useState('')
+  const [surveyResolvedPeriodId, setSurveyResolvedPeriodId] = useState('')
+  const [surveyFilterResetToken, setSurveyFilterResetToken] = useState(0)
+  const [surveyMessage, setSurveyMessage] = useState('')
   const [publicQuery, setPublicQuery] = useState('')
   const [publicStatusFilter, setPublicStatusFilter] = useState('')
   const [surveyQuery, setSurveyQuery] = useState('')
@@ -222,6 +230,7 @@ function App() {
     setSurveyLoading(true)
     const params = new URLSearchParams({ surface: 'buy-book' })
     if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
+    if (surveyPeriodId) params.set('period', surveyPeriodId)
     fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-items')}?${params}`, { signal: controller.signal })
       .then((res) => {
         if (res.status === 401 || res.status === 404) {
@@ -236,6 +245,9 @@ function App() {
       .then((data) => {
         if (!data) return
         setSurveyItems(Array.isArray(data.items) ? data.items : [])
+        setSurveyPeriods(Array.isArray(data.periods) ? data.periods : [])
+        setSurveyResolvedPeriodId(data.period?.id ?? '')
+        setSurveyMessage(typeof data.message === 'string' ? data.message : '')
         if (Array.isArray(data.filter_fields)) {
           const allowed = new Set(SURVEY_FILTER_FIELDS.map((f) => f.field))
           setSurveyFilterFields(data.filter_fields.filter((f: string) => allowed.has(f as SurveyFilterField)))
@@ -244,7 +256,7 @@ function App() {
       })
       .catch(() => setSurveyLoading(false))
     return () => controller.abort()
-  }, [companySlug, isPublicBuyBookPath, surveyQuery])
+  }, [companySlug, isPublicBuyBookPath, surveyQuery, surveyPeriodId])
 
   // --- Kanban (public) ---
   useEffect(() => {
@@ -311,6 +323,14 @@ function App() {
   // selection, which is what this flag list is for.
   function toggleSurveyItem(itemId: number) {
     setSelectedSurveyItemIds((c) => c.includes(itemId) ? c.filter((id) => id !== itemId) : [...c, itemId])
+  }
+
+  function changeSurveyPeriod(periodId: string) {
+    if (!periodId || periodId === (surveyPeriodId || surveyResolvedPeriodId)) return
+    setSurveyPeriodId(periodId)
+    // The new period's book starts unselected and unfiltered.
+    setSelectedSurveyItemIds([])
+    setSurveyFilterResetToken((value) => value + 1)
   }
 
   // --- Buy book print ---
@@ -523,7 +543,10 @@ function App() {
     return <BuyBookPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
       surveyLoading={surveyLoading} surveyError={surveyError}
       surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
-      setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook} />
+      setSurveyQuery={setSurveyQuery} toggleSurveyItem={toggleSurveyItem} printSurveyBuyBook={printSurveyBuyBook}
+      surveyPeriods={surveyPeriods} surveyPeriodId={surveyPeriodId || surveyResolvedPeriodId}
+      surveyFilterResetToken={surveyFilterResetToken} onSurveyPeriodChange={changeSurveyPeriod}
+      surveyMessage={surveyMessage} />
   }
 
   if (isPublicSurveyPath) {

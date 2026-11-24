@@ -253,6 +253,9 @@ class BuyBookPdfRequest(BaseModel):
 
     company_id: int | None = None
     period_id: int | None = None
+    # A buy-in period from the NetSuite exports, by id or name. It decides the
+    # items; period_id still decides the stored cover when both are given.
+    buy_in_period: str | None = None
     item_ids: list[int] | None = None
     # A clock hint, not cover content: the browser sends
     # -Date.getTimezoneOffset(), so a book built at 8 PM in New York prints

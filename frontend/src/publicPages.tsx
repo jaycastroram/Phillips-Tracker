@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import type {
+  BuyBookFacets,
+  BuyBookPeriod,
   KanbanColumn,
   SurveyFilterField,
   SurveyItem,
@@ -45,6 +47,30 @@ type BuyBookPageProps = PublicBrandProps & {
   setSurveyQuery: Dispatch<SetStateAction<string>>
   toggleSurveyItem: (itemId: number) => void
   printSurveyBuyBook: () => void
+  /** The buy-in periods of this storefront, newest first. */
+  surveyPeriods: BuyBookPeriod[]
+  /** The selected period's id; always one of surveyPeriods when periods exist. */
+  surveyPeriodId: string
+  /** Bumped by the page when a new period is picked, so this page clears filters. */
+  surveyFilterResetToken: number
+  onSurveyPeriodChange: (periodId: string) => void
+  /** Why the period has nothing to show, when the server says so. */
+  surveyMessage: string
+}
+
+function periodOptionLabel(period: BuyBookPeriod) {
+  const count = period.item_count === 1 ? '1 item' : `${period.item_count} items`
+  return `${period.name} (${count})`
+}
+
+function periodWindowLabel(period: BuyBookPeriod | null | undefined) {
+  if (!period) return ''
+  const start = period.starts_on.slice(0, 10)
+  const end = period.ends_on.slice(0, 10)
+  if (start && end) return `${start} to ${end}`
+  if (start) return `opens ${start}`
+  if (end) return `closes ${end}`
+  return ''
 }
 
 function SurveyQuestionFields({
@@ -340,13 +366,41 @@ function useSurveyFilters(items: SurveyItem[], enabledFields: SurveyFilterField[
   const [productTypeFilter, setProductTypeFilter] = useState('')
   const [keyProgramFilter, setKeyProgramFilter] = useState('')
 
-  const brandOptions = useMemo(() => uniqueOptions(items.map((item) => item.brand)), [items])
-  const channelOptions = useMemo(() => uniqueOptions(items.map((item) => item.channel)), [items])
-  const productTypeOptions = useMemo(
-    () => uniqueOptions(items.map((item) => getSurveyProductType(item))),
-    [items],
-  )
-  const keyProgramOptions = useMemo(() => uniqueOptions(items.map((item) => item.key_program)), [items])
+  // A facet's options come from the items the *other* filters leave, so a
+  // value with nothing under the current selection is never offered; the
+  // selected value stays in its own list so the control can show it.
+  const itemsMatching = (exclude: string) =>
+    items.filter((item) => {
+      if (exclude !== 'brand' && enabledFields.includes('brand') && brandFilter && item.brand !== brandFilter) {
+        return false
+      }
+      if (exclude !== 'channel' && enabledFields.includes('channel') && channelFilter && item.channel !== channelFilter) {
+        return false
+      }
+      if (
+        exclude !== 'product_type' &&
+        enabledFields.includes('product_type') &&
+        productTypeFilter &&
+        getSurveyProductType(item) !== productTypeFilter
+      ) {
+        return false
+      }
+      if (exclude !== 'key_program' && enabledFields.includes('key_program') && keyProgramFilter && item.key_program !== keyProgramFilter) {
+        return false
+      }
+      return true
+    })
+  const optionsFor = (field: 'brand' | 'channel' | 'product_type' | 'key_program', selected: string) => {
+    const value = (item: SurveyItem) => (field === 'product_type' ? getSurveyProductType(item) : item[field])
+    const options = uniqueOptions(itemsMatching(field).map(value))
+    if (selected && !options.includes(selected)) options.push(selected)
+    return options
+  }
+  const facetDeps = [items, enabledFields, brandFilter, channelFilter, productTypeFilter, keyProgramFilter] as const
+  const brandOptions = useMemo(() => optionsFor('brand', brandFilter), facetDeps)
+  const channelOptions = useMemo(() => optionsFor('channel', channelFilter), facetDeps)
+  const productTypeOptions = useMemo(() => optionsFor('product_type', productTypeFilter), facetDeps)
+  const keyProgramOptions = useMemo(() => optionsFor('key_program', keyProgramFilter), facetDeps)
   const filteredItems = useMemo(() => {
     return items.filter((item) => {
       if (enabledFields.includes('brand') && brandFilter && item.brand !== brandFilter) return false
@@ -489,8 +543,22 @@ export function BuyBookPage({
   setSurveyQuery,
   toggleSurveyItem,
   printSurveyBuyBook,
+  surveyPeriods,
+  surveyPeriodId,
+  surveyFilterResetToken,
+  onSurveyPeriodChange,
+  surveyMessage,
 }: BuyBookPageProps) {
   const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
+  const lastFilterReset = useRef(surveyFilterResetToken)
+  useEffect(() => {
+    // A new period is a new book: the old period's filters would hide items
+    // that do exist in it. The token only changes when a person picks one.
+    if (lastFilterReset.current !== surveyFilterResetToken) {
+      lastFilterReset.current = surveyFilterResetToken
+      surveyFilters.resetFilters()
+    }
+  }, [surveyFilterResetToken, surveyFilters])
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
   const [currentPage, setCurrentPage] = useState(0)
   const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
@@ -522,6 +590,22 @@ export function BuyBookPage({
 
       <section className="viewer-toolbar buy-book-toolbar">
         <div className="buy-book-filter-group">
+          <label>
+            Buy-in period
+            <select
+              aria-label="Buy-in period"
+              value={surveyPeriodId}
+              disabled={surveyPeriods.length === 0}
+              onChange={(event) => onSurveyPeriodChange(event.target.value)}
+            >
+              {surveyPeriods.length === 0 && <option value="">No buy-in periods</option>}
+              {surveyPeriods.map((period) => (
+                <option key={period.id} value={period.id}>
+                  {periodOptionLabel(period)}
+                </option>
+              ))}
+            </select>
+          </label>
           <label>
             Search
             <input
@@ -663,7 +747,11 @@ export function BuyBookPage({
           )
         })}
         {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
-          <div className="empty-state">No buy book items found.</div>
+          <div className="empty-state">
+            {surveyMessage || (surveyPeriods.length === 0
+              ? 'No buy-in periods are loaded for this storefront yet.'
+              : 'No items match these filters.')}
+          </div>
         )}
       </section>
       <PublicFooter />
@@ -1179,9 +1267,14 @@ export function ViewerPage({
 
 type PublicBookPayload = {
   company?: { name?: string; logo_url?: string; banner_url?: string }
+  period?: BuyBookPeriod | null
+  periods?: BuyBookPeriod[]
   items: SurveyItem[]
   filter_fields?: SurveyFilterField[]
   page_break_layers?: { field: string; new_page: boolean }[]
+  facets?: BuyBookFacets
+  no_period_data?: boolean
+  message?: string
 }
 
 export function PublicBookPage({ token }: { token: string }) {
@@ -1192,12 +1285,21 @@ export function PublicBookPage({ token }: { token: string }) {
   const [brand, setBrand] = useState('')
   const [channel, setChannel] = useState('')
   const [productType, setProductType] = useState('')
+  // '' means "whatever the server picked" - the newest period with items.
+  const [requestedPeriodId, setRequestedPeriodId] = useState('')
 
   useEffect(() => {
     let cancelled = false
-    fetch(`${API_BASE}/public/book/${encodeURIComponent(token)}`)
+    setErrorLoading(true)
+    setError('')
+    const params = new URLSearchParams()
+    if (requestedPeriodId) params.set('period', requestedPeriodId)
+    const query = params.toString()
+    fetch(`${API_BASE}/public/book/${encodeURIComponent(token)}${query ? `?${query}` : ''}`)
       .then((res) => {
-        if (!res.ok) throw new Error(res.status === 404 ? 'This book link is no longer valid.' : 'Unable to load the book.')
+        if (!res.ok) {
+          throw new Error(res.status === 404 ? 'This book link is no longer valid.' : 'Unable to load the book.')
+        }
         return res.json()
       })
       .then((data: PublicBookPayload) => {
@@ -1206,23 +1308,55 @@ export function PublicBookPage({ token }: { token: string }) {
       .catch((err: Error) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setErrorLoading(false) })
     return () => { cancelled = true }
-  }, [token])
+  }, [token, requestedPeriodId])
 
-  const items = useMemo(() => {
-    const all = book?.items ?? []
-    return all.filter(
-      (item) =>
-        (!brand || (item.brand ?? '') === brand) &&
-        (!channel || (item.channel ?? '') === channel) &&
-        (!productType || (item.product_type ?? '') === productType),
+  const periodId = book?.period?.id ?? requestedPeriodId
+  const periods = book?.periods ?? []
+  const periodItems = book?.items ?? []
+
+  function pickPeriod(nextId: string) {
+    if (nextId === periodId) return
+    // A new period is a new book: its own facets, and its full set on screen.
+    setRequestedPeriodId(nextId)
+    setBrand('')
+    setChannel('')
+    setProductType('')
+    setExcluded(new Set())
+  }
+
+  // `skip` names the facet whose own filter is ignored, so each drop-down can
+  // list the values the other filters still leave.
+  const matches = (item: SurveyItem, skip: '' | 'brand' | 'channel' | 'product_type' = '') =>
+    (skip === 'brand' || !brand || (item.brand ?? '') === brand) &&
+    (skip === 'channel' || !channel || (item.channel ?? '') === channel) &&
+    (skip === 'product_type' || !productType || (item.product_type ?? '') === productType)
+
+  // Facets are the server's: the values present among this period's items.
+  // A facet value with no items left under the other filters is not offered.
+  const optionValues = (field: 'brand' | 'channel' | 'product_type') => {
+    const chosen = field === 'brand' ? brand : field === 'channel' ? channel : productType
+    const values = (book?.facets?.[field] ?? uniqueValues(periodItems, field)).filter((value) =>
+      periodItems.some((item) => (item[field] ?? '') === value && matches(item, field)),
     )
-  }, [book, brand, channel, productType])
+    if (chosen && !values.includes(chosen)) values.push(chosen)
+    return values
+  }
+  const brandOptions = optionValues('brand')
+  const channelOptions = optionValues('channel')
+  const typeOptions = optionValues('product_type')
 
-  const brands = useMemo(() => uniqueValues(book?.items ?? [], 'brand'), [book])
-  const channels = useMemo(() => uniqueValues(book?.items ?? [], 'channel'), [book])
-  const types = useMemo(() => uniqueValues(book?.items ?? [], 'product_type'), [book])
+  const items = useMemo(
+    () => periodItems.filter((item) => matches(item)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [periodItems, brand, channel, productType],
+  )
 
   const included = items.filter((item) => !excluded.has(item.id))
+  const emptyMessage =
+    book?.message
+    || (periods.length === 0
+      ? 'No buy-in periods are loaded for this storefront yet.'
+      : 'No items match these filters.')
 
   function toggle(id: number) {
     setExcluded((current) => {
@@ -1233,7 +1367,7 @@ export function PublicBookPage({ token }: { token: string }) {
     })
   }
 
-  if (loading) return <main className="public-book"><p>Loading the book…</p></main>
+  if (loading && !book) return <main className="public-book"><p>Loading the book…</p></main>
   if (error) return <main className="public-book"><p className="error">{error}</p></main>
 
   return (
@@ -1242,6 +1376,12 @@ export function PublicBookPage({ token }: { token: string }) {
         <div>
           <p className="eyebrow">Buy Book</p>
           <h1>{book?.company?.name || 'Buy Book'}</h1>
+          {book?.period && (
+            <p className="public-book-period">
+              {book.period.name}
+              {periodWindowLabel(book.period) ? ` · ${periodWindowLabel(book.period)}` : ''}
+            </p>
+          )}
           <p className="public-book-date">
             {new Date().toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
@@ -1255,22 +1395,34 @@ export function PublicBookPage({ token }: { token: string }) {
       </header>
 
       <div className="public-book-filters">
+        <select
+          aria-label="Buy-in period"
+          value={periodId}
+          disabled={periods.length === 0}
+          onChange={(event) => pickPeriod(event.target.value)}
+        >
+          {periods.length === 0 && <option value="">No buy-in periods</option>}
+          {periods.map((period) => (
+            <option key={period.id} value={period.id}>{periodOptionLabel(period)}</option>
+          ))}
+        </select>
         <select aria-label="Brand" value={brand} onChange={(event) => setBrand(event.target.value)}>
           <option value="">All brands</option>
-          {brands.map((value) => <option key={value} value={value}>{value}</option>)}
+          {brandOptions.map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
         <select aria-label="Channel" value={channel} onChange={(event) => setChannel(event.target.value)}>
           <option value="">All channels</option>
-          {channels.map((value) => <option key={value} value={value}>{value}</option>)}
+          {channelOptions.map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
         <select aria-label="Product type" value={productType} onChange={(event) => setProductType(event.target.value)}>
           <option value="">All product types</option>
-          {types.map((value) => <option key={value} value={value}>{value}</option>)}
+          {typeOptions.map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
       </div>
 
       <section className="public-book-list">
-        {(() => {
+        {loading && <p>Loading the selected period…</p>}
+        {!loading && (() => {
           let lastSection = ''
           return items.map((item) => {
           const headers = item.group_headers ?? []
@@ -1325,7 +1477,7 @@ export function PublicBookPage({ token }: { token: string }) {
           )
           })
         })()}
-        {items.length === 0 && <p>No items in this book yet.</p>}
+        {!loading && items.length === 0 && <p>{emptyMessage}</p>}
       </section>
     </main>
   )
