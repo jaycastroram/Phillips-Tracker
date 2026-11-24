@@ -22,7 +22,6 @@ from database import (
     fetch_company_by_id,
     resolve_buy_book_cover,
     resolve_buy_book_period,
-    buy_book_pdf_period_rows,
     resolve_scoped_company_id,
     survey_item_to_public,
     write_audit_log,
@@ -60,16 +59,7 @@ def create_buy_book_pdf(
         if period is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
 
-        if request.item_ids is not None:
-            # An explicit list is the selection: an empty one is a refusal, not
-            # a request for everything.
-            rows = buy_book_pdf_rows(conn, company_id, request.item_ids)
-        elif request.period_id is not None:
-            # A period book is that period's items, the same membership the page
-            # reads - not the whole catalog with a period name on the cover.
-            rows = buy_book_pdf_period_rows(conn, company_id, str(period["id"]))
-        else:
-            rows = buy_book_pdf_rows(conn, company_id, None)
+        rows = buy_book_pdf_rows(conn, company_id, request.item_ids)
         if not rows:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Nothing selected")
 
