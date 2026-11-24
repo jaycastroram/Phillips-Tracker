@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import csv
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -64,17 +65,27 @@ def _norm(value: Any) -> str:
     return " ".join(str(value or "").replace("_", " ").lower().split())
 
 
+def _col_key(value: Any) -> str:
+    """A header reduced to letters and digits, so "Buy-In Period" matches too.
+
+    NetSuite writes its column titles with hyphens and slashes; the export
+    datasets list the same columns with spaces. Folding both to alphanumerics
+    means a saved search can be uploaded exactly as it downloads.
+    """
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
 class _Row(dict):
     """A CSV row with case/space/underscore-insensitive lookup."""
 
     def __init__(self, raw: dict[str, Any]):
         super().__init__()
-        self._folded = {_norm(key): value for key, value in raw.items()}
+        self._folded = {_col_key(key): value for key, value in raw.items()}
 
     def pick(self, columns_at: tuple[str, ...]) -> str:
         for column in columns_at:
             for key in self._folded:
-                if key.replace(" ", "") == _norm(column).replace(" ", ""):
+                if key == _col_key(column):
                     value = str(self._folded[key] or "").strip()
                     if value:
                         return value
