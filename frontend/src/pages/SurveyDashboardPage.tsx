@@ -44,12 +44,36 @@ type SurveyPeriodOption = {
   status: string
 }
 
+type QuestionStat = {
+  id: string
+  label: string
+  type: string
+  required: boolean
+  options: string[]
+  answered: number
+  unanswered: number
+  counts?: Record<string, number>
+  average?: number | null
+  distribution?: Record<string, number>
+  texts?: { email: string; answer: string; submitted_at: string }[]
+}
+
+type SurveySubmission = {
+  id: number
+  email: string
+  answers: Record<string, unknown>
+  submitted_at: string
+}
+
 type SurveyResults = {
   summary: SurveySummary
   items: SurveyItemResult[]
   responses: SurveyResponse[]
   period?: SurveyPeriodOption | null
   periods?: SurveyPeriodOption[]
+  /** Per-question tallies over the standalone submissions. */
+  question_stats?: QuestionStat[]
+  submissions?: SurveySubmission[]
 }
 
 type Props = {
@@ -57,7 +81,7 @@ type Props = {
   onExport: (periodId?: number | null) => void
 }
 
-type DashboardView = 'items' | 'respondents'
+type DashboardView = 'items' | 'respondents' | 'questions'
 type ItemSort = 'interested' | 'not_interested' | 'total' | 'alpha'
 
 function InterestBar({ interested, notInterested, maybe }: { interested: number; notInterested: number; maybe: number }) {
@@ -89,7 +113,7 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
   const [results, setResults] = useState<SurveyResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [view, setView] = useState<DashboardView>('items')
+  const [view, setView] = useState<DashboardView>('questions')
   const [sort, setSort] = useState<ItemSort>('interested')
   const [search, setSearch] = useState('')
   const [expandedItem, setExpandedItem] = useState<number | null>(null)
@@ -121,7 +145,7 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
   if (error && !results) return <div className="error">{error}</div>
   if (!results) return null
 
-  const { summary, items, responses, periods = [], period } = results
+  const { summary, items, responses, periods = [], period, question_stats: questionStats = [] } = results
 
   const sortedItems = [...items]
     .filter((item) => {
@@ -188,7 +212,11 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
         <StatCard
           label="Total Responses"
           value={summary.total_responses}
-          sub={`across ${items.filter((i) => i.total_responses > 0).length} items`}
+          sub={
+            questionStats.length > 0
+              ? `across ${questionStats.length} questions`
+              : `across ${items.filter((i) => i.total_responses > 0).length} items`
+          }
         />
         <StatCard
           label="Interested"
@@ -208,15 +236,17 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
               : undefined
           }
         />
-        <StatCard
-          label="Items with Votes"
-          value={items.filter((i) => i.total_responses > 0).length}
-          sub={`of ${items.length} total items`}
-        />
+        {items.length > 0 && (
+          <StatCard
+            label="Items with Votes"
+            value={items.filter((i) => i.total_responses > 0).length}
+            sub={`of ${items.length} total items`}
+          />
+        )}
       </div>
 
       {/* Top 3 items highlight */}
-      {hasAnyResponses && (
+      {hasAnyResponses && items.some((item) => item.interested > 0) && (
         <div className="sdb-top-items">
           <h3 className="sdb-section-title">🏆 Top Items by Interest</h3>
           <div className="sdb-top-grid">
@@ -244,9 +274,16 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
       {/* Toolbar */}
       <div className="sdb-toolbar">
         <div className="sdb-view-toggle">
-          <button className={view === 'items' ? 'active' : ''} type="button" onClick={() => setView('items')}>
-            By Item ({items.length})
-          </button>
+          {questionStats.length > 0 && (
+            <button className={view === 'questions' ? 'active' : ''} type="button" onClick={() => setView('questions')}>
+              By Question ({questionStats.length})
+            </button>
+          )}
+          {items.length > 0 && (
+            <button className={view === 'items' ? 'active' : ''} type="button" onClick={() => setView('items')}>
+              By Item ({items.length})
+            </button>
+          )}
           <button className={view === 'respondents' ? 'active' : ''} type="button" onClick={() => setView('respondents')}>
             By Respondent ({summary.unique_respondents})
           </button>
@@ -279,6 +316,68 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
           Export Excel
         </button>
       </div>
+
+      {/* Questions view — the standalone survey's own report */}
+      {view === 'questions' && (
+        <div className="sdb-questions">
+          {questionStats.length === 0 && (
+            <div className="empty-state">This survey has no questions yet.</div>
+          )}
+          {questionStats.map((stat) => (
+            <div key={stat.id} className="sdb-question-card">
+              <div className="sdb-question-head">
+                <h3>{stat.label}</h3>
+                <span className="sdb-question-meta">
+                  {stat.type.replace('_', ' ')} · {stat.answered} answered
+                  {stat.unanswered > 0 ? ` · ${stat.unanswered} skipped` : ''}
+                </span>
+              </div>
+              {stat.type === 'text' && (
+                <ul className="sdb-question-texts">
+                  {(stat.texts ?? []).length === 0 && <li className="empty-state">No answers yet.</li>}
+                  {(stat.texts ?? []).map((entry, index) => (
+                    <li key={`${stat.id}-${index}`}>
+                      <span>{entry.answer}</span>
+                      <small>{entry.email || 'Anonymous'} · {entry.submitted_at}</small>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {stat.type === 'scale' && (
+                <div className="sdb-question-scale">
+                  <strong>{stat.average == null ? '—' : stat.average}</strong>
+                  <span>average of 5</span>
+                  <div className="sdb-question-scale-row">
+                    {[1, 2, 3, 4, 5].map((score) => (
+                      <span key={score} className="sdb-question-scale-cell">
+                        <strong>{stat.distribution?.[String(score)] ?? 0}</strong>
+                        <small>{score}</small>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {stat.type !== 'text' && stat.type !== 'scale' && (
+                <div className="sdb-question-counts">
+                  {Object.entries(stat.counts ?? {}).map(([option, count]) => {
+                    const total = stat.answered || 1
+                    return (
+                      <div key={option} className="sdb-question-count-row">
+                        <span className="sdb-question-count-label">{option}</span>
+                        <span className="sdb-question-count-bar" style={{ width: `${Math.round((count / total) * 100)}%` }} />
+                        <span className="sdb-question-count-value">{count}</span>
+                      </div>
+                    )
+                  })}
+                  {Object.keys(stat.counts ?? {}).length === 0 && (
+                    <span className="empty-state">No answers yet.</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Items view */}
       {view === 'items' && (

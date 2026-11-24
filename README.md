@@ -37,6 +37,39 @@ For Render/production, set:
 python backend\scripts\import_excel.py "C:\Users\FSIJonathanCastro-Ra\Downloads\Phillips Project Tracker - Copy for FSI Dev.xlsx"
 ```
 
+## Surveys and the Buy Book
+
+A survey is a name and an ordered list of questions — not a catalog. The six
+question types are yes/no, single choice, dropdown, checkboxes, text and a 1–5
+scale; each question has options where it needs them, a required flag and one
+optional image. Creation is behind a login; the public page is a static link.
+
+- The builder lives at **Survey / Buy Book Edit → Create / Manage**: name,
+  questions (add, reorder, remove), open/close, and the link to copy.
+- The link is `/phillips/survey` (or `/survey`), no token needed while the
+  company's legacy survey flag is on. It resolves whichever survey is open.
+  A token link (`/phillips/survey?t=…`) pins one survey instead.
+- One submission is one row in `survey_submissions` (survey, email, answers).
+  The report tallies per question and the Excel export writes one column per
+  question.
+
+The Buy Book shows one buy-in period at a time. Period membership comes from
+the NetSuite exports — the `periods` and `items` datasets written as CSV under
+`data/exports/` (override the folder with `SMARTBUY_EXPORTS_DIR`). The newest
+file per dataset is read; the lookup lives in `backend/buy_book_periods.py`, so
+moving to tables later is a change to that one module.
+
+Header names are matched case-, space- and underscore-insensitively:
+
+| dataset | the columns it reads |
+| --- | --- |
+| `periods/*.csv` | `Internal ID`/`id`, `Name`, optional `Start Date`, `End Date`, `Status`, `Company` |
+| `items/*.csv` | item id (`Item`, `Internal ID`, `SKU`, …) and period (`Buy In Period`, `Period ID`, `Period`, …) |
+
+With no period data the book renders an empty state and says so — it never
+falls back to the whole catalog. Sorting and page breaks stay the layer stack,
+applied to that period's items.
+
 ## Run the App
 
 Install frontend packages once:

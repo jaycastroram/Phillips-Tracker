@@ -23,8 +23,8 @@ from database import (
     classify_interest_answer,
     close_open_survey_periods,
     connect,
-    copy_catalog_items_into_period,
     count_period_items,
+    count_survey_submissions,
     company_id_for_user,
     company_to_public,
     resolve_scoped_company_id,
@@ -38,6 +38,7 @@ from database import (
     hash_password,
     kanban_column_to_public,
     list_period_items,
+    list_survey_submissions,
     mint_survey_token,
     normalize_buy_book_group_by,
     normalize_filter_fields,
@@ -53,11 +54,20 @@ from database import (
     survey_item_to_public,
     survey_layout_questions,
     survey_period_to_public,
+    survey_question_stats,
     survey_questions_json,
+    survey_submission_to_public,
     utc_now,
     with_returning,
     audit_log_to_public,
 )
+from buy_book_periods import (
+    DEFAULT_COMPANY_NAME,
+    list_periods as list_buy_in_periods,
+    period_item_rows,
+    resolve_period_id,
+)
+
 from models import (
     BuyBookLayoutUpdate,
     CompanyUpdate,
@@ -274,6 +284,16 @@ def get_survey_results(
             (company_id,),
         ).fetchall()
 
+        # The standalone flow: one row per filled-in survey. Old periods may
+        # still hold per-item answers, so both shapes are reported side by side
+        # rather than one replacing the other.
+        submissions = (
+            list_survey_submissions(conn, company_id, int(period["id"])) if period is not None else []
+        )
+
+    question_stats = survey_question_stats(period_questions, submissions)
+    submissions_public = [survey_submission_to_public(row) for row in submissions]
+
     items = []
     empty_stats = {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
                    "emails": [], "attention": [], "engagement": []}
@@ -321,12 +341,35 @@ def get_survey_results(
         for r in response_rows
     ]
 
+    # One number a person reads: every filled-in survey, whichever shape stored
+    # it. Respondents are distinct emails across both, blank emails ignored.
+    legacy_respondents = {str(row["email"] or "").strip().lower() for row in answer_rows
+                          if str(row["email"] or "").strip()}
+    submission_respondents = {str(row["email"] or "").strip().lower() for row in submissions_public
+                              if str(row["email"] or "").strip()}
+    summary["total_submissions"] = len(submissions_public)
+    summary["total_responses"] = summary["total_responses"] + len(submissions_public)
+    summary["unique_respondents"] = len(legacy_respondents | submission_respondents)
+    # The headline yes/no figure follows the survey's first yes/no question,
+    # whatever it is called: first option means yes, second means no — the same
+    # reading the tallies and the validation use.
+    yes_no_stat = next((entry for entry in question_stats if entry["type"] == "yes_no"), None)
+    if yes_no_stat is not None:
+        options = [str(option) for option in yes_no_stat.get("options") or []]
+        counts = yes_no_stat.get("counts") or {}
+        if options:
+            summary["total_interested"] = int(counts.get(options[0], 0))
+        if len(options) > 1:
+            summary["total_not_interested"] = int(counts.get(options[1], 0))
+
     return {
         "period": survey_period_to_public(period) if period is not None else None,
         "periods": [survey_period_to_public(row) for row in periods],
         "summary": summary,
         "items": items,
         "responses": responses,
+        "submissions": submissions_public,
+        "question_stats": question_stats,
     }
 
 
@@ -433,21 +476,23 @@ def rotate_buy_book_link(
 
 @router.get("/buy-book-layout")
 def get_buy_book_layout(
+    period_id: str | None = Query(default=None),
     company_id: int | None = Query(default=None),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
+    """One buy-in period's items, never the whole catalog.
+
+    With no period data at all the book is empty and says so, rather than
+    quietly showing all 3,700 catalog rows.
+    """
     company_id = resolve_scoped_company_id(user, company_id)
+    periods = list_buy_in_periods(DEFAULT_COMPANY_NAME, "phillips")
+    selected = resolve_period_id(period_id, DEFAULT_COMPANY_NAME, "phillips")
+    if selected is None and str(period_id or "").strip():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Buy-in period not found")
     with connect() as conn:
         ensure_buy_book_layout(conn, company_id)
-        rows = execute(
-            conn,
-            """
-            SELECT * FROM survey_items
-            WHERE company_id = ? AND is_active = ?
-            ORDER BY buy_book_sort_order ASC, sort_order ASC, id ASC
-            """,
-            (company_id, True),
-        ).fetchall()
+        rows = period_item_rows(conn, company_id, selected) if selected is not None else []
         fields = buy_book_filter_fields(conn, company_id)
         layers = buy_book_page_break_layers(conn, company_id)
     # group_by stays for older clients; the stack is the source of truth.
@@ -457,6 +502,9 @@ def get_buy_book_layout(
         "group_by": group_by,
         "page_break_layers": layers,
         "items": [catalog_item(row, surface="buy-book") for row in rows],
+        "periods": periods,
+        "period_id": selected,
+        "no_period_data": not periods,
     }
 
 
@@ -738,14 +786,10 @@ def create_survey_period(
             )
             period = execute(conn, "SELECT * FROM survey_periods WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
-        copy_catalog_items_into_period(
-            conn,
-            period["id"],
-            company_id,
-            only_in_survey=True,
-            source_period_id=source_period["id"] if source_period is not None else None,
-        )
-        item_count = count_period_items(conn, period["id"])
+        # A survey is a name plus a question list. It no longer copies catalog
+        # items: a respondent answers the questions once, and nothing on the
+        # public page is per item.
+        item_count = 0
 
     created_public = survey_period_to_public(period, item_count=item_count)
     # An admin response, so the create screen can hand out the link at once.
@@ -818,18 +862,18 @@ def get_survey_period_detail(
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
-        items = list_period_items(conn, period_id)
         catalog_total = execute(
             conn,
             "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ?",
             (company_id, True),
         ).fetchone()["n"]
+        submission_count = count_survey_submissions(conn, company_id, period_id)
 
-    # The editor opens on this period's own items. The catalog is a search
-    # result (see search_survey_catalog): at 3,700 rows rendering all of them
-    # froze the browser, and none of those rows belong to this survey yet.
-    editor_items = [period_item_to_public(row) for row in items]
-    period_public = survey_period_to_public(period, item_count=len(items))
+    # A survey has no item list any more: the editor shows its questions.
+    # `items` stays as an empty list so an older client reading the key is not
+    # surprised, and `catalog_total` stays for the catalog screens.
+    editor_items: list[dict[str, Any]] = []
+    period_public = survey_period_to_public(period, item_count=submission_count)
     # The token is read-only here: this is the screen an editor copies the
     # survey link from. It stays out of survey_period_to_public() so the public
     # payload can never carry it.
@@ -953,8 +997,12 @@ def update_survey_period_layout(
         if period["status"] == "closed":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Closed surveys cannot be edited")
 
+        # A survey's save carries its questions; older clients also send an
+        # item list. Items are written only when the caller sent some, so the
+        # standalone builder can save a question list with no catalog rows.
+        sends_items = bool(payload.items)
         selected = [item for item in payload.items if item.in_survey]
-        if not selected:
+        if sends_items and not selected:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Select at least one survey item")
 
         catalog_ids = [item.catalog_item_id for item in selected]
@@ -971,7 +1019,8 @@ def update_survey_period_layout(
         if len(catalog_by_id) != len(set(catalog_ids)):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more catalog items were not found")
 
-        execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
+        if sends_items:
+            execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
         for index, item in enumerate(selected, start=1):
             catalog = catalog_by_id[item.catalog_item_id]
             execute(
@@ -1063,7 +1112,7 @@ def delete_survey_period(
             conn,
             "SELECT COUNT(*) AS count FROM survey_responses WHERE survey_period_id = ?",
             (period_id,),
-        ).fetchone()["count"]
+        ).fetchone()["count"] + count_survey_submissions(conn, company_id, period_id)
         if response_count:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
@@ -1083,31 +1132,25 @@ def export_survey_responses(
     company_id: int | None = Query(default=None),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> Response:
+    """The responses as a workbook: one row per submission, one column per question."""
     company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
-        args: list[Any] = [company_id]
-        period_clause = ""
+        period = None
         period_name = "all"
+        question_labels: list[tuple[str, str]] = []
         if period_id is not None:
             period = get_survey_period(conn, company_id, period_id)
             if period is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
-            period_clause = " AND survey_responses.survey_period_id = ?"
-            args.append(period_id)
             period_name = str(period["name"]).replace(" ", "-").lower()
-
-        question_labels: list[tuple[str, str]] = []
-        if period_id is not None:
-            period_row = get_survey_period(conn, company_id, period_id)
-            if period_row is not None:
-                for question in parse_survey_questions(period_row["questions_json"]):
-                    question_labels.append((question["id"], question["label"]))
+            for question in parse_survey_questions(period["questions_json"]):
+                question_labels.append((question["id"], question["label"]))
         else:
             seen: set[str] = set()
             for period_row in execute(
                 conn,
-                "SELECT questions_json FROM survey_periods WHERE company_id = ?",
+                "SELECT questions_json FROM survey_periods WHERE company_id = ? ORDER BY id DESC",
                 (company_id,),
             ).fetchall():
                 for question in parse_survey_questions(period_row["questions_json"]):
@@ -1118,55 +1161,49 @@ def export_survey_responses(
         if not question_labels:
             question_labels = [("interest", "Interest"), ("feedback", "Notes")]
 
-        rows = execute(
-            conn,
-            f"""
-            SELECT
-                survey_responses.created_at,
-                COALESCE(survey_items.item_name, '') AS item_name,
-                COALESCE(survey_items.brand, '') AS brand,
-                COALESCE(survey_items.channel, '') AS channel,
-                COALESCE(survey_items.product_type, '') AS product_type,
-                COALESCE(survey_items.key_program, '') AS key_program,
-                COALESCE(survey_items.uom, '') AS uom,
-                COALESCE(survey_items.price, '') AS price,
-                survey_responses.email,
-                survey_responses.recommend_rollout,
-                survey_responses.feedback,
-                survey_responses.answers_json
-            FROM survey_responses
-            LEFT JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
-            WHERE survey_responses.company_id = ?{period_clause}
-            ORDER BY survey_responses.created_at DESC, survey_responses.id DESC
-            """,
-            tuple(args),
-        ).fetchall()
+        period_names = {
+            int(row["id"]): str(row["name"])
+            for row in execute(
+                conn,
+                "SELECT id, name FROM survey_periods WHERE company_id = ?",
+                (company_id,),
+            ).fetchall()
+        }
+        if period is not None:
+            submissions = list_survey_submissions(conn, company_id, int(period["id"]))
+        else:
+            submissions = []
+            for period_row in execute(
+                conn,
+                "SELECT id FROM survey_periods WHERE company_id = ? ORDER BY id DESC",
+                (company_id,),
+            ).fetchall():
+                submissions.extend(list_survey_submissions(conn, company_id, int(period_row["id"])))
+            submissions.sort(key=lambda row: (str(row_value(row, "submitted_at") or ""), row["id"]))
 
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Survey Responses"
-    headers = ["Submitted At", "Item Name", "Brand", "Channel", "Product Type",
-               "Key Program", "UOM", "Price", "Email"] + [label for _, label in question_labels]
+    headers = ["Submitted At", "Survey", "Email"] + [label for _, label in question_labels]
     worksheet.append(headers)
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
-    for row in rows:
-        answers = parse_answers_json(row["answers_json"])
+
+    for row in submissions:
+        answers = parse_answers_json(row_value(row, "answers_json"))
         answer_cells = []
         for question_id, _label in question_labels:
-            if question_id in answers and answers[question_id] not in (None, "", []):
-                value = answers[question_id]
-                answer_cells.append("; ".join(str(part) for part in value) if isinstance(value, list) else str(value))
-            elif question_id == "interest":
-                answer_cells.append("Interested" if row["recommend_rollout"] == "Yes" else "Not Interested")
-            elif question_id == "feedback":
-                answer_cells.append(str(row["feedback"] or ""))
-            else:
+            value = answers.get(question_id)
+            if isinstance(value, list):
+                answer_cells.append("; ".join(str(part) for part in value))
+            elif value in (None, ""):
                 answer_cells.append("")
+            else:
+                answer_cells.append(str(value))
         worksheet.append([
-            str(row["created_at"] or ""), row["item_name"], row["brand"],
-            row["channel"], row["product_type"], row["key_program"], row["uom"], row["price"],
-            row["email"],
+            str(row_value(row, "submitted_at") or ""),
+            period_names.get(int(row_value(row, "survey_period_id") or 0), ""),
+            row_value(row, "email") or "",
             *answer_cells,
         ])
     for column_cells in worksheet.columns:

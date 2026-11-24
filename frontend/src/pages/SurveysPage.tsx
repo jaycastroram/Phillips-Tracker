@@ -29,14 +29,24 @@ export function SurveysPage({
   const [tab, setTab] = useState<SurveysTab>('manage')
   const isAdmin = currentUser.role === 'admin'
 
+  // The survey and the book are Phillips-only for now. With the filter on
+  // "All companies" this page still reads and writes one company, so it picks
+  // Phillips rather than whichever company happens to be first.
+  const phillips = useMemo(
+    () =>
+      companies.find((company) => (company.company_slug || company.slug || '') === 'phillips') ??
+      companies.find((company) => (company.company_name || company.name || '').toLowerCase().includes('phillips')),
+    [companies],
+  )
+
   const workingCompanyId = useMemo(
     () =>
       resolveWorkingCompanyId(
-        companyFilter,
+        companyFilter === 'all' && phillips ? phillips.id : companyFilter,
         companies.map((company) => company.id),
-        currentUser.company_id,
+        phillips?.id ?? currentUser.company_id,
       ),
-    [companyFilter, companies, currentUser.company_id],
+    [companyFilter, companies, currentUser.company_id, phillips],
   )
 
   const scopedApiFetch = useCallback(

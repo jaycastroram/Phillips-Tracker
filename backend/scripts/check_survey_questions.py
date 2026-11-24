@@ -1,31 +1,33 @@
-"""Acceptance check for configurable survey questions.
+"""Acceptance check for the standalone survey: a name and a question list.
 
 Runs against a temporary client of this app and the database it is configured
-with (SQLite locally). It creates survey periods, answers them, reads the
-results and the Excel export, then removes everything it created.
+with (SQLite locally, Postgres 16 with DATABASE_URL). It creates surveys,
+submits answers through the public endpoint, reads the results and the Excel
+export, then removes everything it created.
 
     python backend/scripts/check_survey_questions.py
     python backend/scripts/check_survey_questions.py --company phillips --keep
 
 What it proves:
 
-1. a period created with all six question types returns them on the public
-   surface, and the public form data carries required flags
-2. required answers are enforced (400 naming the question), option membership is
-   enforced (400), and a valid submission returns 200
-3. a checkbox answer stores every picked option, exports as "A; B", and does
-   not change the interest counts
-4. interest counts follow the interest question after a rename and after
-   relabelling its options, and a response with no answers_json falls back to
-   the stored legacy column
-5. a period with no scale question reports no average attention/engagement
-6. init_db() twice leaves an existing period's questions untouched
+1. a survey created with all six question types returns them on the public
+   surface, with the required flags and one image URL intact
+2. a survey carries no item list — the public payload's ``items`` is empty and
+   nothing in the flow reads the catalog
+3. required answers are enforced (400 naming the question), option membership
+   is enforced (400), and a valid submission is stored as one row
+4. tallies follow the survey's own questions: choice counts, a scale average
+   and every text answer, including after a rename and a relabelled option set
+5. a survey with no scale question reports no average; a scale question does
+6. the Excel export puts one column per question after the answers
+7. init_db() twice leaves an existing survey's questions untouched
 """
 
 from __future__ import annotations
 
 import argparse
 import io
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,13 +39,13 @@ from openpyxl import load_workbook  # noqa: E402
 
 from app import app  # noqa: E402
 from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG, IS_POSTGRES  # noqa: E402
-from database import connect, execute, fetch_company_by_slug  # noqa: E402
+from database import connect, execute  # noqa: E402
 from init_db import init_db  # noqa: E402
 
 FAILURES: list[str] = []
 
-# The newest created period is the open one (creating a period closes the rest),
-# so every public call below uses that period's token.
+# Creating a survey closes the others, so the newest created one is the open
+# survey every public submission below answers.
 ACTIVE: dict[str, Any] = {"period_id": 0, "token": ""}
 
 
@@ -54,8 +56,9 @@ def check(label: str, passed: bool, detail: str = "") -> bool:
     return passed
 
 
-def questions_for(types: list[str], *, interest_label: str = "Are you interested in this item?",
-                  interest_options: list[str] | None = None) -> list[dict[str, Any]]:
+def questions_for(types: list[str], *, interest_label: str = "Are you interested?",
+                  interest_options: list[str] | None = None,
+                  image_url: str = "") -> list[dict[str, Any]]:
     builders = {
         "yes_no": {
             "id": "interest",
@@ -63,6 +66,7 @@ def questions_for(types: list[str], *, interest_label: str = "Are you interested
             "label": interest_label,
             "required": True,
             "options": interest_options or ["Yes", "No"],
+            "image_url": image_url,
         },
         "single_choice": {
             "id": "size_fit",
@@ -110,21 +114,19 @@ def create_period(client: TestClient, headers: dict[str, str], name: str, questi
         json={"name": name, "open_immediately": True, "questions": questions},
     )
     if response.status_code != 201:
-        raise SystemExit(f"Could not create period {name}: {response.status_code} {response.text[:300]}")
+        raise SystemExit(f"Could not create survey {name}: {response.status_code} {response.text[:300]}")
     period = response.json()["period"]
     ACTIVE["period_id"] = int(period["id"])
     ACTIVE["token"] = str(period.get("survey_token") or "")
     return int(period["id"])
 
 
-def submit(client: TestClient, slug: str, item_id: int, email: str, answers: Any, legacy: dict | None = None) -> Any:
-    payload: dict[str, Any] = {"survey_item_id": item_id, "email": email}
-    if legacy is not None:
-        payload.update(legacy)
-    if answers is not None:
-        payload["answers"] = answers
+def submit(client: TestClient, slug: str, email: str | None, answers: dict[str, Any]) -> Any:
+    payload: dict[str, Any] = {"answers": answers}
+    if email:
+        payload["email"] = email
     return client.post(
-        f"/api/public/{slug}/survey-responses",
+        f"/api/public/{slug}/survey-submissions",
         params={"t": ACTIVE["token"]},
         json=payload,
     )
@@ -136,14 +138,17 @@ def results(client: TestClient, headers: dict[str, str], period_id: int) -> dict
     return response.json()
 
 
-def count_answers(item_id: int, period_id: int) -> dict[str, Any]:
+def stat_of(report: dict[str, Any], question_id: str) -> dict[str, Any]:
+    return next((row for row in report.get("question_stats", []) if row["id"] == question_id), {})
+
+
+def submission_count(period_id: int) -> int:
     with connect() as conn:
-        return dict(execute(
+        return int(execute(
             conn,
-            "SELECT answers_json, recommend_rollout FROM survey_responses"
-            " WHERE survey_item_id = ? AND survey_period_id = ? ORDER BY id DESC LIMIT 1",
-            (item_id, period_id),
-        ).fetchone())
+            "SELECT COUNT(*) AS n FROM survey_submissions WHERE survey_period_id = ?",
+            (period_id,),
+        ).fetchone()["n"])
 
 
 def questions_json_of(period_id: int) -> str:
@@ -169,7 +174,7 @@ def column_names(table: str) -> list[str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--company", default=DEFAULT_COMPANY_SLUG)
-    parser.add_argument("--keep", action="store_true", help="keep the periods and responses this script creates")
+    parser.add_argument("--keep", action="store_true", help="keep the surveys and submissions this script creates")
     args = parser.parse_args()
 
     init_db()
@@ -180,17 +185,13 @@ def main() -> int:
         raise SystemExit(f"Login failed ({login.status_code}). Set ADMIN_EMAIL / ADMIN_PASSWORD.")
     headers = {"Authorization": f"Bearer {login.json()['token']}"}
 
-    catalog = client.get("/api/admin/survey-layout", headers=headers).json()["items"]
-    if not catalog:
-        raise SystemExit("No catalog items — seed the database first.")
-    item_id = int(catalog[0]["id"])
-
     created: list[int] = []
     try:
         # ------------------------------------------------------------------
         print("\n1. All six types round-trip to the public surface")
+        image = "https://res.cloudinary.com/demo/image/upload/sample.jpg"
         period_all = create_period(client, headers, "check-all-types", questions_for(
-            ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"]
+            ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"], image_url=image
         ))
         created.append(period_all)
         public = client.get(
@@ -198,25 +199,38 @@ def main() -> int:
             params={"surface": "survey", "t": ACTIVE["token"]},
         ).json()
         types = [question["type"] for question in public.get("questions", [])]
-        check("public surface returns every type", types == ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"], str(types))
+        check("public surface returns every type",
+              types == ["yes_no", "single_choice", "dropdown", "checkbox", "text", "scale"], str(types))
         required = [question["id"] for question in public["questions"] if question["required"]]
         check("required flags survive", sorted(required) == ["interest", "size_fit"], str(required))
         checkbox_question = next(q for q in public["questions"] if q["type"] == "checkbox")
         check("checkbox keeps all three options",
               checkbox_question["options"] == ["Red", "Black", "Blue"], str(checkbox_question["options"]))
+        check("the question image survives",
+              public["questions"][0].get("image_url") == image, str(public["questions"][0].get("image_url")))
 
         # ------------------------------------------------------------------
-        print("\n2. Required and option validation")
-        item_in_period = next((row for row in public["items"] if int(item_id) == int(row["id"])), None)
-        check("the item is in the open survey snapshot", item_in_period is not None)
+        print("\n2. A survey carries no item list")
+        check("public payload has an empty items list", public.get("items") == [], str(public.get("items"))[:80])
+        with connect() as conn:
+            period_items = int(execute(
+                conn,
+                "SELECT COUNT(*) AS n FROM survey_period_items WHERE survey_period_id = ?",
+                (period_all,),
+            ).fetchone()["n"])
+        check("creating a survey copies no catalog items", period_items == 0, f"{period_items} rows")
 
-        response = submit(client, args.company, item_id, "a@example.com", {"interest": "Yes"})
+        # ------------------------------------------------------------------
+        print("\n3. Required and option validation, one submission per post")
+        response = submit(client, args.company, "a@example.com", {"interest": "Yes"})
         check("missing required answer is rejected", response.status_code == 400, f"HTTP {response.status_code}")
-        check("the 400 names the question", "How is the size?" in str(response.json().get("detail", "")), str(response.text[:160]))
+        check("the 400 names the question",
+              "How is the size?" in str(response.json().get("detail", "")), str(response.text[:160]))
 
-        response = submit(client, args.company, item_id, "a@example.com", {
-            "interest": "Yes", "size_fit": "Slim fit"})
+        response = submit(client, args.company, "a@example.com", {"interest": "Yes", "size_fit": "Slim fit"})
         check("an option outside the list is rejected", response.status_code == 400, str(response.text[:160]))
+        check("nothing was stored by the refused posts", submission_count(period_all) == 0,
+              f"{submission_count(period_all)} rows")
 
         valid = {
             "interest": "Yes",
@@ -226,29 +240,45 @@ def main() -> int:
             "feedback": "Looks good",
             "attention_1": 4,
         }
-        response = submit(client, args.company, item_id, "a@example.com", valid)
-        check("a valid answer returns 200", response.status_code == 200, f"HTTP {response.status_code} {response.text[:200]}")
-        stored = count_answers(item_id, period_all)
-        import json as _json
-        check("the checkbox answer stores both picks",
-              _json.loads(stored["answers_json"]).get("colors") == ["Red", "Blue"], stored["answers_json"])
+        response = submit(client, args.company, "a@example.com", valid)
+        check("a valid submission is accepted", response.status_code == 201,
+              f"HTTP {response.status_code} {response.text[:200]}")
+        check("one row per submission", submission_count(period_all) == 1, f"{submission_count(period_all)} rows")
+        stored = response.json().get("submission", {})
+        check("the stored answers carry both checkbox picks",
+              stored.get("answers", {}).get("colors") == ["Red", "Blue"], str(stored.get("answers")))
 
         # ------------------------------------------------------------------
-        print("\n3. Checkbox export and unchanged counts")
-        before = results(client, headers, period_all)
-        before_counts = {row["id"]: (row["interested"], row["not_interested"]) for row in before["items"]}
-        response = submit(client, args.company, item_id, "b@example.com", {
+        print("\n4. Tallies follow the survey's own questions")
+        submit(client, args.company, "b@example.com", {
             "interest": "No", "size_fit": "Too big", "colors": ["Red", "Black"], "attention_1": 2})
-        check("second response accepted", response.status_code == 200, str(response.text[:160]))
-        after = results(client, headers, period_all)
-        item_after = next(row for row in after["items"] if row["id"] == item_id)
-        check("counts follow the answers, not the checkbox",
-              (item_after["interested"], item_after["not_interested"]) == (1, 1),
-              f"{item_after['interested']}/{item_after['not_interested']}")
+        report = results(client, headers, period_all)
+        interest_stat = stat_of(report, "interest")
+        check("interest counts both answers",
+              interest_stat.get("counts") == {"Yes": 1, "No": 1}, str(interest_stat.get("counts")))
+        size_stat = stat_of(report, "size_fit")
+        check("single choice counts each option",
+              size_stat.get("counts") == {"Too small": 0, "Just right": 1, "Too big": 1},
+              str(size_stat.get("counts")))
+        color_stat = stat_of(report, "colors")
+        check("checkbox tallies count each pick",
+              color_stat.get("counts") == {"Red": 2, "Black": 1, "Blue": 1}, str(color_stat.get("counts")))
+        scale_stat = stat_of(report, "attention_1")
+        check("scale reports an average", scale_stat.get("average") == 3.0, str(scale_stat.get("average")))
+        feedback_stat = stat_of(report, "feedback")
+        check("text answers are listed",
+              [entry["answer"] for entry in feedback_stat.get("texts", [])] == ["Looks good"],
+              str(feedback_stat.get("texts")))
+        check("report counts two submissions",
+              report["summary"].get("total_submissions") == 2, str(report["summary"])[:140])
+        check("report counts two respondents",
+              report["summary"].get("unique_respondents") == 2, str(report["summary"])[:140])
 
+        # ------------------------------------------------------------------
+        print("\n5. Export puts one column per question after the answers")
         with connect() as conn:
             period_row = execute(conn, "SELECT questions_json FROM survey_periods WHERE id = ?", (period_all,)).fetchone()
-        question_labels = _json.loads(period_row["questions_json"])
+        question_labels = json.loads(period_row["questions_json"])
         export = client.get("/api/admin/survey-responses/export", headers=headers, params={"period_id": period_all})
         check("export returns a workbook", export.status_code == 200 and export.content[:2] == b"PK")
         workbook = load_workbook(io.BytesIO(export.content))
@@ -260,136 +290,71 @@ def main() -> int:
         check("one column per question",
               all(question["label"] in headers_row for question in question_labels),
               str(headers_row))
+        check("one row per submission", sheet.max_row - 1 == 2, str(sheet.max_row))
 
         # ------------------------------------------------------------------
-        print("\n4. Interest question resolution")
+        print("\n6. A renamed survey still tallies, and a relabelled option set follows")
         period_renamed = create_period(client, headers, "check-renamed", questions_for(
             ["yes_no"], interest_label="Want it?"
         ))
         created.append(period_renamed)
         for email, answer in [("y1@example.com", "Yes"), ("y2@example.com", "Yes"), ("n1@example.com", "No")]:
-            response = submit(client, args.company, item_id, email, {"interest": answer})
-            check(f"submit {answer} for {email}", response.status_code == 200, str(response.text[:120]))
+            response = submit(client, args.company, email, {"interest": answer})
+            check(f"submit {answer} for {email}", response.status_code == 201, str(response.text[:120]))
         renamed = results(client, headers, period_renamed)
-        renamed_item = next(row for row in renamed["items"] if row["id"] == item_id)
-        check("renamed yes/no gives 2 interested, 1 not",
-              (renamed_item["interested"], renamed_item["not_interested"]) == (2, 1),
-              f"{renamed_item['interested']}/{renamed_item['not_interested']}")
+        renamed_stat = stat_of(renamed, "interest")
+        check("renamed yes/no tallies 2 yes, 1 no",
+              renamed_stat.get("counts") == {"Yes": 2, "No": 1}, str(renamed_stat.get("counts")))
+        check("summary follows the renamed question",
+              renamed["summary"].get("total_interested") == 2
+              and renamed["summary"].get("total_not_interested") == 1,
+              str(renamed["summary"])[:160])
 
         period_relabelled = create_period(client, headers, "check-relabelled", questions_for(
             ["yes_no"], interest_options=["Interested", "Not interested"]
         ))
         created.append(period_relabelled)
-        for email, answer in [("y1@example.com", "Interested"), ("y2@example.com", "Interested"), ("n1@example.com", "Not interested")]:
-            submit(client, args.company, item_id, email, {"interest": answer})
+        for email, answer in [("yy@example.com", "Interested"), ("nn@example.com", "Not interested")]:
+            response = submit(client, args.company, email, {"interest": answer})
+            check(f"submit {answer} for {email}", response.status_code == 201, str(response.text[:120]))
         relabelled = results(client, headers, period_relabelled)
-        relabelled_item = next(row for row in relabelled["items"] if row["id"] == item_id)
-        check("relabelled options give the same counts",
-              (relabelled_item["interested"], relabelled_item["not_interested"]) == (2, 1),
-              f"{relabelled_item['interested']}/{relabelled_item['not_interested']}")
+        relabelled_stat = stat_of(relabelled, "interest")
+        check("relabelled options tally under their own labels",
+              relabelled_stat.get("counts") == {"Interested": 1, "Not interested": 1},
+              str(relabelled_stat.get("counts")))
 
         # ------------------------------------------------------------------
-        print("\n4b. Copy from a past survey keeps that survey's questions")
-        period_source = create_period(client, headers, "check-source", questions_for(["yes_no"], interest_label="SOURCE interest") + [
-            {"id": "source_only", "type": "text", "label": "SOURCE only question", "required": False, "options": []},
-        ])
-        created.append(period_source)
-        response = client.post("/api/admin/survey-periods", headers=headers, json={
-            "name": "check-copied", "open_immediately": False, "copy_from_period_id": period_source,
-        })
-        check("copy-from create succeeds", response.status_code == 201, f"HTTP {response.status_code} {response.text[:160]}")
-        copied_id = int(response.json()["period"]["id"])
-        created.append(copied_id)
-        copied = client.get(f"/api/admin/survey-periods/{copied_id}", headers=headers).json()
-        copied_labels = [question["label"] for question in copied.get("questions", [])]
-        check("the copied survey keeps the source's questions",
-              copied_labels == ["SOURCE interest", "SOURCE only question"], str(copied_labels))
+        print("\n7. No scale question -> no average; a scale question -> one")
+        no_scale = results(client, headers, period_renamed)
+        check("no scale question means no scale stat",
+              stat_of(no_scale, "attention_1") == {}, str([s["id"] for s in no_scale["question_stats"]]))
+        with_scale = results(client, headers, period_all)
+        check("a scale question reports an average only when answered",
+              stat_of(with_scale, "attention_1").get("average") == 3.0,
+              str(stat_of(with_scale, "attention_1")))
 
         # ------------------------------------------------------------------
-        print("\n5. Legacy response, and no synthesised averages")
-        # A fresh open period with a required interest question and no scale
-        # question: the legacy payload must satisfy it and must not produce
-        # average figures out of thin air.
-        period_legacy = create_period(client, headers, "check-legacy", questions_for(["yes_no"]))
-        created.append(period_legacy)
-        legacy = submit(client, args.company, item_id, "legacy@example.com", None, legacy={
-            "attention_effectiveness": 5, "recommend_rollout": "Yes", "retail_engagement": 5,
-            "stands_out": "Yes", "price_reasonable": "Yes", "feedback": "legacy note",
-        })
-        check("a legacy POST without answers is accepted", legacy.status_code == 200, f"HTTP {legacy.status_code} {legacy.text[:160]}")
-        legacy_results = results(client, headers, period_legacy)
-        legacy_item = next(row for row in legacy_results["items"] if row["id"] == item_id)
-        check("the legacy response is counted", legacy_item["interested"] == 1, str(legacy_item["interested"]))
-        check("no scale question means no average figure",
-              legacy_item["avg_attention"] is None and legacy_item["avg_engagement"] is None,
-              f"{legacy_item['avg_attention']}/{legacy_item['avg_engagement']}")
-        scaled = next(row for row in after["items"] if row["id"] == item_id)
-        check("one scale question sets attention only",
-              scaled["avg_attention"] == 3.0 and scaled["avg_engagement"] is None,
-              f"{scaled['avg_attention']}/{scaled['avg_engagement']}")
-
-        period_two_scales = create_period(client, headers, "check-two-scales", questions_for(["yes_no"]) + [
-            {"id": "attention_1", "type": "scale", "label": "Attention score", "required": False, "options": []},
-            {"id": "engagement_1", "type": "scale", "label": "Engagement score", "required": False, "options": []},
-        ])
-        created.append(period_two_scales)
-        response = submit(client, args.company, item_id, "two@example.com", {
-            "interest": "Yes", "attention_1": 5, "engagement_1": 2})
-        check("two-scale response accepted", response.status_code == 200, str(response.text[:160]))
-        two_scale = results(client, headers, period_two_scales)
-        two_scale_item = next(row for row in two_scale["items"] if row["id"] == item_id)
-        check("attention and engagement are different numbers",
-              (two_scale_item["avg_attention"], two_scale_item["avg_engagement"]) == (5.0, 2.0),
-              f"{two_scale_item['avg_attention']}/{two_scale_item['avg_engagement']}")
-
-        # ------------------------------------------------------------------
-        print("\n6. The builder never ships the whole catalog")
-        detail = client.get(f"/api/admin/survey-periods/{period_all}", headers=headers)
-        detail_rows = detail.json().get("items", [])
-        catalog_count = client.get("/api/admin/survey-layout", headers=headers).json()["items"]
-        check("period detail returns only the period's items",
-              len(detail_rows) <= len(catalog_count) and all(row.get("in_survey") for row in detail_rows),
-              f"{len(detail_rows)} rows for a {len(catalog_count)}-item catalog")
-        # Per-row, not absolute: the guard is that the payload tracks the period,
-        # not the catalog behind it.
-        check("period detail stays lean per row",
-              len(detail.content) <= max(4_000, len(detail_rows) * 2_000),
-              f"{len(detail.content)/1e3:.0f} KB for {len(detail_rows)} rows")
-
-        empty = client.get("/api/admin/survey-catalog", headers=headers).json()
-        check("catalog search requires a term", empty.get("requires_search") is True and not empty.get("items"),
-              str(empty)[:80])
-        found = client.get("/api/admin/survey-catalog", headers=headers, params={"q": "a", "limit": 5}).json()
-        check("catalog search is paged", len(found.get("items", [])) <= 5, str(len(found.get("items", []))))
-        check("catalog search returns lean rows",
-              all("item_description" not in row and "image_url" not in row for row in found.get("items", [])),
-              str(found.get("items", [{}])[0])[:80] if found.get("items") else "no rows")
-
-        # ------------------------------------------------------------------
-        print("\n7. Migrations do not rewrite an existing period")
-        before_json = questions_json_of(period_all)
+        print("\n8. init_db() twice leaves an existing survey's questions untouched")
+        before_questions = questions_json_of(period_all)
         init_db()
         init_db()
-        after_json = questions_json_of(period_all)
-        columns = column_names("survey_periods")
-        response_columns = column_names("survey_responses")
-        check("questions survive two migrations", before_json == after_json, after_json[:120])
-        check("questions_json added once", columns.count("questions_json") == 1, str(columns))
-        check("answers_json added once", response_columns.count("answers_json") == 1, str(response_columns))
+        check("the questions are unchanged", questions_json_of(period_all) == before_questions)
+        check("the submissions table still exists", "answers_json" in column_names("survey_submissions"),
+              str(column_names("survey_submissions"))[:140])
     finally:
         if not args.keep:
             with connect() as conn:
                 for period_id in created:
-                    execute(conn, "DELETE FROM survey_responses WHERE survey_period_id = ?", (period_id,))
-                    execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
+                    execute(conn, "DELETE FROM survey_submissions WHERE survey_period_id = ?", (period_id,))
                     execute(conn, "DELETE FROM survey_periods WHERE id = ?", (period_id,))
-            print("\n(created periods and their responses removed)")
+            print(f"\nCleaned up {len(created)} check surveys.")
 
-    print()
     if FAILURES:
-        print(f"FAILED ({len(FAILURES)}): " + "; ".join(FAILURES))
+        print(f"\nFAILURES ({len(FAILURES)}):")
+        for failure in FAILURES:
+            print(f"  - {failure}")
         return 1
-    print("ALL CHECKS PASSED")
+    print("\nALL CHECKS PASSED")
     return 0
 
 

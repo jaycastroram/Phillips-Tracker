@@ -141,6 +141,19 @@ class SurveyResponseCreate(BaseModel):
     feedback: str = ""
 
 
+class SurveySubmissionCreate(BaseModel):
+    """One filled-in survey: a respondent's answers to the question list.
+
+    No item, no catalog row. The email is optional so a link can be handed out
+    to someone who does not want to type one; when given it is stored as typed
+    (lower-cased) and shown in the report.
+    """
+
+    email: EmailStr | None = None
+    # A checkbox answer is a list; every other type is a scalar.
+    answers: dict[str, str | int | float | list[str]] = {}
+
+
 class SurveyLayoutItemUpdate(BaseModel):
     id: int
     in_survey: bool

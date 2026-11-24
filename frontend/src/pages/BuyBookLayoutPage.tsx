@@ -19,6 +19,9 @@ type Props = {
 
 export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Props) {
   const [items, setItems] = useState<SurveyItem[]>([])
+  const [periods, setPeriods] = useState<{ id: string; name: string; item_count?: number }[]>([])
+  const [periodId, setPeriodId] = useState('')
+  const [noPeriodData, setNoPeriodData] = useState(false)
   const [filterFields, setFilterFields] = useState<SurveyFilterField[]>([])
   const [layers, setLayers] = useState<BuyBookLayer[]>(DEFAULT_PAGE_BREAK_LAYERS)
   const [bookLink, setBookLink] = useState('')
@@ -47,18 +50,22 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
     setLoading(true)
     setError('')
     try {
-      const res = await apiFetch('/admin/buy-book-layout')
+      const query = periodId ? `?period_id=${encodeURIComponent(periodId)}` : ''
+      const res = await apiFetch(`/admin/buy-book-layout${query}`)
       if (!res.ok) throw new Error('Unable to load buy book layout.')
       const data = await res.json()
       setItems(data.items || [])
       setFilterFields(data.filter_fields || [])
       setLayers(normalizeLayers(data.page_break_layers, data.group_by))
+      setPeriods(Array.isArray(data.periods) ? data.periods : [])
+      setNoPeriodData(Boolean(data.no_period_data))
+      if (data.period_id && data.period_id !== periodId) setPeriodId(String(data.period_id))
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load buy book layout.')
     } finally {
       setLoading(false)
     }
-  }, [apiFetch])
+  }, [apiFetch, periodId])
 
   useEffect(() => {
     loadLayout()
@@ -123,9 +130,32 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
     <section className="buy-book-layout-page">
       {error && <div className="error">{error}</div>}
 
+      <div className="buy-book-period-bar">
+        <label>
+          Buy-in period
+          <select
+            value={periodId}
+            disabled={periods.length === 0}
+            onChange={(event) => setPeriodId(event.target.value)}
+          >
+            {periods.length === 0 && <option value="">No buy-in periods yet</option>}
+            {periods.map((period) => (
+              <option key={period.id} value={period.id}>
+                {period.name}{typeof period.item_count === 'number' ? ` (${period.item_count} items)` : ''}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p>
+          {noPeriodData
+            ? 'No buy-in periods have been imported yet. The book is empty until the periods export is in place.'
+            : 'Only the items in this period are in the book. Sorting and page breaks are the layer stack below.'}
+        </p>
+      </div>
+
       <SurveyLayoutEditor
         title="Buy Book Layout"
-        description="Choose catalog items, the layer stack that decides sorting and page breaks, and the public filters. Drag the image slider to preview print size."
+        description="The layer stack decides ordering and page breaks for this period's items. Drag the image slider to preview print size."
         showSurvey={false}
         showBuyBook
         showResponseWidth={false}
@@ -188,6 +218,13 @@ export function BuyBookLayoutPage({ apiFetch, companyId, isAdmin = false }: Prop
           ) : null
         }
       />
+      {!loading && items.length === 0 && (
+        <p className="empty-state">
+          {noPeriodData
+            ? 'No buy-in periods have been imported yet, so there is nothing to lay out.'
+            : 'This buy-in period has no items in the catalog yet.'}
+        </p>
+      )}
     </section>
   )
 }

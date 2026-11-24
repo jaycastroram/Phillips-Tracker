@@ -26,8 +26,12 @@ What it proves:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
+import os
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -88,6 +92,11 @@ def make_items(conn: Any, company_id: int) -> list[int]:
             (company_id, f"{MARK} {name}", brand, channel, program, product_type,
              True, 1, 1, index, index, index),
         )
+        execute(
+            conn,
+            "UPDATE survey_items SET netsuite_item_id = ? WHERE company_id = ? AND item_name = ?",
+            (f"zzlay{index}", company_id, f"{MARK} {name}"),
+        )
         # lastrowid is SQLite-only; the name marks the row on both backends.
         row = execute(
             conn,
@@ -129,6 +138,36 @@ def pages_of(items: list[dict[str, Any]]) -> list[list[str]]:
     return pages
 
 
+def install_period_fixture(ids_by_netsuite: dict[str, str]) -> Path:
+    """One Phillips buy-in period naming this check's items.
+
+    The book only ever shows a period's items now, so the check's catalog rows
+    have to be members of a period the export describes.
+    """
+    folder = Path(tempfile.mkdtemp(prefix="sb-layers-exports-"))
+    (folder / "periods").mkdir(parents=True)
+    (folder / "items").mkdir(parents=True)
+    with (folder / "periods" / "20260101-000000-layers.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Internal ID", "Name", "Company", "End Date"])
+        writer.writerow(["LAYERS-1", "Layer check buy", "Phillips", "2026-12-31"])
+    with (folder / "items" / "20260101-000000-layers.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Item", "Buy In Period"])
+        for netsuite_id in ids_by_netsuite:
+            writer.writerow([netsuite_id, "LAYERS-1"])
+    return folder
+
+
+def add_to_period_fixture(folder: Path, netsuite_ids: list[str]) -> None:
+    """Append late-created rows to the same period's item list."""
+    path = folder / "items" / "20260101-000000-layers.csv"
+    with path.open("a", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        for netsuite_id in netsuite_ids:
+            writer.writerow([netsuite_id, "LAYERS-1"])
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company", default=DEFAULT_COMPANY_SLUG)
@@ -148,6 +187,10 @@ def main() -> None:
             conn, "SELECT * FROM buy_book_layouts WHERE company_id = ?", (company_id,)
         ).fetchone()
         item_ids = make_items(conn, company_id)
+
+    exports_dir = install_period_fixture({f"zzlay{index}": name for index, (*_rest, name) in enumerate(ITEMS)})
+    previous_exports = os.environ.get("SMARTBUY_EXPORTS_DIR")
+    os.environ["SMARTBUY_EXPORTS_DIR"] = str(exports_dir)
 
     params = {"company_id": company_id}
     try:
@@ -248,12 +291,18 @@ def main() -> None:
                     ) VALUES (?, ?, ?, 'On Premise', ?, 'Print', '', '', '', '', ?, ?, ?, ?, ?, ?)
                     """,
                     (company_id, f"{MARK} {name}", brand, program, True, 1, 1, 90, 90, 90))
+                execute(
+                    conn,
+                    "UPDATE survey_items SET netsuite_item_id = ? WHERE company_id = ? AND item_name = ?",
+                    (f"zzlay{name}", company_id, f"{MARK} {name}"),
+                )
                 row = execute(
                     conn,
                     "SELECT id FROM survey_items WHERE company_id = ? AND item_name = ?",
                     (company_id, f"{MARK} {name}"),
                 ).fetchone()
                 extra.append(int(row["id"]))
+        add_to_period_fixture(exports_dir, ["zzlayA4", "zzlayA5"])
         book = render_book(client, headers, params)
         mine = [item for item in book["items"] if item["item_name"] in items or item["item_name"].endswith(("A4", "A5"))]
         pages = pages_of(mine)
@@ -301,6 +350,11 @@ def main() -> None:
         kept = client.get("/api/admin/buy-book-layout", headers=headers, params=params).json()
         check("existing stack survives migrations", kept["page_break_layers"] == [{"field": "brand", "new_page": True}, {"field": "channel", "new_page": False}], kept["page_break_layers"])
     finally:
+        shutil.rmtree(exports_dir, ignore_errors=True)
+        if previous_exports is not None:
+            os.environ["SMARTBUY_EXPORTS_DIR"] = previous_exports
+        else:
+            os.environ.pop("SMARTBUY_EXPORTS_DIR", None)
         if not args.keep:
             with connect() as conn:
                 for item_id in item_ids:

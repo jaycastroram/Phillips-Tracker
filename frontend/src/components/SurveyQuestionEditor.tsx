@@ -83,7 +83,7 @@ export function SurveyQuestionEditor({ questions, disabled = false, onChange, no
         <div>
           <h3>Questions</h3>
           <p className="survey-section-note">
-            {note ?? 'Each respondent answers these for every selected item, in this order.'}
+            {note ?? 'Respondents answer these questions, in this order.'}
           </p>
         </div>
         <span className="survey-question-count">
