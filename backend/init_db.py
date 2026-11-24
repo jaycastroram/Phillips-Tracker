@@ -972,6 +972,39 @@ def _migrate_survey_owned_items(conn) -> None:
                 )
 
 
+def _backfill_netsuite_item_numbers(conn) -> None:
+    """Give existing rows their item number from the last-sync snapshot.
+
+    The number lives in the snapshot the sync already wrote (``itemid``), so a
+    table that has been synced before this column existed gets its numbers
+    without a NetSuite re-sync. Only blank numbers are filled: a row that
+    already carries one keeps it, so this is idempotent and cannot overwrite a
+    later sync's value. A row with no snapshot, or a snapshot without the
+    field, is left alone.
+    """
+    rows = execute(
+        conn,
+        "SELECT id, netsuite_synced_json FROM survey_items"
+        " WHERE netsuite_item_number = '' AND netsuite_synced_json NOT IN ('', '{}')",
+    ).fetchall()
+    for row in rows:
+        try:
+            snapshot = json.loads(row["netsuite_synced_json"] or "")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(snapshot, dict):
+            continue
+        number = str(snapshot.get("netsuite_item_number") or snapshot.get("itemid") or "").strip()
+        if not number:
+            continue
+        execute(
+            conn,
+            "UPDATE survey_items SET netsuite_item_number = ?"
+            " WHERE id = ? AND netsuite_item_number = ''",
+            (number, row["id"]),
+        )
+
+
 def _normalize_survey_period_times(conn) -> None:
     """Blanks in a period's window become NULL.
 
@@ -1007,6 +1040,11 @@ def init_db() -> None:
         # never derived from an image URL, and never a SKU or an item name.
         ensure_column(conn, "tracker_items", "netsuite_item_id", "TEXT")
         ensure_column(conn, "survey_items", "netsuite_item_id", "TEXT NOT NULL DEFAULT ''")
+        # The item number — the SKU a saved search calls "Item ID", e.g.
+        # ``3184_58212`` — as distinct from the internal id above. A buy-in
+        # export names its items by number, so period membership looks a row up
+        # by either; keeping both means it works whichever one an export carries.
+        ensure_column(conn, "survey_items", "netsuite_item_number", "TEXT NOT NULL DEFAULT ''")
         # What NetSuite said last run. The per-field override test compares the
         # live value against this; a person's edit differs from it and survives.
         ensure_column(conn, "survey_items", "netsuite_synced_json", "TEXT NOT NULL DEFAULT ''")
@@ -1025,6 +1063,7 @@ def init_db() -> None:
         _migrate_survey_owned_items(conn)
         _migrate_survey_access(conn)
         _normalize_survey_period_times(conn)
+        _backfill_netsuite_item_numbers(conn)
         ensure_survey_layout(conn, company["id"])
         ensure_buy_book_layout(conn, company["id"])
         _scope_sheet_status_uniqueness(conn)
@@ -1046,6 +1085,12 @@ def init_db() -> None:
             conn,
             "CREATE INDEX IF NOT EXISTS survey_items_netsuite_id_idx"
             " ON survey_items (company_id, netsuite_item_id)",
+        )
+        # The same lookup, per company, for the number a buy-in export names.
+        execute(
+            conn,
+            "CREATE INDEX IF NOT EXISTS survey_items_netsuite_number_idx"
+            " ON survey_items (company_id, netsuite_item_number)",
         )
 
         existing_admin = execute(

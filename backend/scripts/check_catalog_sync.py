@@ -49,7 +49,7 @@ if _OWNS_SCRATCH:
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import catalog_sync  # noqa: E402
-from catalog_mapping import map_item, resolve_name  # noqa: E402
+from catalog_mapping import item_number, map_item, resolve_name  # noqa: E402
 from config import IS_POSTGRES  # noqa: E402
 from database import connect, execute, utc_now  # noqa: E402
 from init_db import init_db  # noqa: E402
@@ -377,6 +377,23 @@ def section_names() -> None:
     blank = map_item(item(202, name="Hat two", brand="1"), FacetResolution(), "now")
     check("a blank description is left out entirely",
           "item_description" not in blank.fields and "item_description" not in blank.snapshot, blank.snapshot)
+    check("the item's number is the row's itemid", item_number({"itemid": "3184_58212"}) == "3184_58212",
+          item_number({"itemid": "3184_58212"}))
+    check("a saved search's 'Item ID' column is the same field",
+          item_number({"Item ID": "3184_58212"}) == "3184_58212", item_number({"Item ID": "3184_58212"}))
+    check("no number field, no number — the internal id stands in for none",
+          item_number({"id": "210"}) == "", item_number({"id": "210"}))
+    numbered = map_item(item(203, name="Numbered Hat", itemid="3184_58212", brand="1"),
+                        FacetResolution(), "now")
+    check("the map carries the number into the row and the snapshot",
+          numbered.fields.get("netsuite_item_number") == "3184_58212"
+          and numbered.snapshot.get("netsuite_item_number") == "3184_58212", numbered.fields)
+    unnumbered = map_item(
+        {"id": "204", "storedisplayname": "Unnumbered Hat"}, FacetResolution(), "now"
+    )
+    check("a row with no number leaves the field out",
+          "netsuite_item_number" not in unnumbered.fields
+          and "netsuite_item_number" not in unnumbered.snapshot, unnumbered.snapshot)
 
 
 def section_first_run(company_id: int, client: FakeSuiteQL) -> None:
@@ -417,8 +434,59 @@ def section_first_run(company_id: int, client: FakeSuiteQL) -> None:
     snapshot = json.loads(after["101"]["netsuite_synced_json"])
     check("the snapshot holds itemid and category",
           snapshot["itemid"] == "3148_101" and snapshot["category"] == "Apparel", snapshot.get("itemid"))
+    check("the row carries the number its itemid names",
+          after["101"]["netsuite_item_number"] == "3148_101", after["101"]["netsuite_item_number"])
+    check("every synced row has one",
+          all(row["netsuite_item_number"] for row in after.values()),
+          [(row["netsuite_item_id"], row["netsuite_item_number"]) for row in after.values()])
+    check("the internal id is not the number",
+          after["101"]["netsuite_item_number"] != after["101"]["netsuite_item_id"], after["101"])
     check("the snapshot holds the NetSuite name", snapshot["item_name"] == "818 Tequila Pina Dad Hat",
           snapshot.get("item_name"))
+
+
+def section_number_backfill(company_id: int) -> None:
+    """A table synced before the number column existed gets its numbers at boot."""
+    print("\n1b. A pre-existing row is backfilled from its snapshot")
+    now = utc_now().isoformat()
+    snapshot = json.dumps({"netsuite_item_id": "900200", "itemid": "3184_90020", "item_name": "Old Row"})
+    with connect() as conn:
+        execute(
+            conn,
+            "INSERT INTO survey_items (company_id, item_name, brand, channel, product_type, key_program,"
+            " item_description, sort_order, netsuite_item_id, netsuite_item_number, netsuite_synced_json,"
+            " in_survey, in_buy_book, is_active, created_at, updated_at)"
+            " VALUES (?, ?, '', '', '', '', '', 0, '900200', '', ?, 0, 0, ?, ?, ?)",
+            (company_id, "Old Row", snapshot, True, now, now),
+        )
+        # A row that already has a number keeps it, whatever its snapshot says.
+        execute(
+            conn,
+            "INSERT INTO survey_items (company_id, item_name, brand, channel, product_type, key_program,"
+            " item_description, sort_order, netsuite_item_id, netsuite_item_number, netsuite_synced_json,"
+            " in_survey, in_buy_book, is_active, created_at, updated_at)"
+            " VALUES (?, ?, '', '', '', '', '', 0, '900201', '3184_KEEP', ?, 0, 0, ?, ?, ?)",
+            (company_id, "Numbered Row",
+             json.dumps({"netsuite_item_id": "900201", "itemid": "3184_OLD"}), True, now, now),
+        )
+    init_db()
+    with connect() as conn:
+        after = catalog(conn, company_id)
+    check("the blank number is filled from the snapshot",
+          after["900200"]["netsuite_item_number"] == "3184_90020", after["900200"]["netsuite_item_number"])
+    check("a row that already carries a number is never overwritten",
+          after["900201"]["netsuite_item_number"] == "3184_KEEP", after["900201"]["netsuite_item_number"])
+    init_db()
+    with connect() as conn:
+        again = catalog(conn, company_id)
+    check("a second boot changes nothing",
+          again["900200"]["netsuite_item_number"] == "3184_90020"
+          and again["900201"]["netsuite_item_number"] == "3184_KEEP",
+          (again["900200"]["netsuite_item_number"], again["900201"]["netsuite_item_number"]))
+    with connect() as conn:
+        for netsuite_id in ("900200", "900201"):
+            execute(conn, "DELETE FROM survey_items WHERE company_id = ? AND netsuite_item_id = ?",
+                    (company_id, netsuite_id))
 
 
 def section_second_run(company_id: int, client: FakeSuiteQL) -> None:
@@ -850,6 +918,7 @@ def main() -> int:
         section_names()
         client = account()
         section_first_run(company_id, client)
+        section_number_backfill(company_id)
         section_second_run(company_id, client)
         section_boot(company_id)
         section_changes(company_id, client)

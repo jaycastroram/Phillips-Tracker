@@ -21,6 +21,14 @@ DATABASE_URL).
    empty; neither falls back to the catalog
 7. the PDF for a period prints that period's items and its page count matches
    the page's item count
+8. a period names items by SKU (the Phillips export's shape) and the catalog
+   resolves them even though it stores the internal id: 63 unique items spread
+   over 294 export rows stay 63, a kit's compound id splits into its parts, the
+   period's own price and HTML-stripped description win over the catalog's, the
+   picture stays the catalog's, an export row that matches nothing is quietly
+   dropped, and an export naming an internal id resolves the same row
+8b. the shipped Phillips dataset carries that 63, priced and described, so a
+   deploy prints real items without a second import
 
     python backend/scripts/check_buy_book_period_scope.py
 """
@@ -43,7 +51,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 from pypdf import PdfReader  # noqa: E402
 
 from app import app  # noqa: E402
-from buy_book_periods import list_periods  # noqa: E402
+from buy_book_periods import (  # noqa: E402
+    list_periods,
+    period_item_details,
+    period_item_ids,
+)
 from buy_book_pdf import expected_page_count  # noqa: E402
 from config import ADMIN_EMAIL, ADMIN_PASSWORD, DEFAULT_COMPANY_SLUG, IS_POSTGRES  # noqa: E402
 from database import connect, execute, fetch_company_by_slug  # noqa: E402
@@ -95,6 +107,31 @@ def write_dataset(folder: Path, kind: str, header: list[str], rows: list[tuple[A
         writer.writerows(rows)
 
 
+# The Phillips buy-in file: a saved search's "Item ID" (the SKU) and the
+# period name, nothing else. 63 unique items across 294 rows, because the file
+# carries one row per order line.
+SKU_PERIOD = ("PH-H127-2026", "2026-Phillips Buy H127 (9/28-10/4)", "Phillips", "2026-10-04")
+INT_PERIOD = ("PH-INT-ONLY", "2026 Phillips Internal Id Buy", "Phillips", "2026-10-11")
+GHOST_PERIOD = ("PH-GHOSTS", "2026 Phillips Gone Items", "Phillips", "2026-09-01")
+SKU_COUNT = 63
+SKU_ROWS = 294
+# The two members whose export cell names them only as the second half of a
+# compound ("9900_1062 : 9900_1062-ALT"), the way NetSuite writes a kit.
+SKU_COMPOUND = (62, 63)
+SKU_CATALOG = [
+    # internal id, item number (the SKU the export names), name
+    (f"SKUINT-{1000 + n}",
+     f"9900_{1000 + n}-ALT" if n in SKU_COMPOUND else f"9900_{1000 + n}",
+     f"Phillips Buy Item {n}")
+    for n in range(1, SKU_COUNT + 1)
+]
+# In the catalog, in no period: it must never appear in the SKU book either.
+SKU_OUTSIDE = ("SKUINT-2001", "9900_2001", "Not In Any Period")
+# Export rows naming item numbers no catalog row carries, one of them a SKU
+# from the owner's other-brand item list (502): it must never print.
+SKU_GHOSTS = ("9900_GONE-1", "9900_GONE-2", "3206_FX-72231")
+
+
 def build_exports(folder: Path) -> None:
     write_dataset(
         folder,
@@ -103,6 +140,41 @@ def build_exports(folder: Path) -> None:
         [(period_id, name, company, end) for period_id, name, company, end in PERIODS],
     )
     write_dataset(folder, "items", ["Item", "Buy In Period"], ITEMS)
+
+
+def sku_price(number: int) -> str:
+    return f"{number}.99"
+
+
+def sku_description(number: int) -> str:
+    """What a NetSuite buy-in list carries: HTML, which the book must not print."""
+    return f"<p>Phillips: Buy Item {number}</p><ul><li>Size: Unisex XS-4XL</li><li>UOM: 1=1</li></ul>"
+
+
+def build_sku_exports(folder: Path) -> None:
+    """The Phillips file's shape: the SKU, the period, and the list's own wording."""
+    write_dataset(
+        folder,
+        "periods",
+        ["Internal ID", "Name", "Company", "End Date"],
+        [SKU_PERIOD, INT_PERIOD, GHOST_PERIOD],
+    )
+    rows: list[tuple[str, str, str, str]] = []
+    plain = [number for number in range(1, SKU_COUNT + 1) if number not in SKU_COMPOUND]
+    for index in range(SKU_ROWS):
+        number = 1000 + plain[index % len(plain)]
+        rows.append((f"9900_{number}", SKU_PERIOD[0], sku_price(number), sku_description(number)))
+    # The two compounds: one cell names its own SKU and the member's, and the
+    # member's catalog row carries only the second half.
+    for number in SKU_COMPOUND:
+        item_number = 1000 + number
+        rows.append((f"9900_{item_number} : 9900_{item_number}-ALT", SKU_PERIOD[0],
+                     sku_price(item_number), sku_description(item_number)))
+    rows.extend((ghost, GHOST_PERIOD[0], "", "") for ghost in SKU_GHOSTS)
+    # The same period's other identifier: this row names an internal id, which
+    # must resolve the row just like its SKU would.
+    rows.append(("SKUINT-1001", INT_PERIOD[0], "", ""))
+    write_dataset(folder, "items", ["Item ID", "Buy-In Period", "Price", "Description"], rows)
 
 
 def row_ids(payload: dict[str, Any]) -> set[int]:
@@ -161,6 +233,8 @@ def main() -> int:
     previous_exports = os.environ.get("SMARTBUY_EXPORTS_DIR")
     exports_dir = Path(tempfile.mkdtemp(prefix="sb-scope-exports-"))
     empty_dir = Path(tempfile.mkdtemp(prefix="sb-scope-empty-"))
+    sku_dir = Path(tempfile.mkdtemp(prefix="sb-scope-sku-"))
+    sku_item_ids: list[int] = []
 
     try:
         build_exports(exports_dir)
@@ -406,22 +480,163 @@ def main() -> int:
         )
         check("a period with no items refuses to print -> 400", empty_pdf.status_code == 400,
               f"HTTP {empty_pdf.status_code}")
+
+        # ------------------------------------------------------------------
+        print("\n8. A period names items by SKU; the catalog stores the internal id")
+        build_sku_exports(sku_dir)
+        os.environ["SMARTBUY_EXPORTS_DIR"] = str(sku_dir)
+        by_number: dict[str, int] = {}
+        by_internal_id: dict[str, int] = {}
+        with connect() as conn:
+            for internal_id, number, name in [*SKU_CATALOG, SKU_OUTSIDE]:
+                execute(
+                    conn,
+                    """
+                    INSERT INTO survey_items (
+                        company_id, item_name, brand, channel, product_type, key_program,
+                        item_description, uom, price, image_url, netsuite_item_id,
+                        netsuite_item_number, sort_order, buy_book_sort_order, in_buy_book,
+                        is_active
+                    ) VALUES (?, ?, 'Phillips Brand', 'On Premise', 'Glassware', '',
+                              ?, '', ?, ?, ?, ?, 0, 0, ?, ?)
+                    """,
+                    (company_id, name, f"Catalog wording for {name}", f"{name} catalog price",
+                     f"https://images.example.test/{internal_id}.png", internal_id, number, 1,
+                     True if IS_POSTGRES else 1),
+                )
+            seeded = execute(
+                conn,
+                "SELECT id, netsuite_item_id, netsuite_item_number FROM survey_items"
+                " WHERE company_id = ?"
+                " AND (substr(netsuite_item_id, 1, 8) = 'SKUINT-1' OR netsuite_item_id = ?)",
+                (company_id, SKU_OUTSIDE[0]),
+            ).fetchall()
+            sku_item_ids = [int(row["id"]) for row in seeded]
+            by_number = {str(row["netsuite_item_number"]): int(row["id"]) for row in seeded
+                         if str(row["netsuite_item_number"]).startswith("9900_1")}
+            by_internal_id = {str(row["netsuite_item_id"]): int(row["id"]) for row in seeded}
+
+        expected_sku = {by_number[number] for _internal_id, number, _name in SKU_CATALOG}
+        sku_book = client.get(f"/api/public/book/{test_token}", params={"period": SKU_PERIOD[0]})
+        check("the SKU period's book -> 200", sku_book.status_code == 200, f"HTTP {sku_book.status_code}")
+        sku_body = sku_book.json() if sku_book.status_code == 200 else {}
+        check("the period is the one asked for",
+              (sku_body.get("period") or {}).get("id") == SKU_PERIOD[0], str(sku_body.get("period")))
+        check(f"all {SKU_COUNT} SKU-named items resolve",
+              row_ids(sku_body) == expected_sku,
+              f"{len(row_ids(sku_body))} rows, missing {sorted(expected_sku - row_ids(sku_body))[:5]}")
+        check("294 export rows stay 63 members, never 294",
+              len(row_ids(sku_body)) == SKU_COUNT,
+              f"{len(row_ids(sku_body))} rows")
+        check("the items are the catalog's own rows, named",
+              all(str(row.get("item_name", "")).startswith("Phillips Buy Item")
+                  for row in sku_body.get("items", [])),
+              str(item_names(sku_body)[:3]))
+        check("an export row that matches nothing is quietly dropped",
+              len(sku_body.get("items", [])) == len(expected_sku)
+              and "GONE" not in str(sku_body), str(len(sku_body.get("items", []))))
+        check("another brand's item-list id never appears",
+              SKU_GHOSTS[-1] not in str(sku_body)
+              and SKU_GHOSTS[-1] not in " ".join(item_names(sku_body)),
+              str(item_names(sku_body)[:3]))
+        members = {row.get("id"): row for row in sku_body.get("items", [])}
+        sample = members.get(by_number["9900_1001"], {})
+        check("the item prints the period's own price",
+              sample.get("price") == sku_price(1001), sample.get("price"))
+        check("the item prints the period's description, not the catalog's",
+              "Phillips: Buy Item 1" in str(sample.get("item_description"))
+              and "Catalog wording" not in str(sample.get("item_description")),
+              sample.get("item_description"))
+        check("the description arrives as text, never as HTML",
+              "<" not in str(sample.get("item_description", ""))
+              and "Size: Unisex XS-4XL" in str(sample.get("item_description")),
+              sample.get("item_description"))
+        check("the picture stays the catalog's",
+              sample.get("image_url") == f"https://images.example.test/SKUINT-1001.png",
+              sample.get("image_url"))
+        check("every member carries a price and a description",
+              all(str(row.get("price") or "") and str(row.get("item_description") or "")
+                  for row in sku_body.get("items", [])),
+              [(row.get("item_name"), row.get("price")) for row in sku_body.get("items", [])
+               if not row.get("price")][:3])
+        check("a kit cell's second id resolves its own row",
+              by_number["9900_1062-ALT"] in row_ids(sku_body)
+              and by_number["9900_1063-ALT"] in row_ids(sku_body),
+              f"{by_number['9900_1062-ALT']} {by_number['9900_1063-ALT']}")
+        ghosts = client.get(f"/api/public/book/{test_token}", params={"period": GHOST_PERIOD[0]})
+        check("a period of unmatched export rows prints nothing and does not fail",
+              ghosts.status_code == 200 and ghosts.json().get("items") == []
+              and "no items" in str(ghosts.json().get("message", "")).lower(),
+              f"HTTP {ghosts.status_code} {len(ghosts.json().get('items', [])) if ghosts.status_code == 200 else ''}")
+        check("a catalog row no period names is not in the book",
+              by_internal_id[SKU_OUTSIDE[0]] not in row_ids(sku_body), str(item_names(sku_body)[:3]))
+        sku_periods = client.get("/api/public/buy-book/periods").json().get("periods", [])
+        sku_period = next((period for period in sku_periods if period.get("id") == SKU_PERIOD[0]), {})
+        check("the drop-down count is the unique item count, not the row count",
+              sku_period.get("item_count") == SKU_COUNT, str(sku_period))
+        check("the period keeps its hyphenated name as NetSuite writes it",
+              sku_period.get("name") == SKU_PERIOD[1], str(sku_period.get("name")))
+        int_book = client.get(f"/api/public/book/{test_token}", params={"period": INT_PERIOD[0]})
+        check("an export naming an internal id resolves the same row",
+              int_book.status_code == 200
+              and row_ids(int_book.json()) == {by_internal_id["SKUINT-1001"]},
+              f"HTTP {int_book.status_code} {item_names(int_book.json()) if int_book.status_code == 200 else ''}")
+        sku_pdf = client.post(
+            "/api/admin/buy-book/pdf",
+            headers=headers,
+            json={"company_id": company_id, "buy_in_period": SKU_PERIOD[0]},
+        )
+        check("the SKU period's PDF answers 200", sku_pdf.status_code == 200,
+              f"HTTP {sku_pdf.status_code} {sku_pdf.text[:120]}")
+        if sku_pdf.status_code == 200:
+            sku_pages, sku_text = pdf_text(sku_pdf.content)
+            check("the PDF's page count matches its 63 items",
+                  sku_pages == expected_page_count(sku_body.get("items", [])),
+                  f"{sku_pages} vs {expected_page_count(sku_body.get('items', []))}")
+            check("the PDF prints a SKU-named item",
+                  "Phillips Buy Item 1" in sku_text, sku_text[:160].replace("\n", " / "))
+
+        # ------------------------------------------------------------------
+        print("\n8b. The shipped Phillips dataset is that period, priced and described")
+        os.environ.pop("SMARTBUY_EXPORTS_DIR", None)
+        shipped = list_periods()
+        check("the shipped dataset holds one Phillips period", len(shipped) == 1, shipped)
+        period_name = shipped[0]["name"] if shipped else ""
+        check("it is named as NetSuite writes it", period_name == "2026-Phillips Buy H127 (9/28-10/4)",
+              period_name)
+        shipped_ids = period_item_ids(period_name) if period_name else []
+        check("63 distinct items, never the file's row count", len(shipped_ids) == 63, len(shipped_ids))
+        check("the drop-down count says 63", shipped[0].get("item_count") == 63 if shipped else False,
+              shipped[0].get("item_count") if shipped else None)
+        shipped_details = period_item_details(period_name) if period_name else {}
+        priced = [item_id for item_id in shipped_ids if shipped_details.get(item_id, {}).get("price")]
+        check("54 of the 63 carry the item list's price", len(priced) == 54, len(priced))
+        check("the other 9 leave price and description to the catalog",
+              len(shipped_ids) - len(priced) == 9, len(shipped_ids) - len(priced))
+        described = [item_id for item_id in shipped_ids
+                     if shipped_details.get(item_id, {}).get("item_description")]
+        check("their descriptions are plain text, never HTML",
+              described and all("<" not in shipped_details[item_id]["item_description"]
+                                and "&amp;" not in shipped_details[item_id]["item_description"]
+                                for item_id in described),
+              described[:2])
     finally:
         os.environ.pop("SMARTBUY_EXPORTS_DIR", None)
         if previous_exports is not None:
             os.environ["SMARTBUY_EXPORTS_DIR"] = previous_exports
         shutil.rmtree(exports_dir, ignore_errors=True)
         shutil.rmtree(empty_dir, ignore_errors=True)
+        shutil.rmtree(sku_dir, ignore_errors=True)
         if not args.keep:
             with connect() as conn:
-                for item_id in created_item_ids:
+                for item_id in [*created_item_ids, *sku_item_ids]:
                     execute(conn, "DELETE FROM survey_items WHERE id = ?", (item_id,))
                 execute(
                     conn,
                     "UPDATE companies SET public_book_token = ? WHERE id = ?",
                     (original_token or None, company_id),
                 )
-            print(f"\nCleaned up {len(created_item_ids)} catalog rows.")
+            print(f"\nCleaned up {len(created_item_ids) + len(sku_item_ids)} catalog rows.")
 
     if FAILURES:
         print(f"\nFAILURES ({len(FAILURES)}):")

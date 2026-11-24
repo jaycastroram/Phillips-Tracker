@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, status
 
 from buy_book_periods import (
+    catalog_item_ids,
     default_period_id,
     list_periods,
     period_by_id,
@@ -289,19 +290,22 @@ def _buy_book_period_payload(company: Any, period_ref: str = "", q: str = "") ->
     """
     company_id = int(company["id"])
     company_name, company_slug = _buy_book_scope(company)
-    periods = list_periods(company_name, company_slug)
-
-    requested = str(period_ref or "").strip()
-    selected: dict[str, Any] | None = None
-    if requested:
-        selected = period_by_id(requested, company_name, company_slug)
-        if selected is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
-    else:
-        default_id = default_period_id(periods)
-        selected = next((period for period in periods if period["id"] == default_id), None)
 
     with connect() as conn:
+        # The catalog's identifiers: a period's count is the members it can
+        # print, never an export row naming an item the catalog has not got.
+        known = catalog_item_ids(conn, company_id)
+        periods = list_periods(company_name, company_slug, known)
+        requested = str(period_ref or "").strip()
+        selected: dict[str, Any] | None = None
+        if requested:
+            selected = period_by_id(requested, company_name, company_slug, known)
+            if selected is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Period not found")
+        else:
+            default_id = default_period_id(periods)
+            selected = next((period for period in periods if period["id"] == default_id), None)
+
         fields = buy_book_filter_fields(conn, company_id)
         layers = buy_book_page_break_layers(conn, company_id)
         company_row = execute(conn, "SELECT * FROM companies WHERE id = ?", (company_id,)).fetchone()
@@ -412,7 +416,9 @@ def list_public_buy_book_periods(company: str = "", token: str = "") -> dict:
         _get_company(company) if company.strip() else _default_company()
     )
     company_name, company_slug = _buy_book_scope(scoped)
-    periods = list_periods(company_name, company_slug)
+    with connect() as conn:
+        known = catalog_item_ids(conn, int(scoped["id"]))
+    periods = list_periods(company_name, company_slug, known)
     return {
         "company": company_to_public(scoped),
         "periods": [_buy_book_period_summary(period) for period in periods],

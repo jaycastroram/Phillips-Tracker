@@ -402,9 +402,10 @@ def _create_row(conn: Any, company_id: int, item: MappedItem, now: Any) -> int:
         """
         INSERT INTO survey_items (
             company_id, item_name, brand, channel, product_type, key_program,
-            item_description, sort_order, netsuite_item_id, netsuite_synced_json,
-            needs_name, in_survey, in_buy_book, is_active, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
+            item_description, sort_order, netsuite_item_id, netsuite_item_number,
+            netsuite_synced_json, needs_name, in_survey, in_buy_book, is_active,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)
         """
     )
     cursor = execute(
@@ -420,6 +421,7 @@ def _create_row(conn: Any, company_id: int, item: MappedItem, now: Any) -> int:
             fields.get("item_description", ""),
             int(fields.get("sort_order", 0)),
             item.netsuite_item_id,
+            fields.get("netsuite_item_number", ""),
             json.dumps(item.snapshot, ensure_ascii=False, default=str),
             1 if item.needs_name else 0,
             _active_value(True),

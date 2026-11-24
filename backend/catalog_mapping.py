@@ -34,6 +34,15 @@ Price, ``image_url`` and ``uom`` are not mapped.
 
 ``itemid`` and the Multi-Order Category are kept in ``netsuite_synced_json``
 only: they identify the source row, they are not catalog fields.
+
+The item number
+---------------
+``itemid`` is also copied to ``survey_items.netsuite_item_number``. It is the
+SKU a saved search calls "Item ID" (``3184_58212``), and a buy-in export names
+its items by it, while the internal id (``210``) is what ``netsuite_item_id``
+holds. Keeping both on the row is what lets a period's membership resolve
+whichever identifier the export carries. It is read from the item row's number
+field — never derived from the name, which is a display label.
 """
 
 from __future__ import annotations
@@ -58,7 +67,14 @@ WRITE_FIELDS = (
     "key_program",
     "product_type",
     "sort_order",
+    "netsuite_item_number",
 )
+
+# What a saved search, an export or the SuiteQL read calls the item's number.
+# Header names are folded to letters and digits, so "Item ID" and "item_id"
+# land on ``itemid`` too. The internal id is deliberately not a fallback: a
+# number that is really an internal id would match a different item's rows.
+ITEM_NUMBER_COLUMNS = ("itemid", "item number", "itemnumber")
 
 NEEDS_NAME_PREFIX = "Item "
 
@@ -72,6 +88,25 @@ NAME_SOURCE_NONE = ""
 
 def text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _fold_column(value: Any) -> str:
+    """A field name reduced to letters and digits: "Item ID" -> "itemid"."""
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+
+def item_number(row: dict[str, Any]) -> str:
+    """The item's number — the SKU, e.g. ``3184_58212`` — or '' when absent.
+
+    Read from the row's number field, never from the name. A row that carries
+    no number gets no number: the internal id is not a stand-in.
+    """
+    folded = {_fold_column(key): value for key, value in row.items()}
+    for column in ITEM_NUMBER_COLUMNS:
+        value = text(folded.get(_fold_column(column)))
+        if value:
+            return value
+    return ""
 
 
 def is_numeric_code(value: Any) -> bool:
@@ -184,9 +219,15 @@ def map_item(row: dict[str, Any], labels: FacetResolution, synced_at: str) -> Ma
     if description:
         fields["item_description"] = description
 
+    # The number is written only when the row carries one, so a read that does
+    # not return it can never blank a number an earlier run stored.
+    number = item_number(row)
+    if number:
+        fields["netsuite_item_number"] = number
+
     snapshot = {
         "netsuite_item_id": internal_id,
-        "itemid": text(row.get("itemid")),
+        "itemid": number,
         "category": text(row.get(CATEGORY_COLUMN) or row.get("multi_order_cat")),
         "name": name,
         "name_source": source or "none",
@@ -203,6 +244,8 @@ def map_item(row: dict[str, Any], labels: FacetResolution, synced_at: str) -> Ma
     }
     if description:
         snapshot["item_description"] = description
+    if number:
+        snapshot["netsuite_item_number"] = number
     return MappedItem(
         netsuite_item_id=internal_id,
         name=name,
