@@ -138,8 +138,50 @@ export type SurveyPeriod = {
   filter_fields: SurveyFilterField[]
   questions?: SurveyQuestion[]
   item_count?: number
+  question_count?: number
+  response_count?: number
+  /** Admin payloads only: the link credential. Never sent to the public page. */
+  survey_token?: string
   created_at: string
   updated_at: string
+}
+
+/** One item a survey owns: a mocked-up product, not a catalog row. */
+export type SurveyOwnedItem = {
+  id: number
+  item_name: string
+  name?: string
+  cost: string
+  item_number: string
+  image_url: string
+  item_description: string
+  sort_order: number
+  /** The pool question ids this item asks, in pool order. */
+  question_ids: string[]
+  questions: SurveyQuestion[]
+}
+
+/** The dialog's item draft: no id until it is saved. */
+export type SurveyItemDraft = {
+  key: string
+  id: number | null
+  item_name: string
+  cost: string
+  image_url: string
+  item_number: string
+  item_description: string
+  question_ids: string[]
+}
+
+/** What the create/update dialog posts. */
+export type SurveyItemPayload = {
+  id: number | null
+  item_name: string
+  cost: string
+  image_url: string
+  item_number: string
+  item_description: string
+  question_ids: string[]
 }
 
 export type SurveyAnswerValue = string | number | string[]

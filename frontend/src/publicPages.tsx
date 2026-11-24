@@ -2,15 +2,15 @@ import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from
 import type {
   KanbanColumn,
   SurveyFilterField,
-  SurveyInterest,
   SurveyItem,
   SurveyAnswerValue,
   SurveyQuestion,
   SurveyResponseDraft,
   TrackerItem,
 } from './types'
-import { API_BASE, DEFAULT_SURVEY_QUESTIONS } from './constants'
+import { API_BASE } from './constants'
 import {
+  companyPublicApiPath,
   getViewerStatus,
   isImageReference,
   publicSheetLabel,
@@ -45,38 +45,6 @@ type BuyBookPageProps = PublicBrandProps & {
   setSurveyQuery: Dispatch<SetStateAction<string>>
   toggleSurveyItem: (itemId: number) => void
   printSurveyBuyBook: () => void
-}
-
-type SurveyPageProps = PublicBrandProps & {
-  surveyItems: SurveyItem[]
-  surveyFilterFields: SurveyFilterField[]
-  surveyQuestions: SurveyQuestion[]
-  surveyLoading: boolean
-  surveyError: string
-  surveyMessage: string
-  surveyQuery: string
-  selectedSurveyItemIds: number[]
-  isSubmittingSurvey: boolean
-  surveyEmail: string
-  setSurveyEmail: (email: string) => void
-  setSurveyQuery: Dispatch<SetStateAction<string>>
-  surveyOpen?: boolean
-  surveyClosedMessage?: string
-  toggleSurveyItem: (itemId: number) => void
-  submitSurveyResponse: () => void
-  bulkUpdateSurveyInterest: (interest: Exclude<SurveyInterest, ''>) => void
-  getSurveyResponse: (itemId: number) => SurveyResponseDraft
-  updateSurveyResponse: (itemId: number, updates: Partial<SurveyResponseDraft>) => void
-}
-
-const INTEREST_TYPES: SurveyQuestion['type'][] = ['yes_no', 'single_choice', 'dropdown']
-
-function findInterestQuestion(questions: SurveyQuestion[]) {
-  return (
-    questions.find((question) => question.id === 'interest' && INTEREST_TYPES.includes(question.type)) ??
-    questions.find((question) => INTEREST_TYPES.includes(question.type)) ??
-    null
-  )
 }
 
 function SurveyQuestionFields({
@@ -710,37 +678,62 @@ export function BuyBookPage({
   )
 }
 
-export function SurveyPage({
-  companyName,
-  companyLogoUrl,
-  companyBannerUrl,
-  surveyItems,
-  surveyFilterFields,
-  surveyQuestions,
-  surveyLoading,
-  surveyError,
-  surveyMessage,
-  surveyQuery,
-  selectedSurveyItemIds,
-  isSubmittingSurvey,
-  surveyEmail,
-  setSurveyEmail,
-  setSurveyQuery,
-  surveyOpen = true,
-  surveyClosedMessage = 'No survey is open right now.',
-  toggleSurveyItem,
-  submitSurveyResponse,
-  bulkUpdateSurveyInterest,
-  getSurveyResponse,
-  updateSurveyResponse,
-}: SurveyPageProps) {
-  const surveyFilters = useSurveyFilters(surveyItems, surveyFilterFields)
-  const questions = surveyQuestions.length > 0 ? surveyQuestions : DEFAULT_SURVEY_QUESTIONS
-  const interestQuestion = findInterestQuestion(questions)
+function isAnyImageUrl(value: string) {
+  const text = String(value || '').trim()
+  return /^https?:\/\//i.test(text) || text.startsWith('/')
+}
+
+type PublicSurveyItem = {
+  id: number
+  item_name: string
+  cost: string
+  item_number: string
+  item_image_description?: string
+  item_description: string
+  image_url: string
+  sort_order: number
+  questions: SurveyQuestion[]
+}
+
+type PublicSurveyPayload = {
+  items: PublicSurveyItem[]
+  questions: SurveyQuestion[]
+  survey_open?: boolean
+  message?: string
+  period?: { id: number; name: string } | null
+}
+
+type SurveyPageProps = PublicBrandProps & {
+  companySlug: string
+  /** The token from the link (?t=), empty for the static open-survey link. */
+  token: string
+}
+
+function isAnswered(value: SurveyAnswerValue | undefined) {
+  if (value === undefined || value === null) return false
+  if (Array.isArray(value)) return value.length > 0
+  return String(value).trim() !== ''
+}
+
+/**
+ * The public survey: one card per item, in the survey's own order.
+ *
+ * Each card shows the item (image, name, cost, number, description) and then
+ * only the questions that item asks, so two items can be on the same page with
+ * different question sets. One submit covers every item the respondent
+ * answered; the email is optional.
+ */
+export function SurveyPage({ companyName, companyLogoUrl, companyBannerUrl, companySlug, token }: SurveyPageProps) {
+  const [payload, setPayload] = useState<PublicSurveyPayload | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [closedMessage, setClosedMessage] = useState('')
+  const [answers, setAnswers] = useState<Record<number, Record<string, SurveyAnswerValue>>>({})
+  const [email, setEmail] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState('')
+  const [submitted, setSubmitted] = useState(false)
   const [previewImage, setPreviewImage] = useState<{ url: string; title: string } | null>(null)
-  const [currentPage, setCurrentPage] = useState(0)
-  const pages = useMemo(() => groupSurveyPages(surveyFilters.filteredItems), [surveyFilters.filteredItems])
-  const safePage = Math.min(currentPage, Math.max(pages.length - 1, 0))
+
   const brandHeader = resolvePublicBrandHeader(
     companyBannerUrl,
     companyLogoUrl,
@@ -748,43 +741,149 @@ export function SurveyPage({
     PRE_BUY_SURVEY_HEADER_LOGO,
     'SmartBuy Pre Buy Survey',
   )
+
   useEffect(() => {
-    setCurrentPage(0)
-  }, [surveyFilters.filteredItems])
-  const allVisibleSelected =
-    surveyFilters.filteredItems.length > 0 &&
-    surveyFilters.filteredItems.every((item) => selectedSurveyItemIds.includes(item.id))
-
-  function toggleVisibleSurveyItems() {
-    surveyFilters.filteredItems.forEach((item) => {
-      const isSelected = selectedSurveyItemIds.includes(item.id)
-      if (allVisibleSelected ? isSelected : !isSelected) toggleSurveyItem(item.id)
+    const controller = new AbortController()
+    const params = new URLSearchParams({ surface: 'survey' })
+    if (token) params.set('t', token)
+    setLoading(true)
+    fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-items')}?${params}`, {
+      signal: controller.signal,
     })
+      .then((res) => {
+        if (res.status === 401 || res.status === 404) {
+          setPayload(null)
+          setClosedMessage('This survey link is not valid or has been replaced. Ask for a current link.')
+          setLoading(false)
+          return null
+        }
+        if (!res.ok) throw new Error('survey')
+        return res.json()
+      })
+      .then((data: PublicSurveyPayload | null) => {
+        if (!data) return
+        setPayload(data)
+        setClosedMessage(
+          data.survey_open === false
+            ? data.message || 'This survey is closed.'
+            : '',
+        )
+        setLoading(false)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setError('Unable to load the survey. Refresh the page to try again.')
+          setLoading(false)
+        }
+      })
+    return () => controller.abort()
+  }, [companySlug, token])
+
+  const items = payload?.items ?? []
+
+  function answer(itemId: number, questionId: string, value: SurveyAnswerValue) {
+    setAnswers((current) => ({
+      ...current,
+      [itemId]: { ...(current[itemId] ?? {}), [questionId]: value },
+    }))
   }
 
-  function answerQuestion(itemId: number, questionId: string, value: SurveyAnswerValue) {
-    if (!selectedSurveyItemIds.includes(itemId)) toggleSurveyItem(itemId)
-    const draft = getSurveyResponse(itemId)
-    const nextAnswers = { ...draft.answers, [questionId]: value }
-    const updates: Partial<SurveyResponseDraft> = { answers: nextAnswers }
-    if (interestQuestion && questionId === interestQuestion.id) {
-      const yes = interestQuestion.options[0] || 'Yes'
-      const no = interestQuestion.options[1] || 'No'
-      updates.interest =
-        value === yes ? 'Interested' : value === no ? 'Not Interested' : ''
+  function missingRequired(): { item: PublicSurveyItem; question: SurveyQuestion } | null {
+    for (const item of items) {
+      const itemAnswers = answers[item.id] ?? {}
+      for (const question of item.questions) {
+        if (question.required && !isAnswered(itemAnswers[question.id])) {
+          return { item, question }
+        }
+      }
     }
-    const textQuestion = questions.find((question) => question.type === 'text' && question.id === questionId)
-    if (textQuestion) {
-      updates.notes = String(value ?? '')
-    }
-    updateSurveyResponse(itemId, updates)
+    return null
   }
 
-  if (!surveyLoading && !surveyOpen) {
+  async function submit() {
+    setError('')
+    const missing = missingRequired()
+    if (missing) {
+      setError(`Please answer “${missing.question.label}” for ${missing.item.item_name}.`)
+      return
+    }
+    const answered: Record<number, Record<string, SurveyAnswerValue>> = {}
+    for (const item of items) {
+      const itemAnswers = answers[item.id] ?? {}
+      const kept: Record<string, SurveyAnswerValue> = {}
+      for (const question of item.questions) {
+        const value = itemAnswers[question.id]
+        if (isAnswered(value)) kept[question.id] = value as SurveyAnswerValue
+      }
+      if (Object.keys(kept).length > 0) answered[item.id] = kept
+    }
+    if (Object.keys(answered).length === 0) {
+      setError('Answer at least one item before submitting.')
+      return
+    }
+    setSubmitting(true)
+    try {
+      const params = new URLSearchParams()
+      if (token) params.set('t', token)
+      const response = await fetch(
+        `${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}${token ? `?${params}` : ''}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email.trim() ? email.trim().toLowerCase() : null,
+            answers: answered,
+          }),
+        },
+      )
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null)
+        throw new Error(detail?.detail || 'Unable to submit the survey.')
+      }
+      setSubmitted(true)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to submit the survey.')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (loading) {
     return (
       <main className="app-shell viewer-shell survey-shell">
         <PublicBrandHeader {...brandHeader} />
-        <div className="empty-state survey-closed-state">{surveyClosedMessage}</div>
+        <div className="empty-state">Loading the survey…</div>
+        <PublicFooter />
+      </main>
+    )
+  }
+
+  if (!payload || closedMessage) {
+    return (
+      <main className="app-shell viewer-shell survey-shell">
+        <PublicBrandHeader {...brandHeader} />
+        <div className="empty-state survey-closed-state">
+          {closedMessage || 'No survey is open right now.'}
+        </div>
+        <PublicFooter />
+      </main>
+    )
+  }
+
+  if (submitted) {
+    return (
+      <main className="app-shell viewer-shell survey-shell">
+        <PublicBrandHeader {...brandHeader} />
+        <section className="survey-thank-you">
+          <h1>Thank you</h1>
+          <p>
+            {email.trim()
+              ? `Your answers are in, ${email.trim()}. `
+              : 'Your answers are in. '}
+            The buyer reviews every item you answered.
+          </p>
+        </section>
         <PublicFooter />
       </main>
     )
@@ -794,167 +893,79 @@ export function SurveyPage({
     <main className="app-shell viewer-shell survey-shell">
       <PublicBrandHeader {...brandHeader} />
 
-      <section className="survey-toolbar">
-        {/* Row 1: Search + Filters */}
-        <div className="survey-toolbar-filters">
-          <label>
-            Search
-            <input
-              value={surveyQuery}
-              onChange={(event) => setSurveyQuery(event.target.value)}
-              placeholder="Item, brand, channel, description..."
-            />
-          </label>
-          <SurveyFilterControls {...surveyFilters} />
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={() => {
-              setSurveyQuery('')
-              surveyFilters.resetFilters()
-            }}
-          >
-            Reset
-          </button>
-          <span className="survey-item-count">
-            {surveyLoading ? 'Loading...' : `${surveyFilters.filteredItems.length.toLocaleString()} items`}
-          </span>
-        </div>
-
-        {/* Row 2: Selection actions + Email + Submit */}
-        <div className="survey-toolbar-actions">
-          <button
-            className="secondary-action"
-            type="button"
-            onClick={toggleVisibleSurveyItems}
-            disabled={surveyFilters.filteredItems.length === 0}
-          >
-            {allVisibleSelected ? 'Clear Selection' : 'Select All'}
-          </button>
-          {interestQuestion && (
-            <>
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => bulkUpdateSurveyInterest('Interested')}
-                disabled={selectedSurveyItemIds.length === 0}
-              >
-                Mark Interested
-              </button>
-              <button
-                className="secondary-action"
-                type="button"
-                onClick={() => bulkUpdateSurveyInterest('Not Interested')}
-                disabled={selectedSurveyItemIds.length === 0}
-              >
-                Mark Not Interested
-              </button>
-            </>
-          )}
-          <div className="survey-toolbar-spacer" />
-          <label className="survey-email-field">
-            <span>Your Email <span className="survey-email-required" aria-label="required">*</span></span>
-            <input
-              autoComplete="email"
-              inputMode="email"
-              placeholder="you@example.com"
-              required
-              type="email"
-              value={surveyEmail}
-              onChange={(event) => setSurveyEmail(event.target.value)}
-            />
-          </label>
-          <button className="secondary-action" type="button" onClick={() => window.print()}>
-            Print Survey
-          </button>
-          <button
-            className="primary-action"
-            type="button"
-            onClick={submitSurveyResponse}
-            disabled={selectedSurveyItemIds.length === 0 || isSubmittingSurvey}
-          >
-            {isSubmittingSurvey ? 'Submitting...' : `Submit Selected (${selectedSurveyItemIds.length})`}
-          </button>
-        </div>
+      <section className="survey-intro">
+        <h1>{payload.period?.name ?? 'Pre-Buy Survey'}</h1>
+        <p>
+          Work through the items below. Answer the questions on the items that interest you,
+          then submit once — your answers cover every item on this page.
+        </p>
       </section>
 
-      <div className="survey-pager">
-        <button
-          className="secondary-action"
-          type="button"
-          disabled={safePage === 0}
-          onClick={() => setCurrentPage(Math.max(safePage - 1, 0))}
-        >
-          Back
-        </button>
-        <span>
-          Page {pages.length === 0 ? 0 : safePage + 1} of {pages.length}
-        </span>
-        <button
-          className="secondary-action"
-          type="button"
-          disabled={safePage >= pages.length - 1}
-          onClick={() => setCurrentPage(Math.min(safePage + 1, pages.length - 1))}
-        >
-          Next
-        </button>
-      </div>
+      {error && <div className="error">{error}</div>}
 
-      {surveyError && <div className="error">{surveyError}</div>}
-      {surveyMessage && <div className="success">{surveyMessage}</div>}
-
-      <section className="survey-grid" aria-label="Survey items">
-        {surveyFilters.filteredItems.map((item, index) => {
-          const pageIndex = pages.findIndex((page) => page.some((pageItem) => pageItem.id === item.id))
-          return (
-          <article
-            key={item.id}
-            className={`survey-card${item.page_break_before && index > 0 ? ' survey-page-break' : ''}${
-              pageIndex === safePage ? '' : ' survey-page-hidden'
-            }`}
-            style={{ '--response-width': `${item.response_width || 36}%` } as React.CSSProperties}
-          >
-            <label className="survey-select">
-              <input
-                checked={selectedSurveyItemIds.includes(item.id)}
-                type="checkbox"
-                onChange={() => toggleSurveyItem(item.id)}
-              />
-              <span>Select</span>
-            </label>
-            <button
-              className="survey-image image-preview-trigger"
-              type="button"
-              onClick={() => {
-                if (isImageReference(item.image_url)) setPreviewImage({ url: item.image_url, title: item.item_name })
-              }}
-            >
-              {isImageReference(item.image_url) ? (
-                <img src={item.image_url} alt="" />
-              ) : (
-                <span>{item.brand.slice(0, 2).toUpperCase() || 'SB'}</span>
-              )}
-            </button>
-            <div className="survey-card-copy">
-              <h2>{item.item_name}</h2>
-              <p>{item.item_description || 'No description provided yet.'}</p>
+      <section className="survey-answer-list" aria-label="Survey items">
+        {items.map((item, index) => (
+          <article className="survey-answer-card" key={item.id}>
+            <div className="survey-answer-head">
+              <button
+                className="survey-answer-image image-preview-trigger"
+                type="button"
+                onClick={() => {
+                  if (isAnyImageUrl(item.image_url)) {
+                    setPreviewImage({ url: item.image_url, title: item.item_name })
+                  }
+                }}
+              >
+                {isAnyImageUrl(item.image_url) ? (
+                  <img src={item.image_url} alt={item.item_name} />
+                ) : (
+                  <span>{item.item_name.slice(0, 2).toUpperCase() || 'SB'}</span>
+                )}
+              </button>
+              <div className="survey-answer-copy">
+                <span className="survey-answer-index">Item {index + 1}</span>
+                <h2>{item.item_name}</h2>
+                <div className="survey-answer-meta">
+                  {item.cost && <strong>{item.cost}</strong>}
+                  {item.item_number && <span>Item #{item.item_number}</span>}
+                </div>
+                {item.item_description && <p>{item.item_description}</p>}
+              </div>
             </div>
-            <div className="survey-inline-response">
-              <h3>Response</h3>
+            {item.questions.length > 0 ? (
               <SurveyQuestionFields
                 itemId={item.id}
-                questions={questions}
-                draft={getSurveyResponse(item.id)}
-                onAnswer={(questionId, value) => answerQuestion(item.id, questionId, value)}
+                questions={item.questions}
+                draft={{ interest: '', notes: '', answers: answers[item.id] ?? {} }}
+                onAnswer={(questionId, value) => answer(item.id, questionId, value)}
               />
-            </div>
+            ) : (
+              <p className="muted">No questions for this item.</p>
+            )}
           </article>
-          )
-        })}
-        {!surveyLoading && surveyFilters.filteredItems.length === 0 && (
-          <div className="empty-state">No survey items found.</div>
-        )}
+        ))}
+        {items.length === 0 && <div className="empty-state">This survey has no items yet.</div>}
       </section>
+
+      <section className="survey-submit-bar">
+        <label className="survey-email-field">
+          <span>
+            Your Email <span className="muted">(optional)</span>
+          </span>
+          <input
+            autoComplete="email"
+            inputMode="email"
+            placeholder="you@example.com"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </label>
+        <button className="primary-action" type="button" onClick={submit} disabled={submitting || items.length === 0}>
+          {submitting ? 'Submitting…' : 'Submit survey'}
+        </button>
+      </section>
+
       <PublicFooter />
       {previewImage && (
         <ImageLightbox

@@ -10,8 +10,6 @@ import {
   API_BASE,
   AUTH_STORAGE_KEY,
   DEFAULT_COMPANY_SLUG,
-  DEFAULT_SURVEY_QUESTIONS,
-  EMPTY_SURVEY_RESPONSE,
   SURVEY_FILTER_FIELDS,
   DEFAULT_SURVEY_FILTER_FIELDS,
 } from './constants'
@@ -32,10 +30,7 @@ import type {
   SheetKey,
   SheetMeta,
   SurveyFilterField,
-  SurveyInterest,
   SurveyItem,
-  SurveyQuestion,
-  SurveyResponseDraft,
   TrackerItem,
 } from './types'
 import {
@@ -74,21 +69,7 @@ function App() {
   const [publicStatusFilter, setPublicStatusFilter] = useState('')
   const [surveyQuery, setSurveyQuery] = useState('')
   const [surveyFilterFields, setSurveyFilterFields] = useState<SurveyFilterField[]>(DEFAULT_SURVEY_FILTER_FIELDS)
-  const [surveyQuestions, setSurveyQuestions] = useState<SurveyQuestion[]>(DEFAULT_SURVEY_QUESTIONS)
-  const [surveyOpen, setSurveyOpen] = useState(true)
-  const [surveyClosedMessage, setSurveyClosedMessage] = useState('')
   const [selectedSurveyItemIds, setSelectedSurveyItemIds] = useState<number[]>([])
-  const SURVEY_EMAIL_KEY = 'mrl-survey-email'
-  const [surveyEmail, setSurveyEmailState] = useState<string>(() => {
-    const params = new URLSearchParams(window.location.search)
-    return params.get('email') ?? window.localStorage.getItem(SURVEY_EMAIL_KEY) ?? ''
-  })
-  const setSurveyEmail = (email: string) => {
-    setSurveyEmailState(email)
-    if (email) window.localStorage.setItem(SURVEY_EMAIL_KEY, email)
-    else window.localStorage.removeItem(SURVEY_EMAIL_KEY)
-  }
-  const [surveyResponses, setSurveyResponses] = useState<Record<number, SurveyResponseDraft>>({})
   const [kanbanColumns, setKanbanColumns] = useState<KanbanColumn[]>([])
   const [pendingCreates, setPendingCreates] = useState<TrackerItem[]>([])
   const [pendingUpdates, setPendingUpdates] = useState<PendingUpdates>({})
@@ -98,13 +79,11 @@ function App() {
   const [publicLoading, setPublicLoading] = useState(false)
   const [surveyLoading, setSurveyLoading] = useState(false)
   const [isSubmittingChanges, setIsSubmittingChanges] = useState(false)
-  const [isSubmittingSurvey, setIsSubmittingSurvey] = useState(false)
   const [uploadingVisualReference, setUploadingVisualReference] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [publicError] = useState('')
   const [surveyError, setSurveyError] = useState('')
   const [authError, setAuthError] = useState('')
-  const [surveyMessage, setSurveyMessage] = useState('')
   const [loginForm, setLoginForm] = useState({ email: '', password: '' })
   const [, setCurrentTablePage] = useState(1)
   const [adminCompanies, setAdminCompanies] = useState<CompanyInfo[]>([])
@@ -238,24 +217,16 @@ function App() {
   // The buy book reads the same endpoint with surface=buy-book, and a ?k=
   // some site embedded is simply not read (the API ignores it too).
   useEffect(() => {
-    if (!isPublicSurveyPath && !isPublicBuyBookPath) return
+    if (!isPublicBuyBookPath) return
     const controller = new AbortController()
     setSurveyLoading(true)
-    const token = new URLSearchParams(window.location.search).get('t') ?? ''
-    const params = new URLSearchParams({ surface: isPublicSurveyPath ? 'survey' : 'buy-book' })
-    if (isPublicSurveyPath && token) params.set('t', token)
+    const params = new URLSearchParams({ surface: 'buy-book' })
     if (surveyQuery.trim()) params.set('q', surveyQuery.trim())
     fetch(`${API_BASE}${companyPublicApiPath(companySlug, 'survey-items')}?${params}`, { signal: controller.signal })
       .then((res) => {
         if (res.status === 401 || res.status === 404) {
           setSurveyItems([])
-          setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS)
-          setSurveyOpen(false)
-          setSurveyClosedMessage(
-            isPublicBuyBookPath
-              ? 'This buy book is not available right now.'
-              : 'This survey link is not valid or has been replaced. Ask for a current link.',
-          )
+          setSurveyError('This buy book is not available right now.')
           setSurveyLoading(false)
           return null
         }
@@ -269,28 +240,11 @@ function App() {
           const allowed = new Set(SURVEY_FILTER_FIELDS.map((f) => f.field))
           setSurveyFilterFields(data.filter_fields.filter((f: string) => allowed.has(f as SurveyFilterField)))
         }
-        if (isPublicSurveyPath) {
-          setSurveyQuestions(
-            Array.isArray(data.questions) && data.questions.length > 0
-              ? data.questions
-              : DEFAULT_SURVEY_QUESTIONS,
-          )
-          setSurveyOpen(data.survey_open !== false)
-          setSurveyClosedMessage(
-            typeof data.message === 'string' && data.message
-              ? data.message
-              : 'No survey is open right now.',
-          )
-        } else {
-          setSurveyQuestions(DEFAULT_SURVEY_QUESTIONS)
-          setSurveyOpen(true)
-          setSurveyClosedMessage('')
-        }
         setSurveyLoading(false)
       })
       .catch(() => setSurveyLoading(false))
     return () => controller.abort()
-  }, [companySlug, isPublicBuyBookPath, isPublicSurveyPath, surveyQuery])
+  }, [companySlug, isPublicBuyBookPath, surveyQuery])
 
   // --- Kanban (public) ---
   useEffect(() => {
@@ -352,92 +306,11 @@ function App() {
     }
   }
 
-  // --- Survey ---
-  function getSurveyResponse(itemId: number) {
-    return surveyResponses[itemId] ?? EMPTY_SURVEY_RESPONSE
-  }
-
-  function updateSurveyResponse(itemId: number, updates: Partial<SurveyResponseDraft>) {
-    setSurveyResponses((c) => ({ ...c, [itemId]: { ...(c[itemId] ?? EMPTY_SURVEY_RESPONSE), ...updates } }))
-  }
-
+  // --- Survey / buy-book selection ---
+  // The public survey page keeps its own state; the buy book still prints a
+  // selection, which is what this flag list is for.
   function toggleSurveyItem(itemId: number) {
     setSelectedSurveyItemIds((c) => c.includes(itemId) ? c.filter((id) => id !== itemId) : [...c, itemId])
-  }
-
-  function bulkUpdateSurveyInterest(interest: Exclude<SurveyInterest, ''>) {
-    if (!selectedSurveyItemIds.length) return
-    const interestQuestion =
-      surveyQuestions.find((question) => question.type === 'yes_no' && question.id === 'interest') ??
-      surveyQuestions.find((question) => question.type === 'yes_no')
-    if (!interestQuestion) return
-    const yes = interestQuestion.options[0] || 'Yes'
-    const no = interestQuestion.options[1] || 'No'
-    const answer = interest === 'Interested' ? yes : no
-    setSurveyResponses((c) => {
-      const next = { ...c }
-      selectedSurveyItemIds.forEach((id) => {
-        const current = next[id] ?? EMPTY_SURVEY_RESPONSE
-        next[id] = {
-          ...current,
-          interest,
-          answers: { ...current.answers, [interestQuestion.id]: answer },
-        }
-      })
-      return next
-    })
-  }
-
-  async function submitSurveyResponse() {
-    const selected = surveyItems.filter((item) => selectedSurveyItemIds.includes(item.id))
-    if (!selected.length) return
-    if (!surveyEmail.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(surveyEmail.trim())) {
-      setSurveyError('Please enter a valid email address before submitting.')
-      return
-    }
-    const questions = surveyQuestions.length > 0 ? surveyQuestions : DEFAULT_SURVEY_QUESTIONS
-    for (const item of selected) {
-      const draft = getSurveyResponse(item.id)
-      for (const question of questions) {
-        if (!question.required) continue
-        const value = draft.answers[question.id]
-        if (value === undefined || value === null || String(value).trim() === '') {
-          setSurveyError(`Please answer “${question.label}” for each selected item.`)
-          return
-        }
-      }
-    }
-    setIsSubmittingSurvey(true); setSurveyError(''); setSurveyMessage('')
-    try {
-      const surveyToken = new URLSearchParams(window.location.search).get('t') ?? ''
-      for (const item of selected) {
-        const draft = getSurveyResponse(item.id)
-        const submitUrl = `${API_BASE}${companyPublicApiPath(companySlug, 'survey-responses')}` +
-          (surveyToken ? `?t=${encodeURIComponent(surveyToken)}` : '')
-        const res = await fetch(submitUrl, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            survey_item_id: item.id,
-            email: surveyEmail.trim().toLowerCase(),
-            answers: draft.answers,
-            feedback: draft.notes,
-          }),
-        })
-        if (!res.ok) {
-          const detail = await res.json().catch(() => null)
-          throw new Error(detail?.detail || 'Unable to submit survey response.')
-        }
-      }
-      setSurveyEmail(surveyEmail.trim().toLowerCase())
-      setSurveyMessage(selected.length === 1
-        ? `Thanks ${surveyEmail}. Your response for ${selected[0].item_name} was submitted.`
-        : `Thanks ${surveyEmail}. Your response was submitted for ${selected.length} items.`)
-      setSelectedSurveyItemIds([])
-    } catch (err) {
-      setSurveyError(err instanceof Error ? err.message : 'Unable to submit.')
-    } finally {
-      setIsSubmittingSurvey(false)
-    }
   }
 
   // --- Buy book print ---
@@ -654,16 +527,10 @@ function App() {
   }
 
   if (isPublicSurveyPath) {
-    return <SurveyPage {...publicBrandProps} surveyItems={surveyItems} surveyFilterFields={surveyFilterFields}
-      surveyQuestions={surveyQuestions}
-      surveyLoading={surveyLoading} surveyError={surveyError} surveyMessage={surveyMessage}
-      surveyQuery={surveyQuery} selectedSurveyItemIds={selectedSurveyItemIds}
-      isSubmittingSurvey={isSubmittingSurvey} setSurveyQuery={setSurveyQuery}
-      surveyEmail={surveyEmail} setSurveyEmail={setSurveyEmail}
-      surveyOpen={surveyOpen} surveyClosedMessage={surveyClosedMessage}
-      toggleSurveyItem={toggleSurveyItem} submitSurveyResponse={submitSurveyResponse}
-      bulkUpdateSurveyInterest={bulkUpdateSurveyInterest} getSurveyResponse={getSurveyResponse}
-      updateSurveyResponse={updateSurveyResponse} />
+    // The survey reads and submits itself: its shape (one card per item, one
+    // submission) has no use for the buy book's selection state.
+    return <SurveyPage {...publicBrandProps} companySlug={companySlug}
+      token={new URLSearchParams(window.location.search).get('t') ?? ''} />
   }
   if (isPublicViewerPath) {
     return <ViewerPage {...publicBrandProps} isPublicKanbanPath={isPublicKanbanPath}

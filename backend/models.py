@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 Role = Literal["admin", "editor"]
 
@@ -120,18 +120,55 @@ class SurveyQuestion(BaseModel):
     image_url: str = ""
 
 
+class SurveyItemInput(BaseModel):
+    """One mocked-up item of a survey: its own name, cost and image.
+
+    No catalog id and no NetSuite id: an item is what the survey shows, not a
+    row picked from a catalog. ``question_ids`` are the pool questions this item
+    asks; an empty list is a real choice (the item shows but asks nothing),
+    while an omitted list on a new item means "the whole pool".
+    """
+
+    id: int | None = None
+    item_name: str = Field(default="", max_length=200)
+    cost: str = Field(default="", max_length=120)
+    image_url: str = Field(default="", max_length=1000)
+    item_number: str = Field(default="", max_length=120)
+    item_description: str = ""
+    question_ids: list[str] | None = None
+
+
 class SurveyPeriodCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     copy_from_period_id: int | None = None
     open_immediately: bool = False
     questions: list[SurveyQuestion] | None = None
+    items: list[SurveyItemInput] | None = None
 
 
 class SurveyResponseCreate(BaseModel):
-    survey_item_id: int
-    email: EmailStr
-    # A checkbox answer is a list; every other type is a scalar.
-    answers: dict[str, str | int | float | list[str]] = {}
+    """One respondent's whole submission: every item they answered.
+
+    ``answers`` is keyed by the survey item's id, then by the pool question's
+    id - so two items can answer the same question differently, and a question
+    edited after the fact keeps every answer attached to it. The optional
+    ``survey_item_id`` is the pre-item-form body (one item per request) and is
+    read as a single-entry submission.
+    """
+
+    email: EmailStr | None = None
+    # Current body: {item_id: {question_id: value}}. A legacy single-item body
+    # keys this by question and names the item below, so the shape is checked
+    # in the route rather than by the model.
+    answers: dict[str, Any] = {}
+    # A legacy single-item client: its ``answers`` are this item's answers.
+    survey_item_id: int | None = None
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def blank_email_is_none(cls, value: Any) -> Any:
+        """The email is optional, and an empty field arrives as "" not null."""
+        return None if isinstance(value, str) and not value.strip() else value
     # Legacy fields kept optional for older clients / mirrored answers.
     attention_effectiveness: int = Field(default=3, ge=1, le=5)
     recommend_rollout: Literal["Yes", "No", "Maybe"] = "Maybe"
@@ -202,19 +239,13 @@ class SurveyPeriodUpdate(BaseModel):
     cover: BuyBookCover | None = None
 
 
-class SurveyPeriodItemUpdate(BaseModel):
-    catalog_item_id: int
-    in_survey: bool = True
-    response_width: int = Field(ge=20, le=70)
-    page_break_before: bool = False
-    image_display_size: Literal["small", "medium", "large", "full"] = "medium"
-    image_fit: Literal["contain", "cover"] = "contain"
-
-
 class SurveyPeriodLayoutUpdate(BaseModel):
+    """One save from the dialog: the name, the pool, then the items."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
     filter_fields: list[str] = []
     questions: list[SurveyQuestion] = []
-    items: list[SurveyPeriodItemUpdate] = []
+    items: list[SurveyItemInput] = []
 
 
 class BuyBookPdfRequest(BaseModel):

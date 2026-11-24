@@ -402,24 +402,48 @@ def main() -> int:
               buy_book_row is not None and buy_book_row.get("image_url") == expected,
               repr(buy_book_row.get("image_url") if buy_book_row else None))
 
-        print("\n5. Publish snapshot (draft period row, not the page — copies the stored URL)")
+        print("\n5. Survey item image (the item stores the URL as given, never formats one)")
+        # A survey owns its items, so the image a survey shows is the URL on the
+        # item - the same string, not a URL rebuilt from an internal id.
         period_response = client.post(
             "/api/admin/survey-periods",
             headers=headers,
-            json={"name": "check_item_images", "open_immediately": False},
+            json={
+                "name": "check_item_images",
+                "open_immediately": False,
+                "questions": [{
+                    "id": "interest", "type": "yes_no", "label": "Interested?",
+                    "required": True, "options": ["Yes", "No"],
+                }],
+                "items": [{
+                    "item_name": "check image item",
+                    "cost": "$1.00",
+                    "image_url": expected,
+                    "item_number": "IMG-1",
+                    "question_ids": ["interest"],
+                }],
+            },
         )
-        check("create draft period", period_response.status_code == 201, f"HTTP {period_response.status_code}")
+        check("create draft period with an item", period_response.status_code == 201,
+              f"HTTP {period_response.status_code}")
         if period_response.status_code == 201:
             period_id = int(period_response.json()["period"]["id"])
             with connect() as conn:
                 snapshot = execute(
                     conn,
-                    "SELECT image_url FROM survey_period_items WHERE survey_period_id = ? AND catalog_item_id = ?",
-                    (period_id, survey_item_id),
+                    "SELECT image_url FROM survey_period_items WHERE survey_period_id = ?",
+                    (period_id,),
                 ).fetchone()
-            check("period row carries the record URL",
+            check("survey item row carries the record URL",
                   snapshot is not None and snapshot["image_url"] == expected,
                   repr(snapshot["image_url"] if snapshot else None))
+            detail = client.get(
+                f"/api/admin/survey-periods/{period_id}", headers=headers, params={"company_id": company_id}
+            ).json()
+            detail_item = next((row for row in detail.get("items", []) if row["item_name"] == "check image item"), None)
+            check("the builder reads the same URL back",
+                  detail_item is not None and detail_item["image_url"] == expected,
+                  repr(detail_item["image_url"] if detail_item else None))
     finally:
         if not args.keep_changes:
             with connect() as conn:

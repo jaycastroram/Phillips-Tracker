@@ -1,78 +1,59 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { SurveyQuestionType } from '../types'
 import { isImageReference } from '../utils'
 
-type SurveyItemResult = {
-  id: number
-  item_name: string
-  brand: string
-  channel: string
-  product_type: string
-  key_program: string
-  image_url: string
-  price: string
-  uom: string
-  total_responses: number
-  interested: number
-  not_interested: number
-  maybe: number
-  avg_attention: number | null
-  avg_engagement: number | null
-  interest_pct: number
-  respondent_emails: string[]
+type ChoiceTally = { option: string; count: number }
+
+type QuestionTally = {
+  question_id: string
+  label: string
+  type: SurveyQuestionType
+  answered: number
+  choices: ChoiceTally[]
+  average: number | null
+  answers: { email: string; answer: string; submitted_at: string }[]
 }
 
-type SurveyResponse = {
+type ItemResult = {
+  id: number
+  item_name: string
+  item_number: string
+  cost: string
+  image_url: string
+  item_description: string
+  sort_order: number
+  response_count: number
+  questions: QuestionTally[]
+}
+
+type RespondentRow = {
   id: number
   email: string
-  recommend_rollout: string
-  feedback: string
   created_at: string
-  item_name: string
-  brand: string
+  items_answered: number
 }
 
 type SurveySummary = {
+  submissions: number
   unique_respondents: number
-  total_responses: number
-  total_interested: number
-  total_not_interested: number
+  items: number
+  answered_items: number
+  total_answers: number
 }
 
-type SurveyPeriodOption = {
-  id: number
-  name: string
-  status: string
-}
+type PeriodOption = { id: number; name: string; status: string }
 
 type SurveyResults = {
   summary: SurveySummary
-  items: SurveyItemResult[]
-  responses: SurveyResponse[]
-  period?: SurveyPeriodOption | null
-  periods?: SurveyPeriodOption[]
+  items: ItemResult[]
+  respondents: RespondentRow[]
+  period?: PeriodOption | null
+  periods?: PeriodOption[]
 }
 
 type Props = {
   apiFetch: (path: string, options?: RequestInit) => Promise<Response>
   onExport: (periodId?: number | null) => void
-}
-
-type DashboardView = 'items' | 'respondents'
-type ItemSort = 'interested' | 'not_interested' | 'total' | 'alpha'
-
-function InterestBar({ interested, notInterested, maybe }: { interested: number; notInterested: number; maybe: number }) {
-  const total = interested + notInterested + maybe
-  if (total === 0) return <div className="sdb-bar sdb-bar--empty"><span>No responses yet</span></div>
-  const iPct = Math.round((interested / total) * 100)
-  const nPct = Math.round((notInterested / total) * 100)
-  const mPct = 100 - iPct - nPct
-  return (
-    <div className="sdb-bar" title={`${iPct}% interested · ${nPct}% not interested · ${mPct}% maybe`}>
-      {iPct > 0 && <div className="sdb-bar__yes" style={{ width: `${iPct}%` }}>{iPct >= 12 ? `${iPct}%` : ''}</div>}
-      {mPct > 0 && <div className="sdb-bar__maybe" style={{ width: `${mPct}%` }}>{mPct >= 12 ? `${mPct}%` : ''}</div>}
-      {nPct > 0 && <div className="sdb-bar__no" style={{ width: `${nPct}%` }}>{nPct >= 12 ? `${nPct}%` : ''}</div>}
-    </div>
-  )
 }
 
 function StatCard({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
@@ -85,15 +66,92 @@ function StatCard({ label, value, sub }: { label: string; value: string | number
   )
 }
 
+function ChoiceBars({ choices, total }: { choices: ChoiceTally[]; total: number }) {
+  return (
+    <ul className="sdb-choice-list">
+      {choices.map((choice) => {
+        const width = total > 0 ? Math.round((choice.count / total) * 100) : 0
+        return (
+          <li key={choice.option}>
+            <span className="sdb-choice-label">{choice.option || '(blank)'}</span>
+            <span className="sdb-choice-bar">
+              <span style={{ width: `${width}%` }} />
+            </span>
+            <span className="sdb-choice-count">
+              {choice.count}
+              {total > 0 ? <em>{width}%</em> : null}
+            </span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+function QuestionTallyBlock({ tally }: { tally: QuestionTally }) {
+  if (tally.type === 'text') {
+    return (
+      <div className="sdb-tally">
+        <div className="sdb-tally-head">
+          <strong>{tally.label}</strong>
+          <span>{tally.answered} answered</span>
+        </div>
+        {tally.answers.length === 0 ? (
+          <p className="muted">No answers yet.</p>
+        ) : (
+          <ul className="sdb-text-answers">
+            {tally.answers.map((answer, index) => (
+              <li key={`${answer.email}-${index}`}>
+                <p>{answer.answer}</p>
+                <span>{answer.email || 'Anonymous'}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )
+  }
+
+  if (tally.type === 'scale') {
+    return (
+      <div className="sdb-tally">
+        <div className="sdb-tally-head">
+          <strong>{tally.label}</strong>
+          <span>
+            {tally.average === null ? 'No average yet' : `Average ${tally.average} / 5`}
+          </span>
+        </div>
+        <ChoiceBars choices={tally.choices} total={tally.answered} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="sdb-tally">
+      <div className="sdb-tally-head">
+        <strong>{tally.label}</strong>
+        <span>
+          {tally.answered} {tally.answered === 1 ? 'answer' : 'answers'}
+        </span>
+      </div>
+      <ChoiceBars choices={tally.choices} total={tally.answered} />
+    </div>
+  )
+}
+
+/**
+ * Results, per item.
+ *
+ * A survey's items ask different questions, so there is no single tally for the
+ * survey: each item shows its own response count and the tallies of the
+ * questions it asked. The export prints the same rows for an account manager.
+ */
 export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
   const [results, setResults] = useState<SurveyResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [view, setView] = useState<DashboardView>('items')
-  const [sort, setSort] = useState<ItemSort>('interested')
-  const [search, setSearch] = useState('')
-  const [expandedItem, setExpandedItem] = useState<number | null>(null)
   const [selectedPeriodId, setSelectedPeriodId] = useState<number | null>(null)
+  const [showRespondents, setShowRespondents] = useState(false)
 
   const load = useCallback(async (periodId?: number | null) => {
     setLoading(true)
@@ -121,43 +179,13 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
   if (error && !results) return <div className="error">{error}</div>
   if (!results) return null
 
-  const { summary, items, responses, periods = [], period } = results
-
-  const sortedItems = [...items]
-    .filter((item) => {
-      if (!search.trim()) return true
-      const q = search.toLowerCase()
-      return (
-        item.item_name.toLowerCase().includes(q) ||
-        item.brand.toLowerCase().includes(q) ||
-        item.channel.toLowerCase().includes(q) ||
-        item.product_type.toLowerCase().includes(q)
-      )
-    })
-    .sort((a, b) => {
-      if (sort === 'interested') return b.interested - a.interested || b.interest_pct - a.interest_pct
-      if (sort === 'not_interested') return b.not_interested - a.not_interested
-      if (sort === 'total') return b.total_responses - a.total_responses
-      return a.item_name.localeCompare(b.item_name)
-    })
-
-  // Group responses by respondent email
-  const respondentMap = new Map<string, SurveyResponse[]>()
-  for (const r of responses) {
-    if (!respondentMap.has(r.email)) respondentMap.set(r.email, [])
-    respondentMap.get(r.email)!.push(r)
-  }
-  const respondents = [...respondentMap.entries()]
-    .filter(([email]) => !search.trim() || email.toLowerCase().includes(search.toLowerCase()))
-    .sort((a, b) => b[1].length - a[1].length)
-
-  const hasAnyResponses = summary.total_responses > 0
+  const { summary, items, respondents, periods = [], period } = results
 
   return (
     <div className="sdb-root">
       <div className="sdb-period-bar">
         <label>
-          Survey period
+          Survey
           <select
             value={selectedPeriodId ?? period?.id ?? ''}
             onChange={(event) => {
@@ -178,246 +206,112 @@ export function SurveyDashboardPage({ apiFetch, onExport }: Props) {
             {period.status}
           </span>
         )}
+        <div className="sdb-period-actions">
+          <button className="secondary-action" type="button" onClick={() => load(selectedPeriodId)}>
+            Refresh
+          </button>
+          <button className="primary-action" type="button" onClick={() => onExport(selectedPeriodId)}>
+            Export Excel
+          </button>
+        </div>
       </div>
 
       {error && <div className="error">{error}</div>}
 
-      {/* Summary cards */}
       <div className="sdb-summary-row">
-        <StatCard label="Unique Respondents" value={summary.unique_respondents} />
+        <StatCard label="Respondents" value={summary.unique_respondents} />
+        <StatCard label="Submissions" value={summary.submissions} />
         <StatCard
-          label="Total Responses"
-          value={summary.total_responses}
-          sub={`across ${items.filter((i) => i.total_responses > 0).length} items`}
+          label="Items Answered"
+          value={summary.answered_items}
+          sub={`of ${summary.items} items`}
         />
-        <StatCard
-          label="Interested"
-          value={summary.total_interested}
-          sub={
-            summary.total_responses
-              ? `${Math.round((summary.total_interested / summary.total_responses) * 100)}% of responses`
-              : undefined
-          }
-        />
-        <StatCard
-          label="Not Interested"
-          value={summary.total_not_interested}
-          sub={
-            summary.total_responses
-              ? `${Math.round((summary.total_not_interested / summary.total_responses) * 100)}% of responses`
-              : undefined
-          }
-        />
-        <StatCard
-          label="Items with Votes"
-          value={items.filter((i) => i.total_responses > 0).length}
-          sub={`of ${items.length} total items`}
-        />
+        <StatCard label="Answers" value={summary.total_answers} sub="item × question rows" />
       </div>
 
-      {/* Top 3 items highlight */}
-      {hasAnyResponses && (
-        <div className="sdb-top-items">
-          <h3 className="sdb-section-title">🏆 Top Items by Interest</h3>
-          <div className="sdb-top-grid">
-            {[...items]
-              .filter((i) => i.interested > 0)
-              .sort((a, b) => b.interested - a.interested || b.interest_pct - a.interest_pct)
-              .slice(0, 3)
-              .map((item, idx) => (
-                <div key={item.id} className={`sdb-top-card sdb-top-card--${idx + 1}`}>
-                  <span className="sdb-top-rank">#{idx + 1}</span>
-                  {isImageReference(item.image_url) && (
-                    <img className="sdb-top-image" src={item.image_url} alt="" />
-                  )}
-                  <div className="sdb-top-copy">
-                    <strong>{item.item_name}</strong>
-                    <span>{item.brand}</span>
-                    <span className="sdb-top-votes">{item.interested} interested · {item.interest_pct}%</span>
-                  </div>
+      <div className="sdb-items-list">
+        {items.length === 0 && <div className="empty-state">This survey has no items yet.</div>}
+        {items.map((item, index) => (
+          <article key={item.id} className={`sdb-result-card${item.response_count === 0 ? ' sdb-result-card--empty' : ''}`}>
+            <header className="sdb-result-head">
+              {isImageReference(item.image_url) ? (
+                <img className="sdb-result-thumb" src={item.image_url} alt="" />
+              ) : item.image_url ? (
+                <img className="sdb-result-thumb" src={item.image_url} alt="" />
+              ) : (
+                <span className="sdb-result-thumb sdb-result-thumb--empty" aria-hidden="true">
+                  {item.item_name.slice(0, 2).toUpperCase()}
+                </span>
+              )}
+              <div className="sdb-result-copy">
+                <span className="sdb-result-index">Item {index + 1}</span>
+                <strong>{item.item_name}</strong>
+                <div className="sdb-result-meta">
+                  {item.cost && <span>{item.cost}</span>}
+                  {item.item_number && <span>#{item.item_number}</span>}
+                  {item.item_description && <span className="sdb-result-desc">{item.item_description}</span>}
                 </div>
-              ))}
-          </div>
-        </div>
-      )}
-
-      {/* Toolbar */}
-      <div className="sdb-toolbar">
-        <div className="sdb-view-toggle">
-          <button className={view === 'items' ? 'active' : ''} type="button" onClick={() => setView('items')}>
-            By Item ({items.length})
-          </button>
-          <button className={view === 'respondents' ? 'active' : ''} type="button" onClick={() => setView('respondents')}>
-            By Respondent ({summary.unique_respondents})
-          </button>
-        </div>
-        <input
-          className="sdb-search"
-          placeholder={view === 'items' ? 'Search items...' : 'Search by email...'}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {view === 'items' && (
-          <label className="sdb-sort-label">
-            Sort by
-            <select value={sort} onChange={(e) => setSort(e.target.value as ItemSort)}>
-              <option value="interested">Most Interested</option>
-              <option value="not_interested">Most Not Interested</option>
-              <option value="total">Most Responses</option>
-              <option value="alpha">A–Z</option>
-            </select>
-          </label>
-        )}
-        <button className="secondary-action" type="button" onClick={() => load(selectedPeriodId)}>
-          Refresh
-        </button>
-        <button
-          className="primary-action"
-          type="button"
-          onClick={() => onExport(selectedPeriodId)}
-        >
-          Export Excel
-        </button>
-      </div>
-
-      {/* Items view */}
-      {view === 'items' && (
-        <div className="sdb-items-list">
-          {sortedItems.length === 0 && (
-            <div className="empty-state">{search ? 'No items match your search.' : 'No survey items found.'}</div>
-          )}
-          {sortedItems.map((item) => {
-            const isExpanded = expandedItem === item.id
-            return (
-              <div key={item.id} className={`sdb-item-row ${item.total_responses === 0 ? 'sdb-item-row--empty' : ''}`}>
-                <button
-                  className="sdb-item-header"
-                  type="button"
-                  onClick={() => setExpandedItem(isExpanded ? null : item.id)}
-                  aria-expanded={isExpanded}
-                >
-                  {isImageReference(item.image_url) && (
-                    <img className="sdb-item-thumb" src={item.image_url} alt="" />
-                  )}
-                  <div className="sdb-item-meta">
-                    <strong className="sdb-item-name">{item.item_name}</strong>
-                    <span className="sdb-item-tags">
-                      {[item.brand, item.channel, item.product_type].filter(Boolean).join(' · ')}
-                    </span>
-                  </div>
-                  <div className="sdb-item-counts">
-                    <span className="sdb-count-yes" title="Interested">✓ {item.interested}</span>
-                    <span className="sdb-count-no" title="Not Interested">✗ {item.not_interested}</span>
-                    {item.maybe > 0 && <span className="sdb-count-maybe" title="Maybe">? {item.maybe}</span>}
-                    <span className="sdb-count-total">{item.total_responses} votes</span>
-                  </div>
-                  <div className="sdb-item-bar-wrapper">
-                    <InterestBar
-                      interested={item.interested}
-                      notInterested={item.not_interested}
-                      maybe={item.maybe}
-                    />
-                  </div>
-                  <span className="sdb-item-chevron">{isExpanded ? '▲' : '▼'}</span>
-                </button>
-
-                {isExpanded && (
-                  <div className="sdb-item-detail">
-                    {item.total_responses === 0 ? (
-                      <p className="muted">No responses yet for this item.</p>
-                    ) : (
-                      <>
-                        <div className="sdb-detail-stats">
-                          {item.avg_attention !== null && (
-                            <div className="sdb-detail-stat">
-                              <span>Avg. Attention</span>
-                              <strong>{item.avg_attention}/5</strong>
-                            </div>
-                          )}
-                          {item.avg_engagement !== null && (
-                            <div className="sdb-detail-stat">
-                              <span>Avg. Engagement</span>
-                              <strong>{item.avg_engagement}/5</strong>
-                            </div>
-                          )}
-                          <div className="sdb-detail-stat">
-                            <span>Interest Rate</span>
-                            <strong>{item.interest_pct}%</strong>
-                          </div>
-                        </div>
-
-                        {/* Respondent feedback for this item */}
-                        {responses
-                          .filter((r) => r.item_name === item.item_name && r.feedback?.trim())
-                          .map((r) => (
-                            <div key={r.id} className="sdb-feedback-row">
-                              <span className={`sdb-feedback-badge sdb-feedback-badge--${r.recommend_rollout === 'Yes' ? 'yes' : r.recommend_rollout === 'No' ? 'no' : 'maybe'}`}>
-                                {r.recommend_rollout === 'Yes' ? 'Interested' : r.recommend_rollout === 'No' ? 'Not Interested' : 'Maybe'}
-                              </span>
-                              <span className="sdb-feedback-email">{r.email}</span>
-                              <p className="sdb-feedback-text">"{r.feedback}"</p>
-                            </div>
-                          ))}
-
-                        {/* Respondent emails */}
-                        {item.respondent_emails.length > 0 && (
-                          <details className="sdb-respondents-detail">
-                            <summary>{item.respondent_emails.length} respondent{item.respondent_emails.length !== 1 ? 's' : ''}</summary>
-                            <div className="sdb-respondent-chips">
-                              {item.respondent_emails.map((email) => (
-                                <span key={email} className="sdb-respondent-chip">{email}</span>
-                              ))}
-                            </div>
-                          </details>
-                        )}
-                      </>
-                    )}
-                  </div>
+              </div>
+              <span className="sdb-result-count">
+                {item.response_count}
+                <em>{item.response_count === 1 ? 'response' : 'responses'}</em>
+              </span>
+            </header>
+            {item.response_count === 0 ? (
+              <p className="muted sdb-result-none">No responses for this item yet.</p>
+            ) : (
+              <div className="sdb-tally-grid">
+                {item.questions.map((tally) => (
+                  <QuestionTallyBlock key={tally.question_id} tally={tally} />
+                ))}
+                {item.questions.length === 0 && (
+                  <p className="muted">This item asked no questions.</p>
                 )}
               </div>
-            )
-          })}
-        </div>
-      )}
+            )}
+          </article>
+        ))}
+      </div>
 
-      {/* Respondents view */}
-      {view === 'respondents' && (
-        <div className="sdb-respondents-list">
-          {respondents.length === 0 && (
-            <div className="empty-state">{search ? 'No respondents match your search.' : 'No survey responses yet.'}</div>
-          )}
-          {respondents.map(([email, resps]) => {
-            const interestedCount = resps.filter((r) => r.recommend_rollout === 'Yes').length
-            const notInterestedCount = resps.filter((r) => r.recommend_rollout === 'No').length
-            return (
-              <div key={email} className="sdb-respondent-row">
-                <div className="sdb-respondent-header">
-                  <strong className="sdb-respondent-email">{email}</strong>
-                  <div className="sdb-item-counts">
-                    <span className="sdb-count-yes">✓ {interestedCount}</span>
-                    <span className="sdb-count-no">✗ {notInterestedCount}</span>
-                    <span className="sdb-count-total">{resps.length} response{resps.length !== 1 ? 's' : ''}</span>
-                  </div>
-                  <span className="muted" style={{ fontSize: '0.8rem' }}>
-                    Last: {new Date(resps[0].created_at).toLocaleDateString()}
-                  </span>
-                </div>
-                <div className="sdb-respondent-items">
-                  {resps.map((r) => (
-                    <div key={r.id} className="sdb-respondent-item">
-                      <span className={`sdb-feedback-badge sdb-feedback-badge--${r.recommend_rollout === 'Yes' ? 'yes' : r.recommend_rollout === 'No' ? 'no' : 'maybe'}`}>
-                        {r.recommend_rollout === 'Yes' ? 'Interested' : r.recommend_rollout === 'No' ? 'Not Interested' : 'Maybe'}
-                      </span>
-                      <span className="sdb-respondent-item-name">{r.item_name}</span>
-                      {r.feedback?.trim() && <p className="sdb-feedback-text">"{r.feedback}"</p>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      <section className="sdb-respondents">
+        <button
+          className="secondary-action"
+          type="button"
+          onClick={() => setShowRespondents((current) => !current)}
+          aria-expanded={showRespondents}
+        >
+          {showRespondents ? 'Hide respondents' : `Respondents (${respondents.length})`}
+        </button>
+        {showRespondents && (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Submitted</th>
+                  <th>Items answered</th>
+                </tr>
+              </thead>
+              <tbody>
+                {respondents.map((respondent) => (
+                  <tr key={respondent.id}>
+                    <td>{respondent.email || 'Anonymous'}</td>
+                    <td>{new Date(respondent.created_at).toLocaleString()}</td>
+                    <td>{respondent.items_answered}</td>
+                  </tr>
+                ))}
+                {respondents.length === 0 && (
+                  <tr>
+                    <td colSpan={3} className="empty-state">
+                      No submissions yet.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </div>
   )
 }

@@ -125,7 +125,12 @@ def _create_survey_periods_tables(conn) -> None:
             CREATE TABLE IF NOT EXISTS survey_period_items (
                 id SERIAL PRIMARY KEY,
                 survey_period_id INTEGER NOT NULL REFERENCES survey_periods(id) ON DELETE CASCADE,
-                catalog_item_id INTEGER NOT NULL REFERENCES survey_items(id) ON DELETE CASCADE,
+                -- The survey owns its items. Catalog items copied in before the
+                -- split keep their id here for reference; a mocked-up item has
+                -- none, and nothing in the survey reads the catalog.
+                catalog_item_id INTEGER,
+                item_number TEXT NOT NULL DEFAULT '',
+                cost TEXT NOT NULL DEFAULT '',
                 item_name TEXT NOT NULL,
                 brand TEXT NOT NULL DEFAULT '',
                 channel TEXT NOT NULL DEFAULT '',
@@ -164,7 +169,9 @@ def _create_survey_periods_tables(conn) -> None:
             CREATE TABLE IF NOT EXISTS survey_period_items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 survey_period_id INTEGER NOT NULL,
-                catalog_item_id INTEGER NOT NULL,
+                catalog_item_id INTEGER,
+                item_number TEXT NOT NULL DEFAULT '',
+                cost TEXT NOT NULL DEFAULT '',
                 item_name TEXT NOT NULL,
                 brand TEXT NOT NULL DEFAULT '',
                 channel TEXT NOT NULL DEFAULT '',
@@ -181,8 +188,7 @@ def _create_survey_periods_tables(conn) -> None:
                 page_break_before INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (survey_period_id) REFERENCES survey_periods(id) ON DELETE CASCADE,
-                FOREIGN KEY (catalog_item_id) REFERENCES survey_items(id) ON DELETE CASCADE
+                FOREIGN KEY (survey_period_id) REFERENCES survey_periods(id) ON DELETE CASCADE
             )
         """)
 
@@ -685,6 +691,286 @@ def _migrate_survey_access(conn) -> None:
         """,
     )
 
+    # One submission per respondent per survey. Only rows that are submissions
+    # (no single item) and carry an email are in the index: an anonymous
+    # shopper cannot be recognised twice, and a legacy per-item row keeps the
+    # index above instead. Duplicates from a pre-index race go first, highest
+    # id kept, so the index can be created on an upgraded database.
+    execute(
+        conn,
+        """
+        DELETE FROM survey_responses
+        WHERE survey_item_id IS NULL AND email <> ''
+          AND id NOT IN (
+              SELECT MAX(id) FROM survey_responses
+              WHERE survey_item_id IS NULL AND email <> ''
+              GROUP BY company_id, survey_period_id, lower(email)
+          )
+        """,
+    )
+    execute(
+        conn,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS survey_responses_unique_respondent_idx
+        ON survey_responses (company_id, survey_period_id, lower(email))
+        WHERE survey_item_id IS NULL AND email <> ''
+        """,
+    )
+
+
+def _allow_null_catalog_item_id(conn) -> None:
+    """A survey item no longer has to come from the catalog.
+
+    Older databases were built with ``catalog_item_id INTEGER NOT NULL
+    REFERENCES survey_items(id)``; a mocked-up item has no catalog row, so the
+    column becomes nullable and the foreign key goes. Rows copied in before the
+    split keep their catalog id, which is what lets an upgrade keep today's
+    surveys exactly as they look.
+    """
+    if IS_POSTGRES:
+        column = execute(
+            conn,
+            """
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_name = 'survey_period_items' AND column_name = 'catalog_item_id'
+            """,
+        ).fetchone()
+        if column is not None and str(column["is_nullable"]).upper() == "NO":
+            execute(conn,
+                    "ALTER TABLE survey_period_items ALTER COLUMN catalog_item_id DROP NOT NULL")
+        execute(conn,
+                "ALTER TABLE survey_period_items DROP CONSTRAINT IF EXISTS"
+                " survey_period_items_catalog_item_id_fkey")
+        return
+
+    columns = execute(conn, "PRAGMA table_info(survey_period_items)").fetchall()
+    column = next((row for row in columns if row["name"] == "catalog_item_id"), None)
+    if column is None or not int(column["notnull"]):
+        return
+    execute(conn, "PRAGMA foreign_keys = OFF")
+    execute(conn, "DROP TABLE IF EXISTS survey_period_items_owned")
+    execute(conn, """
+        CREATE TABLE survey_period_items_owned (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_period_id INTEGER NOT NULL,
+            catalog_item_id INTEGER,
+            item_number TEXT NOT NULL DEFAULT '',
+            cost TEXT NOT NULL DEFAULT '',
+            item_name TEXT NOT NULL,
+            brand TEXT NOT NULL DEFAULT '',
+            channel TEXT NOT NULL DEFAULT '',
+            product_type TEXT NOT NULL DEFAULT '',
+            key_program TEXT NOT NULL DEFAULT '',
+            item_description TEXT NOT NULL DEFAULT '',
+            uom TEXT NOT NULL DEFAULT '',
+            price TEXT NOT NULL DEFAULT '',
+            image_url TEXT NOT NULL DEFAULT '',
+            image_display_size TEXT NOT NULL DEFAULT 'medium',
+            image_fit TEXT NOT NULL DEFAULT 'contain',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            response_width INTEGER NOT NULL DEFAULT 36,
+            page_break_before INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (survey_period_id) REFERENCES survey_periods(id) ON DELETE CASCADE
+        )
+    """)
+    execute(conn, """
+        INSERT INTO survey_period_items_owned (
+            id, survey_period_id, catalog_item_id, item_number, cost, item_name, brand, channel,
+            product_type, key_program, item_description, uom, price, image_url, image_display_size,
+            image_fit, sort_order, response_width, page_break_before, created_at, updated_at
+        )
+        SELECT id, survey_period_id, catalog_item_id, item_number, cost, item_name, brand, channel,
+            product_type, key_program, item_description, uom, price, image_url, image_display_size,
+            image_fit, sort_order, response_width, page_break_before, created_at, updated_at
+        FROM survey_period_items
+    """)
+    execute(conn, "DROP TABLE survey_period_items")
+    execute(conn, "ALTER TABLE survey_period_items_owned RENAME TO survey_period_items")
+    execute(conn, "PRAGMA foreign_keys = ON")
+
+
+def _allow_null_response_item_id(conn) -> None:
+    """A submission covers every item, so the response row names no single one.
+
+    ``survey_item_id`` was ``NOT NULL`` because each row was one shopper's
+    answer for one catalog item. Rows written before the split keep their item
+    (and are still exported/ignored as before); a submission now leaves it NULL
+    and carries its per-item answers in survey_answers.
+    """
+    if IS_POSTGRES:
+        column = execute(
+            conn,
+            """
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_name = 'survey_responses' AND column_name = 'survey_item_id'
+            """,
+        ).fetchone()
+        if column is not None and str(column["is_nullable"]).upper() == "NO":
+            execute(conn,
+                    "ALTER TABLE survey_responses ALTER COLUMN survey_item_id DROP NOT NULL")
+        execute(conn,
+                "ALTER TABLE survey_responses DROP CONSTRAINT IF EXISTS survey_responses_survey_item_id_fkey")
+        return
+
+    columns = execute(conn, "PRAGMA table_info(survey_responses)").fetchall()
+    column = next((row for row in columns if row["name"] == "survey_item_id"), None)
+    if column is None or not int(column["notnull"]):
+        return
+    execute(conn, "PRAGMA foreign_keys = OFF")
+    execute(conn, "DROP TABLE IF EXISTS survey_responses_submissions")
+    execute(conn, """
+        CREATE TABLE survey_responses_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            survey_item_id INTEGER,
+            email TEXT NOT NULL,
+            attention_effectiveness INTEGER NOT NULL,
+            recommend_rollout TEXT NOT NULL,
+            retail_engagement INTEGER NOT NULL,
+            stands_out TEXT NOT NULL,
+            price_reasonable TEXT NOT NULL,
+            feedback TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            company_id INTEGER,
+            survey_period_id INTEGER,
+            answers_json TEXT NOT NULL DEFAULT '{}',
+            updated_at TEXT
+        )
+    """)
+    execute(conn, """
+        INSERT INTO survey_responses_submissions (
+            id, survey_item_id, email, attention_effectiveness, recommend_rollout,
+            retail_engagement, stands_out, price_reasonable, feedback, created_at,
+            company_id, survey_period_id, answers_json, updated_at
+        )
+        SELECT id, survey_item_id, email, attention_effectiveness, recommend_rollout,
+            retail_engagement, stands_out, price_reasonable, feedback, created_at,
+            company_id, survey_period_id, answers_json, updated_at
+        FROM survey_responses
+    """)
+    execute(conn, "DROP TABLE survey_responses")
+    execute(conn, "ALTER TABLE survey_responses_submissions RENAME TO survey_responses")
+    execute(conn, "PRAGMA foreign_keys = ON")
+
+
+def _create_survey_answer_tables(conn) -> None:
+    """The ticks, and the answers, that make a survey item-based.
+
+    ``survey_period_item_questions`` is which of the survey's pool questions an
+    item asks. ``survey_answers`` is one row per submission x item x question,
+    keyed by the pool's own question id, so editing a question's wording leaves
+    every stored answer attached to it.
+    """
+    if IS_POSTGRES:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS survey_period_item_questions (
+                id SERIAL PRIMARY KEY,
+                survey_period_item_id INTEGER NOT NULL
+                    REFERENCES survey_period_items(id) ON DELETE CASCADE,
+                question_id TEXT NOT NULL,
+                UNIQUE (survey_period_item_id, question_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS survey_answers (
+                id SERIAL PRIMARY KEY,
+                response_id INTEGER NOT NULL REFERENCES survey_responses(id) ON DELETE CASCADE,
+                survey_period_item_id INTEGER NOT NULL
+                    REFERENCES survey_period_items(id) ON DELETE CASCADE,
+                question_id TEXT NOT NULL,
+                answer_text TEXT NOT NULL DEFAULT '',
+                answer_options_json TEXT NOT NULL DEFAULT '[]',
+                answer_number DOUBLE PRECISION,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (response_id, survey_period_item_id, question_id)
+            )
+        """)
+    else:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS survey_period_item_questions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                survey_period_item_id INTEGER NOT NULL,
+                question_id TEXT NOT NULL,
+                UNIQUE (survey_period_item_id, question_id),
+                FOREIGN KEY (survey_period_item_id) REFERENCES survey_period_items(id) ON DELETE CASCADE
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS survey_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                response_id INTEGER NOT NULL,
+                survey_period_item_id INTEGER NOT NULL,
+                question_id TEXT NOT NULL,
+                answer_text TEXT NOT NULL DEFAULT '',
+                answer_options_json TEXT NOT NULL DEFAULT '[]',
+                answer_number REAL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (response_id, survey_period_item_id, question_id),
+                FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE,
+                FOREIGN KEY (survey_period_item_id) REFERENCES survey_period_items(id) ON DELETE CASCADE
+            )
+        """)
+    execute(conn,
+            "CREATE INDEX IF NOT EXISTS survey_answers_response_idx"
+            " ON survey_answers (response_id)")
+    execute(conn,
+            "CREATE INDEX IF NOT EXISTS survey_answers_item_idx"
+            " ON survey_answers (survey_period_item_id, question_id)")
+
+
+def _migrate_survey_owned_items(conn) -> None:
+    """Every survey owns its items, so the item row and its answers move in.
+
+    Idempotent on both engines: the columns are added once, the nullable
+    rebuild only runs on a table that still has the NOT NULL, and the backfills
+    below write the same values a second time. Existing surveys keep their
+    items (and their images), cost falls back to the old price field, and every
+    item ticks the survey's whole pool, which is what it asked before the pool
+    became per item.
+    """
+    ensure_column(conn, "survey_period_items", "cost", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "survey_period_items", "item_number", "TEXT NOT NULL DEFAULT ''")
+    ensure_column(conn, "survey_responses", "updated_at", "TEXT")
+    ensure_column(conn, "survey_responses", "answers_json", "TEXT NOT NULL DEFAULT '{}'")
+    _allow_null_catalog_item_id(conn)
+    _allow_null_response_item_id(conn)
+    _create_survey_answer_tables(conn)
+
+    execute(conn, "UPDATE survey_period_items SET cost = price WHERE cost = '' AND price <> ''")
+
+    # A survey that existed before items carried their own ticks asked every
+    # question for every item, so that is what those items' ticks say after the
+    # upgrade. Only items with no ticks at all are filled: re-ticking an item
+    # that already has its set would quietly undo "this item asks only these".
+    from database import parse_survey_questions
+
+    periods = execute(conn, "SELECT id, questions_json FROM survey_periods").fetchall()
+    for period in periods:
+        question_ids = [q["id"] for q in parse_survey_questions(period["questions_json"])]
+        if not question_ids:
+            continue
+        unticked = execute(
+            conn,
+            """
+            SELECT i.id FROM survey_period_items i
+            WHERE i.survey_period_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM survey_period_item_questions q
+                  WHERE q.survey_period_item_id = i.id
+              )
+            """,
+            (period["id"],),
+        ).fetchall()
+        for item in unticked:
+            for question_id in question_ids:
+                execute(
+                    conn,
+                    "INSERT INTO survey_period_item_questions (survey_period_item_id, question_id)"
+                    " VALUES (?, ?) ON CONFLICT DO NOTHING",
+                    (item["id"], question_id),
+                )
+
 
 def _normalize_survey_period_times(conn) -> None:
     """Blanks in a period's window become NULL.
@@ -736,6 +1022,7 @@ def init_db() -> None:
 
         company = ensure_default_company(conn)
         _backfill_company_ids(conn, company["id"])
+        _migrate_survey_owned_items(conn)
         _migrate_survey_access(conn)
         _normalize_survey_period_times(conn)
         ensure_survey_layout(conn, company["id"])

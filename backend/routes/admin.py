@@ -22,14 +22,11 @@ from database import (
     normalize_page_break_layers,
     classify_interest_answer,
     close_open_survey_periods,
-    connect,
-    copy_catalog_items_into_period,
-    count_period_items,
     company_id_for_user,
     company_to_public,
-    resolve_scoped_company_id,
-    row_value,
-    serialize_user,
+    connect,
+    copy_period_items,
+    count_period_items,
     ensure_buy_book_layout,
     ensure_legacy_survey_period,
     ensure_survey_layout,
@@ -46,8 +43,13 @@ from database import (
     parse_answers_json,
     parse_cover_json,
     parse_survey_questions,
+    period_item_question_map,
+    period_items_public,
+    period_response_count,
+    questions_for_item,
     resolve_interest_question,
-    period_item_to_public,
+    resolve_scoped_company_id,
+    save_period_items,
     sheet_status_to_public,
     survey_filter_fields,
     survey_item_to_public,
@@ -55,6 +57,8 @@ from database import (
     survey_period_to_public,
     survey_questions_json,
     utc_now,
+    row_value,
+    serialize_user,
     with_returning,
     audit_log_to_public,
 )
@@ -103,12 +107,84 @@ def normalize_period_timestamp(field: str, value: Any) -> str | None:
 # Survey results dashboard
 # ---------------------------------------------------------------------------
 
+CHOICE_QUESTION_KINDS = {"yes_no", "single_choice", "dropdown"}
+
+
+def _answer_display(question: dict[str, Any], row: Any) -> Any:
+    """One stored answer as the reader of a result wants it."""
+    if question["type"] == "scale":
+        return row["answer_number"]
+    if question["type"] == "checkbox":
+        try:
+            stored = json.loads(row["answer_options_json"] or "[]")
+        except (TypeError, ValueError):
+            stored = []
+        return stored if isinstance(stored, list) else []
+    return str(row["answer_text"] or "")
+
+
+def _question_tally(question: dict[str, Any], rows: list[Any], emails: dict[int, str]) -> dict[str, Any]:
+    """One question's tallies for one item: counts, an average, or the answers."""
+    tally: dict[str, Any] = {
+        "question_id": question["id"],
+        "label": question["label"],
+        "type": question["type"],
+        "answered": len(rows),
+        "choices": [],
+        "average": None,
+        "answers": [],
+    }
+    if question["type"] in CHOICE_QUESTION_KINDS:
+        counts = {option: 0 for option in question.get("options") or []}
+        for row in rows:
+            value = str(row["answer_text"] or "").strip()
+            if not value:
+                continue
+            counts[value] = counts.get(value, 0) + 1
+        tally["choices"] = [{"option": option, "count": count} for option, count in counts.items()]
+    elif question["type"] == "checkbox":
+        counts = {option: 0 for option in question.get("options") or []}
+        for row in rows:
+            values = _answer_display(question, row)
+            for value in values:
+                text = str(value).strip()
+                if text:
+                    counts[text] = counts.get(text, 0) + 1
+        tally["choices"] = [{"option": option, "count": count} for option, count in counts.items()]
+    elif question["type"] == "scale":
+        numbers = [row["answer_number"] for row in rows if row["answer_number"] is not None]
+        if numbers:
+            tally["average"] = round(sum(numbers) / len(numbers), 2)
+        distribution = {str(value): 0 for value in range(1, 6)}
+        for number in numbers:
+            key = str(int(number))
+            if key in distribution:
+                distribution[key] += 1
+        tally["choices"] = [{"option": value, "count": count} for value, count in distribution.items()]
+    else:
+        tally["answers"] = [
+            {
+                "email": emails.get(int(row["response_id"]), ""),
+                "answer": _answer_display(question, row),
+                "submitted_at": row["submitted_at"],
+            }
+            for row in rows
+        ]
+    return tally
+
+
 @router.get("/survey-results")
 def get_survey_results(
     period_id: int | None = None,
     company_id: int | None = Query(default=None),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
+    """Interest per item: each item's response count, then its questions' tallies.
+
+    Nothing here is a single tally for the whole survey: two items ask different
+    questions, so a survey-wide number would average answers that were never
+    asked of the same item.
+    """
     company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
@@ -129,205 +205,103 @@ def get_survey_results(
                 (company_id,),
             ).fetchone()
 
-        period_clause = ""
-        item_args: list[Any] = [company_id]
-        total_args: list[Any] = [company_id]
-        response_args: list[Any] = [company_id]
-        if period is not None:
-            period_clause = " AND sr.survey_period_id = ?"
-            item_args.append(period["id"])
-            total_args.append(period["id"])
-            response_args.append(period["id"])
-
-        # Counts come from the survey's own interest question whenever a response
-        # carries answers; the legacy column is the fallback for responses written
-        # before questions existed, or by an old client that sends no answers.
-        questions_by_period: dict[int, list[dict[str, Any]]] = {
-            int(row["id"]): parse_survey_questions(row["questions_json"])
+        periods = [
+            survey_period_to_public(row)
             for row in execute(
                 conn,
-                "SELECT id, questions_json FROM survey_periods WHERE company_id = ?",
+                "SELECT * FROM survey_periods WHERE company_id = ? ORDER BY id DESC",
                 (company_id,),
             ).fetchall()
+        ]
+
+        result: dict[str, Any] = {
+            "period": survey_period_to_public(period) if period is not None else None,
+            "periods": periods,
+            "summary": {
+                "submissions": 0,
+                "unique_respondents": 0,
+                "items": 0,
+                "answered_items": 0,
+                "total_answers": 0,
+            },
+            "items": [],
+            "respondents": [],
         }
-        period_questions = (
-            questions_by_period.get(int(period["id"]), parse_survey_questions(period["questions_json"]))
-            if period is not None
-            else []
-        )
+        if period is None:
+            return result
 
-        if period is not None:
-            item_rows = execute(
-                conn,
-                """
-                SELECT spi.catalog_item_id AS id, spi.item_name, spi.brand, spi.channel,
-                       spi.product_type, spi.key_program, spi.image_url, spi.price, spi.uom,
-                       spi.sort_order
-                FROM survey_period_items spi
-                WHERE spi.survey_period_id = ?
-                ORDER BY spi.sort_order ASC
-                """,
-                (period["id"],),
-            ).fetchall()
-        else:
-            item_rows = execute(
-                conn,
-                """
-                SELECT si.id, si.item_name, si.brand, si.channel, si.product_type,
-                       si.key_program, si.image_url, si.price, si.uom, si.sort_order
-                FROM survey_items si
-                WHERE si.company_id = ? AND si.is_active = ?
-                ORDER BY si.sort_order ASC
-                """,
-                (company_id, True),
-            ).fetchall()
-
-        answer_rows = execute(
-            conn,
-            f"""
-            SELECT sr.id, sr.survey_item_id, sr.survey_period_id, sr.email,
-                   sr.recommend_rollout, sr.answers_json, sr.created_at
-            FROM survey_responses sr
-            WHERE sr.company_id = ?{period_clause}
-            ORDER BY sr.created_at ASC
-            """,
-            tuple(total_args),
-        ).fetchall()
-
-        tally: dict[int, dict[str, Any]] = {}
-        for row in answer_rows:
-            answers = parse_answers_json(row["answers_json"])
-            row_period_id = row["survey_period_id"]
-            row_questions = questions_by_period.get(int(row_period_id)) if row_period_id else None
-            if not row_questions:
-                row_questions = period_questions
-            interest = classify_interest_answer(resolve_interest_question(row_questions), answers)
-            if not interest:
-                interest = {"Yes": "interested", "No": "not_interested"}.get(
-                    str(row["recommend_rollout"] or ""), ""
-                )
-            stats = tally.setdefault(
-                int(row["survey_item_id"]),
-                {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
-                 "emails": [], "attention": [], "engagement": []},
-            )
-            stats["total"] += 1
-            if interest == "interested":
-                stats["interested"] += 1
-            elif interest == "not_interested":
-                stats["not_interested"] += 1
-            else:
-                stats["maybe"] += 1
-            email = str(row["email"] or "").strip()
-            if email and email not in stats["emails"]:
-                stats["emails"].append(email)
-
-            # Two labelled figures, two questions: the first scale question feeds
-            # attention, the second feeds engagement. A period with one scale
-            # question leaves engagement null (the dashboard hides it) rather than
-            # printing the same number under a second label.
-            scale_questions = [q for q in row_questions if q["type"] == "scale"]
-            for slot, question in zip(("attention", "engagement"), scale_questions[:2]):
-                try:
-                    scale_value = int(answers.get(question["id"]))
-                except (TypeError, ValueError):
-                    scale_value = 0
-                if 1 <= scale_value <= 5:
-                    stats[slot].append(scale_value)
-
-        unique_respondents = len({str(row["email"] or "").strip().lower() for row in answer_rows if str(row["email"] or "").strip()})
-        summary = {
-            "unique_respondents": unique_respondents,
-            "total_responses": len(answer_rows),
-            "total_interested": sum(stats["interested"] for stats in tally.values()),
-            "total_not_interested": sum(stats["not_interested"] for stats in tally.values()),
-            "has_scale_question": any(q["type"] == "scale" for q in period_questions),
-        }
-
-        response_rows = execute(
-            conn,
-            f"""
-            SELECT
-                sr.id,
-                sr.email,
-                sr.recommend_rollout,
-                sr.feedback,
-                sr.created_at,
-                si.item_name,
-                si.brand
-            FROM survey_responses sr
-            LEFT JOIN survey_items si ON si.id = sr.survey_item_id
-            WHERE sr.company_id = ?{" AND sr.survey_period_id = ?" if period is not None else ""}
-            ORDER BY sr.created_at DESC
-            LIMIT 500
-            """,
-            tuple(response_args),
-        ).fetchall()
-
-        periods = execute(
+        items = period_items_public(conn, period)
+        submissions = execute(
             conn,
             """
-            SELECT * FROM survey_periods
-            WHERE company_id = ?
-            ORDER BY id DESC
+            SELECT id, email, created_at FROM survey_responses
+            WHERE company_id = ? AND survey_period_id = ? AND survey_item_id IS NULL
+            ORDER BY created_at ASC, id ASC
             """,
-            (company_id,),
+            (company_id, period["id"]),
+        ).fetchall()
+        answer_rows = execute(
+            conn,
+            """
+            SELECT a.response_id, a.survey_period_item_id, a.question_id, a.answer_text,
+                   a.answer_options_json, a.answer_number, r.email, r.created_at AS submitted_at
+            FROM survey_answers a
+            JOIN survey_responses r ON r.id = a.response_id
+            WHERE r.company_id = ? AND r.survey_period_id = ? AND r.survey_item_id IS NULL
+            ORDER BY r.created_at ASC, r.id ASC, a.id ASC
+            """,
+            (company_id, period["id"]),
         ).fetchall()
 
-    items = []
-    empty_stats = {"total": 0, "interested": 0, "not_interested": 0, "maybe": 0,
-                   "emails": [], "attention": [], "engagement": []}
-    for row in item_rows:
-        stats = tally.get(int(row["id"]), empty_stats)
-        total_responses = stats["total"]
-        attention_average = (
-            round(sum(stats["attention"]) / len(stats["attention"]), 2) if stats["attention"] else None
-        )
-        engagement_average = (
-            round(sum(stats["engagement"]) / len(stats["engagement"]), 2) if stats["engagement"] else None
-        )
-        items.append({
-            "id": row["id"],
-            "item_name": row["item_name"],
-            "brand": row["brand"],
-            "channel": row["channel"],
-            "product_type": row["product_type"],
-            "key_program": row["key_program"],
-            "image_url": row["image_url"],
-            "price": row["price"],
-            "uom": row["uom"],
-            "sort_order": row["sort_order"] or 0,
-            "total_responses": total_responses,
-            "interested": stats["interested"],
-            "not_interested": stats["not_interested"],
-            "maybe": stats["maybe"],
-            "avg_attention": attention_average,
-            "avg_engagement": engagement_average,
-            "interest_pct": round(stats["interested"] / total_responses * 100) if total_responses else 0,
-            "respondent_emails": list(stats["emails"]),
+    emails = {int(row["id"]): str(row["email"] or "") for row in submissions}
+    grouped: dict[int, dict[str, list[Any]]] = {}
+    counted: dict[int, set[int]] = {}
+    for row in answer_rows:
+        item_id = int(row["survey_period_item_id"])
+        grouped.setdefault(item_id, {}).setdefault(str(row["question_id"]), []).append(row)
+        counted.setdefault(item_id, set()).add(int(row["response_id"]))
+
+    item_results = []
+    for item in items:
+        item_answers = grouped.get(int(item["id"]), {})
+        response_ids = counted.get(int(item["id"]), set())
+        item_results.append({
+            "id": item["id"],
+            "item_name": item["item_name"],
+            "item_number": item["item_number"],
+            "cost": item["cost"],
+            "image_url": item["image_url"],
+            "item_description": item["item_description"],
+            "sort_order": item["sort_order"],
+            "response_count": len(response_ids),
+            "questions": [
+                _question_tally(question, item_answers.get(question["id"], []), emails)
+                for question in item["questions"]
+            ],
         })
-    items.sort(key=lambda item: (-item["interested"], -item["total_responses"], item["sort_order"]))
 
-    responses = [
+    result["items"] = item_results
+    result["respondents"] = [
         {
-            "id": r["id"],
-            "email": r["email"],
-            "recommend_rollout": r["recommend_rollout"],
-            "feedback": r["feedback"],
-            "created_at": r["created_at"],
-            "item_name": r["item_name"] or "",
-            "brand": r["brand"] or "",
+            "id": row["id"],
+            "email": str(row["email"] or ""),
+            "created_at": row["created_at"],
+            "items_answered": len({
+                int(answer["survey_period_item_id"])
+                for answer in answer_rows
+                if int(answer["response_id"]) == int(row["id"])
+            }),
         }
-        for r in response_rows
+        for row in submissions
     ]
-
-    return {
-        "period": survey_period_to_public(period) if period is not None else None,
-        "periods": [survey_period_to_public(row) for row in periods],
-        "summary": summary,
-        "items": items,
-        "responses": responses,
+    result["summary"] = {
+        "submissions": len(submissions),
+        "unique_respondents": len({email.lower() for email in emails.values() if email}),
+        "items": len(item_results),
+        "answered_items": sum(1 for item in item_results if item["response_count"] > 0),
+        "total_answers": len(answer_rows),
     }
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -649,6 +623,42 @@ def reset_catalog_item(
 # Survey periods
 # ---------------------------------------------------------------------------
 
+def survey_pool_ids(questions: list[dict[str, Any]]) -> list[str]:
+    return [question["id"] for question in questions]
+
+
+def prepare_survey_items(payload_items: list[Any] | None, pool_ids: list[str]) -> list[Any]:
+    """Validate the dialog's items and default each new one to the whole pool.
+
+    An item with no name is refused rather than saved: it would be a blank card
+    on the public page. ``question_ids=None`` means "the whole pool" (a new
+    item ticks everything by default); an empty list is a deliberate "asks
+    nothing", and a tick naming a question the pool does not have is dropped.
+    """
+    prepared: list[Any] = []
+    for index, item in enumerate(payload_items or [], start=1):
+        name = str(item.item_name or "").strip()
+        if not name:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Every item needs a name (item {index})"
+            )
+        item.item_name = name
+        if item.question_ids is None:
+            item.question_ids = list(pool_ids)
+        else:
+            item.question_ids = [qid for qid in item.question_ids if qid in pool_ids]
+        prepared.append(item)
+    return prepared
+
+
+def survey_period_summary(conn: Any, row: Any) -> dict[str, Any]:
+    items = count_period_items(conn, int(row["id"]))
+    payload = survey_period_to_public(row, item_count=items)
+    payload["question_count"] = len(parse_survey_questions(row["questions_json"]))
+    payload["response_count"] = period_response_count(conn, int(row["id"]))
+    return payload
+
+
 @router.get("/survey-periods")
 def list_survey_periods(
     company_id: int | None = Query(default=None),
@@ -666,10 +676,13 @@ def list_survey_periods(
             """,
             (company_id,),
         ).fetchall()
-        periods = [
-            survey_period_to_public(row, item_count=count_period_items(conn, row["id"]))
-            for row in rows
-        ]
+        periods = []
+        for row in rows:
+            payload = survey_period_summary(conn, row)
+            # The list is the screen that hands out the link, so the admin copy
+            # of it carries the token; the public serializer never does.
+            payload["survey_token"] = str(row["survey_token"] or "")
+            periods.append(payload)
     return {"periods": periods}
 
 
@@ -694,18 +707,18 @@ def create_survey_period(
             filter_fields_json = source_period["filter_fields_json"]
         else:
             filter_fields_json = json.dumps(survey_filter_fields(conn, company_id))
-            source_period = None
 
-        # Explicit questions (the create form) win; otherwise a copied period keeps
-        # its own questions, and a fresh period starts from the company template.
+        # Explicit questions (the dialog) win; otherwise a copied survey keeps
+        # its source's pool, and a fresh survey starts from the company template.
         if payload.questions is not None:
-            questions_json = survey_questions_json(
-                [question.model_dump() for question in payload.questions]
-            )
+            questions = normalize_survey_questions([question.model_dump() for question in payload.questions])
         elif source_period is not None:
-            questions_json = survey_questions_json(parse_survey_questions(source_period["questions_json"]))
+            questions = parse_survey_questions(source_period["questions_json"])
         else:
-            questions_json = survey_questions_json(survey_layout_questions(conn, company_id))
+            questions = survey_layout_questions(conn, company_id)
+        questions_json = survey_questions_json(questions)
+
+        items = prepare_survey_items(payload.items, survey_pool_ids(questions))
 
         status_value = "open" if payload.open_immediately else "draft"
         opens_at = utc_now().isoformat() if payload.open_immediately else None
@@ -738,14 +751,11 @@ def create_survey_period(
             )
             period = execute(conn, "SELECT * FROM survey_periods WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
-        copy_catalog_items_into_period(
-            conn,
-            period["id"],
-            company_id,
-            only_in_survey=True,
-            source_period_id=source_period["id"] if source_period is not None else None,
-        )
-        item_count = count_period_items(conn, period["id"])
+        if items:
+            save_period_items(conn, int(period["id"]), items, survey_pool_ids(questions))
+        elif source_period is not None:
+            copy_period_items(conn, int(source_period["id"]), int(period["id"]))
+        item_count = count_period_items(conn, int(period["id"]))
 
     created_public = survey_period_to_public(period, item_count=item_count)
     # An admin response, so the create screen can hand out the link at once.
@@ -762,7 +772,7 @@ def search_survey_catalog(
     company_id: int | None = Query(default=None),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> dict:
-    """Search the catalog to add items to a survey. Lean rows, paged, on demand."""
+    """Search the catalog. The survey builder no longer reads it; the buy book does."""
     company_id = resolve_scoped_company_id(user, company_id)
     needle = q.strip().lower()
     if not needle:
@@ -818,28 +828,21 @@ def get_survey_period_detail(
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
-        items = list_period_items(conn, period_id)
-        catalog_total = execute(
-            conn,
-            "SELECT COUNT(*) AS n FROM survey_items WHERE company_id = ? AND is_active = ?",
-            (company_id, True),
-        ).fetchone()["n"]
+        items = period_items_public(conn, period)
+        responses = period_response_count(conn, period_id)
 
-    # The editor opens on this period's own items. The catalog is a search
-    # result (see search_survey_catalog): at 3,700 rows rendering all of them
-    # froze the browser, and none of those rows belong to this survey yet.
-    editor_items = [period_item_to_public(row) for row in items]
     period_public = survey_period_to_public(period, item_count=len(items))
     # The token is read-only here: this is the screen an editor copies the
     # survey link from. It stays out of survey_period_to_public() so the public
     # payload can never carry it.
     period_public["survey_token"] = str(period["survey_token"] or "")
+    period_public["response_count"] = responses
     return {
         "period": period_public,
         "filter_fields": period_public["filter_fields"],
         "questions": period_public["questions"],
-        "items": editor_items,
-        "catalog_total": int(catalog_total),
+        "items": items,
+        "catalog_total": 0,
     }
 
 
@@ -943,9 +946,12 @@ def update_survey_period_layout(
     user: sqlite3.Row = Depends(get_current_user),
     company_id: int | None = Query(default=None),
 ) -> dict:
+    """Save the whole dialog: the pool, then the items that tick from it."""
     company_id = resolve_scoped_company_id(user, company_id)
     filter_fields = normalize_filter_fields(payload.filter_fields)
     questions = normalize_survey_questions([question.model_dump() for question in payload.questions])
+    pool_ids = survey_pool_ids(questions)
+    items = prepare_survey_items(payload.items, pool_ids)
     with connect() as conn:
         period = get_survey_period(conn, company_id, period_id)
         if period is None:
@@ -953,77 +959,19 @@ def update_survey_period_layout(
         if period["status"] == "closed":
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Closed surveys cannot be edited")
 
-        selected = [item for item in payload.items if item.in_survey]
-        if not selected:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Select at least one survey item")
-
-        catalog_ids = [item.catalog_item_id for item in selected]
-        placeholders = ", ".join("?" for _ in catalog_ids)
-        catalog_rows = execute(
-            conn,
-            f"""
-            SELECT * FROM survey_items
-            WHERE company_id = ? AND is_active = ? AND id IN ({placeholders})
-            """,
-            (company_id, True, *catalog_ids),
-        ).fetchall()
-        catalog_by_id = {row["id"]: row for row in catalog_rows}
-        if len(catalog_by_id) != len(set(catalog_ids)):
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "One or more catalog items were not found")
-
-        execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
-        for index, item in enumerate(selected, start=1):
-            catalog = catalog_by_id[item.catalog_item_id]
-            execute(
-                conn,
-                """
-                INSERT INTO survey_period_items (
-                    survey_period_id, catalog_item_id, item_name, brand, channel, product_type,
-                    key_program, item_description, uom, price, image_url, image_display_size,
-                    image_fit, sort_order, response_width, page_break_before
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    period_id,
-                    catalog["id"],
-                    catalog["item_name"],
-                    catalog["brand"],
-                    catalog["channel"],
-                    catalog["product_type"],
-                    catalog["key_program"],
-                    catalog["item_description"],
-                    catalog["uom"],
-                    catalog["price"],
-                    catalog["image_url"],
-                    item.image_display_size,
-                    item.image_fit,
-                    index,
-                    item.response_width,
-                    1 if item.page_break_before and index > 1 else 0,
-                ),
-            )
-
-        # Keep buy-book / catalog survey flags in sync for items touched in this save.
-        for item in payload.items:
-            execute(
-                conn,
-                """
-                UPDATE survey_items
-                SET in_survey = ?, updated_at = CURRENT_TIMESTAMP
-                WHERE id = ? AND company_id = ?
-                """,
-                (1 if item.in_survey else 0, item.catalog_item_id, company_id),
-            )
-
+        name = payload.name.strip() if payload.name is not None else period["name"]
+        if not name:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Survey name is required")
         execute(
             conn,
             """
             UPDATE survey_periods
-            SET filter_fields_json = ?, questions_json = ?, updated_at = CURRENT_TIMESTAMP
+            SET name = ?, filter_fields_json = ?, questions_json = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND company_id = ?
             """,
-            (json.dumps(filter_fields), survey_questions_json(questions), period_id, company_id),
+            (name, json.dumps(filter_fields), survey_questions_json(questions), period_id, company_id),
         )
+        save_period_items(conn, period_id, items, pool_ids)
         # Keep company template in sync with the latest edited period questions.
         ensure_survey_layout(conn, company_id)
         execute(
@@ -1036,13 +984,13 @@ def update_survey_period_layout(
             (survey_questions_json(questions), company_id),
         )
         period = get_survey_period(conn, company_id, period_id)
-        items = list_period_items(conn, period_id)
+        saved_items = period_items_public(conn, period)
 
     return {
-        "period": survey_period_to_public(period, item_count=len(items)),
+        "period": survey_period_to_public(period, item_count=len(saved_items)),
         "filter_fields": filter_fields,
         "questions": questions,
-        "items": [period_item_to_public(row) for row in items],
+        "items": saved_items,
     }
 
 
@@ -1083,6 +1031,12 @@ def export_survey_responses(
     company_id: int | None = Query(default=None),
     user: sqlite3.Row = Depends(get_current_user),
 ) -> Response:
+    """One row per respondent x item x question, with the item printed alongside.
+
+    The item's own columns (image, number, description, name, cost) ride on
+    every answer row, so an account manager reads one line per answer without
+    joining anything back to a survey screen.
+    """
     company_id = resolve_scoped_company_id(user, company_id)
     with connect() as conn:
         ensure_legacy_survey_period(conn, company_id)
@@ -1093,51 +1047,39 @@ def export_survey_responses(
             period = get_survey_period(conn, company_id, period_id)
             if period is None:
                 raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey period not found")
-            period_clause = " AND survey_responses.survey_period_id = ?"
+            period_clause = " AND r.survey_period_id = ?"
             args.append(period_id)
             period_name = str(period["name"]).replace(" ", "-").lower()
 
-        question_labels: list[tuple[str, str]] = []
-        if period_id is not None:
-            period_row = get_survey_period(conn, company_id, period_id)
-            if period_row is not None:
-                for question in parse_survey_questions(period_row["questions_json"]):
-                    question_labels.append((question["id"], question["label"]))
-        else:
-            seen: set[str] = set()
-            for period_row in execute(
-                conn,
-                "SELECT questions_json FROM survey_periods WHERE company_id = ?",
-                (company_id,),
-            ).fetchall():
-                for question in parse_survey_questions(period_row["questions_json"]):
-                    if question["id"] in seen:
-                        continue
-                    seen.add(question["id"])
-                    question_labels.append((question["id"], question["label"]))
-        if not question_labels:
-            question_labels = [("interest", "Interest"), ("feedback", "Notes")]
+        labels: dict[str, str] = {}
+        for period_row in execute(
+            conn,
+            f"SELECT questions_json FROM survey_periods WHERE company_id = ?{' AND id = ?' if period_id is not None else ''}",
+            (company_id, period_id) if period_id is not None else (company_id,),
+        ).fetchall():
+            for question in parse_survey_questions(period_row["questions_json"]):
+                labels.setdefault(question["id"], question["label"])
 
         rows = execute(
             conn,
             f"""
             SELECT
-                survey_responses.created_at,
-                COALESCE(survey_items.item_name, '') AS item_name,
-                COALESCE(survey_items.brand, '') AS brand,
-                COALESCE(survey_items.channel, '') AS channel,
-                COALESCE(survey_items.product_type, '') AS product_type,
-                COALESCE(survey_items.key_program, '') AS key_program,
-                COALESCE(survey_items.uom, '') AS uom,
-                COALESCE(survey_items.price, '') AS price,
-                survey_responses.email,
-                survey_responses.recommend_rollout,
-                survey_responses.feedback,
-                survey_responses.answers_json
-            FROM survey_responses
-            LEFT JOIN survey_items ON survey_items.id = survey_responses.survey_item_id
-            WHERE survey_responses.company_id = ?{period_clause}
-            ORDER BY survey_responses.created_at DESC, survey_responses.id DESC
+                r.created_at,
+                r.email,
+                i.item_name,
+                i.item_number,
+                i.cost,
+                i.item_description,
+                i.image_url,
+                a.question_id,
+                a.answer_text,
+                a.answer_options_json,
+                a.answer_number
+            FROM survey_answers a
+            JOIN survey_responses r ON r.id = a.response_id
+            JOIN survey_period_items i ON i.id = a.survey_period_item_id
+            WHERE r.company_id = ? AND r.survey_item_id IS NULL{period_clause}
+            ORDER BY r.created_at DESC, r.id DESC, i.sort_order ASC, i.id ASC, a.id ASC
             """,
             tuple(args),
         ).fetchall()
@@ -1145,29 +1087,32 @@ def export_survey_responses(
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Survey Responses"
-    headers = ["Submitted At", "Item Name", "Brand", "Channel", "Product Type",
-               "Key Program", "UOM", "Price", "Email"] + [label for _, label in question_labels]
+    headers = ["Submitted At", "Email", "Item Name", "Item Number", "Cost",
+               "Item Description", "Item Image URL", "Question", "Answer"]
     worksheet.append(headers)
     for cell in worksheet[1]:
         cell.font = Font(bold=True)
     for row in rows:
-        answers = parse_answers_json(row["answers_json"])
-        answer_cells = []
-        for question_id, _label in question_labels:
-            if question_id in answers and answers[question_id] not in (None, "", []):
-                value = answers[question_id]
-                answer_cells.append("; ".join(str(part) for part in value) if isinstance(value, list) else str(value))
-            elif question_id == "interest":
-                answer_cells.append("Interested" if row["recommend_rollout"] == "Yes" else "Not Interested")
-            elif question_id == "feedback":
-                answer_cells.append(str(row["feedback"] or ""))
-            else:
-                answer_cells.append("")
+        if row["answer_options_json"] and str(row["answer_options_json"]).strip() not in {"", "[]"}:
+            try:
+                stored = json.loads(row["answer_options_json"])
+            except (TypeError, ValueError):
+                stored = []
+            answer = "; ".join(str(part) for part in stored) if isinstance(stored, list) else str(row["answer_text"] or "")
+        elif row["answer_number"] is not None:
+            answer = row["answer_text"] or str(row["answer_number"])
+        else:
+            answer = str(row["answer_text"] or "")
         worksheet.append([
-            str(row["created_at"] or ""), row["item_name"], row["brand"],
-            row["channel"], row["product_type"], row["key_program"], row["uom"], row["price"],
-            row["email"],
-            *answer_cells,
+            str(row["created_at"] or ""),
+            str(row["email"] or ""),
+            row["item_name"],
+            row["item_number"] or "",
+            row["cost"] or "",
+            row["item_description"] or "",
+            row["image_url"] or "",
+            labels.get(str(row["question_id"]), str(row["question_id"])),
+            answer,
         ])
     for column_cells in worksheet.columns:
         max_length = max(len(str(cell.value or "")) for cell in column_cells)

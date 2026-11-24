@@ -87,7 +87,12 @@ def login(client: TestClient, email: str, password: str) -> dict[str, str] | Non
 
 
 def create_period(client: TestClient, headers: dict[str, str], name: str, company_id: int | None = None) -> int:
-    payload: dict[str, Any] = {"name": name, "open_immediately": True, "questions": INTEREST}
+    payload: dict[str, Any] = {
+        "name": name,
+        "open_immediately": True,
+        "questions": INTEREST,
+        "items": [{"item_name": "access-check item", "cost": "$1.00", "question_ids": ["interest"]}],
+    }
     params = {"company_id": company_id} if company_id is not None else None
     response = client.post("/api/admin/survey-periods", headers=headers, json=payload, params=params)
     if response.status_code != 201:
@@ -105,6 +110,19 @@ def period_detail(
     response = client.get(f"/api/admin/survey-periods/{period_id}", headers=headers, params=params)
     response.raise_for_status()
     return response.json()
+
+
+def period_item_id(
+    client: TestClient,
+    headers: dict[str, str],
+    period_id: int,
+    company_id: int | None = None,
+) -> int:
+    """The period's own item id: a submission answers the survey's items."""
+    items = period_detail(client, headers, period_id, company_id).get("items") or []
+    if not items:
+        raise SystemExit(f"period {period_id} has no items to answer")
+    return int(items[0]["id"])
 
 
 def token_of(
@@ -130,6 +148,21 @@ def submit(client: TestClient, slug: str, token: str | None, item_id: int, email
         params=params,
         json={"survey_item_id": item_id, "email": email, "answers": {"interest": answer}},
     )
+
+
+def stored_answer(period_id: int, item_id: int, question_id: str) -> str:
+    with connect() as conn:
+        row = execute(
+            conn,
+            """
+            SELECT a.answer_text FROM survey_answers a
+            JOIN survey_responses r ON r.id = a.response_id
+            WHERE r.survey_period_id = ? AND a.survey_period_item_id = ? AND a.question_id = ?
+            ORDER BY a.id DESC LIMIT 1
+            """,
+            (period_id, item_id, question_id),
+        ).fetchone()
+    return str(row["answer_text"]) if row else ""
 
 
 def answer_rows(period_id: int) -> list[dict[str, Any]]:
@@ -419,24 +452,30 @@ def main() -> int:
         check("unique answer index present", index_present("survey_responses_unique_answer_idx"))
 
         # --------------------------------------------------------------
-        print("\n10. Two answers for one shopper and item: one row, last write wins")
+        print("\n10. Two submits by one shopper: one submission, last write wins")
         upsert_id = create_period(client, headers, "access-check-upsert")
         created_periods.append(upsert_id)
         upsert_token = token_of(client, headers, upsert_id)
-        first = submit(client, slug, upsert_token, item_id, test_email, "Yes")
+        upsert_item = period_item_id(client, headers, upsert_id)
+        first = submit(client, slug, upsert_token, upsert_item, test_email, "Yes")
         check("first answer -> 200", first.status_code == 200, str(first.status_code))
-        second = submit(client, slug, upsert_token, item_id, test_email, "No")
+        second = submit(client, slug, upsert_token, upsert_item, test_email, "No")
         check("second answer -> 200", second.status_code == 200, str(second.status_code))
         rows = answer_rows(upsert_id)
-        check("one row for the pair", len(rows) == 1, f"{len(rows)} rows")
-        check("the second answer is stored", bool(rows) and '"interest": "No"' in rows[0]["answers_json"],
-              rows[0]["answers_json"] if rows else "no row")
+        check("one submission for the shopper", len(rows) == 1, f"{len(rows)} rows")
+        stored = stored_answer(upsert_id, upsert_item, "interest")
+        check("the second answer replaced the first", stored == "No", str(stored))
         results = client.get("/api/admin/survey-results", headers=headers, params={"period_id": upsert_id}).json()
         summary = results.get("summary", {})
-        check("results count one response", summary.get("total_responses") == 1, str(summary)[:120])
+        check("results count one submission", summary.get("submissions") == 1, str(summary)[:120])
         check("results count one unique respondent", summary.get("unique_respondents") == 1, str(summary)[:120])
-        check("results read the stored (second) answer", summary.get("total_not_interested") == 1
-              and summary.get("total_interested") == 0, str(summary)[:120])
+        item_results = (results.get("items") or [{}])[0]
+        interest_tally = next(
+            (entry for entry in item_results.get("questions", []) if entry["question_id"] == "interest"), {}
+        )
+        choices = {choice["option"]: choice["count"] for choice in interest_tally.get("choices", [])}
+        check("results read the stored (second) answer", choices.get("No") == 1 and choices.get("Yes") == 0,
+              str(choices))
 
         # --------------------------------------------------------------
         print("\n11. Duplicate rows seeded before the index -> highest id survives")

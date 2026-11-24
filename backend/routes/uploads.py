@@ -23,7 +23,7 @@ except ImportError:
 router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 
 
-SURVEY_FOLDERS = {"survey-questions"}
+SURVEY_FOLDERS = {"survey-questions", "survey-items"}
 
 
 @router.post("/survey-question")
@@ -34,6 +34,16 @@ async def upload_survey_question_image(
     """One image per survey question. Same Cloudinary account, its own folder."""
     del user
     return await _store(file, folder="smartbuy/survey-questions")
+
+
+@router.post("/survey-item")
+async def upload_survey_item_image(
+    file: UploadFile = File(...),
+    user: sqlite3.Row = Depends(get_current_user),
+) -> dict:
+    """One image per survey item: the picture the public survey card shows."""
+    del user
+    return await _store(file, folder="smartbuy/survey-items")
 
 
 @router.post("/visual-reference")

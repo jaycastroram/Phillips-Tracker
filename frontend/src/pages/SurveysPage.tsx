@@ -39,6 +39,17 @@ export function SurveysPage({
     [companyFilter, companies, currentUser.company_id],
   )
 
+  // The public link is addressed by the company's slug, so the share panel
+  // needs the company the rest of the page is already scoped to.
+  const workingCompany = useMemo(
+    () =>
+      companies.find((company) => company.id === workingCompanyId) ??
+      companies.find((company) => company.id === currentUser.company_id) ??
+      null,
+    [companies, currentUser.company_id, workingCompanyId],
+  )
+  const companySlug = workingCompany?.company_slug ?? workingCompany?.slug ?? 'phillips'
+
   const scopedApiFetch = useCallback(
     (path: string, options?: RequestInit) => {
       if (!isAdmin || workingCompanyId == null) return apiFetch(path, options)
@@ -76,7 +87,7 @@ export function SurveysPage({
       </div>
 
       <div key={workingCompanyId ?? 'home'}>
-        {tab === 'manage' && <SurveyPeriodsPage apiFetch={scopedApiFetch} />}
+        {tab === 'manage' && <SurveyPeriodsPage apiFetch={scopedApiFetch} companySlug={companySlug} />}
         {tab === 'buy-book' && (
           <BuyBookLayoutPage
             apiFetch={scopedApiFetch}

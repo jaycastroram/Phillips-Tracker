@@ -1090,14 +1090,23 @@ def survey_period_to_public(row: Any, *, item_count: int | None = None) -> dict:
     return payload
 
 
-def period_item_to_public(row: Any) -> dict:
-    """Shape period items like catalog survey items so the public UI can reuse them."""
-    catalog_id = row["catalog_item_id"]
-    return {
-        "id": catalog_id,
-        "period_item_id": row["id"],
-        "catalog_item_id": catalog_id,
+def period_item_to_public(row: Any, *, questions: list[dict[str, Any]] | None = None) -> dict:
+    """One survey item as the builder and the public page read it.
+
+    ``id`` is the item's own row id, which is what an answer points at: it
+    survives a rename, a re-cost and a reorder, so nothing has to be renumbered
+    when a survey is edited after responses exist. ``catalog_item_id`` is only
+    there for items copied in before surveys owned their items.
+    """
+    item_id = int(row["id"])
+    payload = {
+        "id": item_id,
+        "period_item_id": item_id,
+        "catalog_item_id": row["catalog_item_id"],
         "item_name": row["item_name"],
+        "name": row["item_name"],
+        "item_number": _row_get(row, "item_number", "") or "",
+        "cost": _row_get(row, "cost", "") or "",
         "brand": row["brand"],
         "channel": row["channel"],
         "product_type": row["product_type"],
@@ -1117,7 +1126,10 @@ def period_item_to_public(row: Any) -> dict:
         "page_break_before": bool(row["page_break_before"]),
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
+        "question_ids": [question["id"] for question in questions] if questions is not None else [],
+        "questions": questions or [],
     }
+    return payload
 
 
 def mint_survey_token() -> str:
@@ -1214,6 +1226,254 @@ def count_period_items(conn: Any, period_id: int) -> int:
     return int(row["count"] if row else 0)
 
 
+def period_item_question_map(conn: Any, period_id: int) -> dict[int, list[str]]:
+    """Which pool questions each item of this survey asks, in tick order."""
+    rows = execute(
+        conn,
+        """
+        SELECT q.survey_period_item_id, q.question_id
+        FROM survey_period_item_questions q
+        JOIN survey_period_items i ON i.id = q.survey_period_item_id
+        WHERE i.survey_period_id = ?
+        ORDER BY q.id ASC
+        """,
+        (period_id,),
+    ).fetchall()
+    ticks: dict[int, list[str]] = {}
+    for row in rows:
+        ticks.setdefault(int(row["survey_period_item_id"]), []).append(str(row["question_id"]))
+    return ticks
+
+
+def questions_for_item(pool: list[dict[str, Any]], question_ids: list[str]) -> list[dict[str, Any]]:
+    """The item's questions, defined by the survey's pool and in pool order.
+
+    A tick that names no pool question is dropped: the pool is the only place a
+    question is defined, so a question removed from the pool takes its ticks
+    with it rather than leaving a blank card on the public page.
+    """
+    if not question_ids:
+        return []
+    wanted = set(question_ids)
+    return [dict(question) for question in pool if question["id"] in wanted]
+
+
+def period_items_public(conn: Any, period: Any) -> list[dict[str, Any]]:
+    """Every item of a survey, with the questions that item asks."""
+    pool = parse_survey_questions(_row_get(period, "questions_json"))
+    ticks = period_item_question_map(conn, int(period["id"]))
+    return [
+        period_item_to_public(row, questions=questions_for_item(pool, ticks.get(int(row["id"]), [])))
+        for row in list_period_items(conn, int(period["id"]))
+    ]
+
+
+def set_period_item_questions(conn: Any, item_id: int, question_ids: list[str]) -> None:
+    execute(conn, "DELETE FROM survey_period_item_questions WHERE survey_period_item_id = ?", (item_id,))
+    seen: set[str] = set()
+    for question_id in question_ids:
+        text = str(question_id or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        execute(
+            conn,
+            "INSERT INTO survey_period_item_questions (survey_period_item_id, question_id) VALUES (?, ?)",
+            (item_id, text),
+        )
+
+
+def save_period_items(conn: Any, period_id: int, items: list[Any], pool_ids: list[str]) -> list[int]:
+    """Upsert a survey's items by id, and drop the ones the save removed.
+
+    Order is the array's order. An item that already exists is updated in
+    place, so its id - and every answer that points at it - survives an edit;
+    only an item the caller left out is deleted (with its own answers).
+    """
+    existing = {int(row["id"]): row for row in list_period_items(conn, period_id)}
+    kept: list[int] = []
+    for index, item in enumerate(items, start=1):
+        ticked = [question_id for question_id in (getattr(item, "question_ids", None) or []) if question_id in pool_ids]
+        item_id = getattr(item, "id", None)
+        values = (
+            str(getattr(item, "item_name", "") or "").strip(),
+            str(getattr(item, "cost", "") or "").strip()[:120],
+            str(getattr(item, "image_url", "") or "").strip()[:1000],
+            str(getattr(item, "item_number", "") or "").strip()[:120],
+            str(getattr(item, "item_description", "") or "").strip(),
+            index,
+        )
+        if item_id is not None and int(item_id) in existing:
+            execute(
+                conn,
+                """
+                UPDATE survey_period_items
+                SET item_name = ?, cost = ?, image_url = ?, item_number = ?,
+                    item_description = ?, sort_order = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ? AND survey_period_id = ?
+                """,
+                (*values, int(item_id), period_id),
+            )
+            kept_id = int(item_id)
+        else:
+            if IS_POSTGRES:
+                row = execute(
+                    conn,
+                    """
+                    INSERT INTO survey_period_items
+                        (survey_period_id, catalog_item_id, item_name, cost, image_url,
+                         item_number, item_description, sort_order)
+                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    """,
+                    (period_id, *values),
+                ).fetchone()
+                kept_id = int(row["id"])
+            else:
+                cursor = execute(
+                    conn,
+                    """
+                    INSERT INTO survey_period_items
+                        (survey_period_id, catalog_item_id, item_name, cost, image_url,
+                         item_number, item_description, sort_order)
+                    VALUES (?, NULL, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (period_id, *values),
+                )
+                kept_id = int(cursor.lastrowid)
+        set_period_item_questions(conn, kept_id, ticked)
+        kept.append(kept_id)
+
+    for item_id in existing:
+        if item_id in kept:
+            continue
+        execute(
+            conn,
+            "DELETE FROM survey_period_items WHERE id = ? AND survey_period_id = ?",
+            (item_id, period_id),
+        )
+    return kept
+
+
+def copy_period_items(conn: Any, source_period_id: int, target_period_id: int) -> int:
+    """Copy a survey's items, their ticks and their order into another survey."""
+    rows = list_period_items(conn, source_period_id)
+    ticks = period_item_question_map(conn, source_period_id)
+    for index, row in enumerate(rows, start=1):
+        values = (
+            target_period_id,
+            row["catalog_item_id"],
+            row["item_name"],
+            _row_get(row, "cost", "") or "",
+            row["image_url"],
+            _row_get(row, "item_number", "") or "",
+            row["item_description"],
+            index,
+        )
+        if IS_POSTGRES:
+            created = execute(
+                conn,
+                """
+                INSERT INTO survey_period_items
+                    (survey_period_id, catalog_item_id, item_name, cost, image_url,
+                     item_number, item_description, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
+                """,
+                values,
+            ).fetchone()
+            new_id = int(created["id"])
+        else:
+            cursor = execute(
+                conn,
+                """
+                INSERT INTO survey_period_items
+                    (survey_period_id, catalog_item_id, item_name, cost, image_url,
+                     item_number, item_description, sort_order)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                values,
+            )
+            new_id = int(cursor.lastrowid)
+        set_period_item_questions(conn, new_id, ticks.get(int(row["id"]), []))
+    return len(rows)
+
+
+def period_response_count(conn: Any, period_id: int) -> int:
+    """Submissions received by one survey (a row per respondent, not per item)."""
+    row = execute(
+        conn,
+        "SELECT COUNT(*) AS count FROM survey_responses"
+        " WHERE survey_period_id = ? AND survey_item_id IS NULL",
+        (period_id,),
+    ).fetchone()
+    return int(row["count"] if row else 0)
+
+
+def find_submission(conn: Any, company_id: int, period_id: int, email: str) -> Any:
+    return execute(
+        conn,
+        """
+        SELECT * FROM survey_responses
+        WHERE company_id = ? AND survey_period_id = ?
+          AND survey_item_id IS NULL AND lower(email) = ?
+        """,
+        (company_id, period_id, str(email or "").lower()),
+    ).fetchone()
+
+
+def save_submission_answers(
+    conn: Any,
+    response_id: int,
+    item_id: int,
+    answers: dict[str, Any],
+) -> int:
+    """Replace one submission's answers for one item, one row per question.
+
+    Only questions this item asks are written, and the whole set for that item
+    is replaced: editing an answer removes the old row rather than leaving the
+    two behind. The value is split by type - a scale goes in ``answer_number``
+    so an average is a query, a checkbox in ``answer_options_json``, text and
+    choices in ``answer_text``.
+    """
+    execute(
+        conn,
+        "DELETE FROM survey_answers WHERE response_id = ? AND survey_period_item_id = ?",
+        (response_id, item_id),
+    )
+    written = 0
+    for question_id, value in answers.items():
+        if value is None:
+            continue
+        text = ""
+        options: list[str] = []
+        number: float | None = None
+        if isinstance(value, list):
+            options = [str(part) for part in value if str(part).strip()]
+            if not options:
+                continue
+        elif isinstance(value, bool):
+            text = "Yes" if value else "No"
+        elif isinstance(value, (int, float)):
+            number = float(value)
+            text = str(value)
+        else:
+            text = str(value).strip()
+            if not text:
+                continue
+        execute(
+            conn,
+            """
+            INSERT INTO survey_answers
+                (response_id, survey_period_item_id, question_id, answer_text,
+                 answer_options_json, answer_number)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (response_id, item_id, str(question_id), text, json.dumps(options), number),
+        )
+        written += 1
+    return written
+
+
 def close_open_survey_periods(conn: Any, company_id: int) -> None:
     execute(
         conn,
@@ -1228,104 +1488,12 @@ def close_open_survey_periods(conn: Any, company_id: int) -> None:
     )
 
 
-def copy_catalog_items_into_period(
-    conn: Any,
-    period_id: int,
-    company_id: int,
-    *,
-    only_in_survey: bool = True,
-    source_period_id: int | None = None,
-) -> int:
-    """Populate period items from a prior period or the live catalog."""
-    execute(conn, "DELETE FROM survey_period_items WHERE survey_period_id = ?", (period_id,))
-
-    if source_period_id is not None:
-        source_items = list_period_items(conn, source_period_id)
-        inserted = 0
-        for index, item in enumerate(source_items, start=1):
-            execute(
-                conn,
-                """
-                INSERT INTO survey_period_items (
-                    survey_period_id, catalog_item_id, item_name, brand, channel, product_type,
-                    key_program, item_description, uom, price, image_url, image_display_size,
-                    image_fit, sort_order, response_width, page_break_before
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    period_id,
-                    item["catalog_item_id"],
-                    item["item_name"],
-                    item["brand"],
-                    item["channel"],
-                    item["product_type"],
-                    item["key_program"],
-                    item["item_description"],
-                    item["uom"],
-                    item["price"],
-                    item["image_url"],
-                    item["image_display_size"] if "image_display_size" in item.keys() else "medium",
-                    item["image_fit"] if "image_fit" in item.keys() else "contain",
-                    index,
-                    item["response_width"] or DEFAULT_RESPONSE_WIDTH,
-                    1 if item["page_break_before"] and index > 1 else 0,
-                ),
-            )
-            inserted += 1
-        return inserted
-
-    clauses = ["company_id = ?", "is_active = ?"]
-    args: list[Any] = [company_id, True]
-    if only_in_survey:
-        clauses.append("in_survey = ?")
-        args.append(1)
-
-    rows = execute(
-        conn,
-        f"""
-        SELECT * FROM survey_items
-        WHERE {' AND '.join(clauses)}
-        ORDER BY survey_sort_order ASC, sort_order ASC, id ASC
-        """,
-        args,
-    ).fetchall()
-
-    inserted = 0
-    for index, item in enumerate(rows, start=1):
-        execute(
-            conn,
-            """
-            INSERT INTO survey_period_items (
-                survey_period_id, catalog_item_id, item_name, brand, channel, product_type,
-                key_program, item_description, uom, price, image_url, image_display_size,
-                image_fit, sort_order, response_width, page_break_before
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                period_id,
-                item["id"],
-                item["item_name"],
-                item["brand"],
-                item["channel"],
-                item["product_type"],
-                item["key_program"],
-                item["item_description"],
-                item["uom"],
-                item["price"],
-                item["image_url"],
-                item["image_display_size"] if "image_display_size" in item.keys() else "medium",
-                item["image_fit"] if "image_fit" in item.keys() else "contain",
-                index,
-                item["response_width"] or DEFAULT_RESPONSE_WIDTH,
-                1 if item["page_break_before"] and index > 1 else 0,
-            ),
-        )
-        inserted += 1
-    return inserted
-
-
 def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
-    """Create an open period from the current catalog if none exist yet."""
+    """Create an empty open survey if the company has never had one.
+
+    It used to be filled from the catalog; a survey owns its items now, so it
+    starts empty and the admin adds the items it should show.
+    """
     existing = execute(
         conn,
         "SELECT * FROM survey_periods WHERE company_id = ? ORDER BY id ASC LIMIT 1",
@@ -1368,7 +1536,6 @@ def ensure_legacy_survey_period(conn: Any, company_id: int) -> Any:
         )
         period = execute(conn, "SELECT * FROM survey_periods WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
-    copy_catalog_items_into_period(conn, period["id"], company_id, only_in_survey=True)
     execute(
         conn,
         """

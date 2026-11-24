@@ -4,10 +4,12 @@ type ModalProps = {
   title: string
   onClose: () => void
   children: ReactNode
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
+  /** Extra class on the card, for a dialog that manages its own scrolling. */
+  className?: string
 }
 
-export function Modal({ title, onClose, children, size = 'md' }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'md', className }: ModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -28,7 +30,7 @@ export function Modal({ title, onClose, children, size = 'md' }: ModalProps) {
     >
       <div
         ref={dialogRef}
-        className={`modal-card modal-card--${size}`}
+        className={`modal-card modal-card--${size}${className ? ` ${className}` : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"

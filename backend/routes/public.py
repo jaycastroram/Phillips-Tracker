@@ -21,14 +21,18 @@ from database import (
     get_open_survey_period,
     get_survey_period_by_token,
     kanban_column_to_public,
+    find_submission,
     list_period_items,
     mirror_legacy_response_fields,
+    period_item_question_map,
     parse_period_filter_fields,
     parse_survey_questions,
+    questions_for_item,
     resolve_interest_question,
     row_value,
     period_item_to_public,
     row_to_item,
+    save_submission_answers,
     survey_filter_fields,
     survey_item_to_public,
     survey_period_is_closed,
@@ -168,23 +172,32 @@ def _survey_item_matches(item: dict, needle: str) -> bool:
 
 
 def _period_survey_payload(conn: Any, period: Any) -> dict:
-    """One period as the survey page reads it: its snapshot, questions, state."""
-    questions = parse_survey_questions(period["questions_json"])
+    """One survey as the public page reads it: each item with its own questions.
+
+    The pool is the survey's own definition of its questions; the item carries
+    the ones it asks, in pool order, so the page never has to work out which
+    tick belongs where.
+    """
+    pool = parse_survey_questions(period["questions_json"])
     if survey_period_is_closed(period):
         return {
             "items": [],
             "filter_fields": [],
-            "questions": questions,
+            "questions": pool,
             "period": survey_period_to_public(period),
             "survey_open": False,
             "message": "This survey is closed.",
         }
-    rows = list_period_items(conn, period["id"])
+    ticks = period_item_question_map(conn, int(period["id"]))
+    items = [
+        period_item_to_public(row, questions=questions_for_item(pool, ticks.get(int(row["id"]), [])))
+        for row in list_period_items(conn, int(period["id"]))
+    ]
     fields = parse_period_filter_fields(period["filter_fields_json"])
     return {
-        "items": [period_item_to_public(row) for row in rows],
+        "items": items,
         "filter_fields": fields,
-        "questions": questions,
+        "questions": pool,
         "period": survey_period_to_public(period),
         "survey_open": True,
     }
@@ -363,7 +376,85 @@ def list_public_company_survey_items(
 # Survey responses
 # ---------------------------------------------------------------------------
 
+def _clean_answer(question: dict[str, Any], raw: Any) -> Any:
+    """One answer, validated against the question that asked it.
+
+    Returns None for "not answered" (an optional question left blank), so the
+    caller can drop it instead of storing an empty row.
+    """
+    if question["type"] == "checkbox":
+        picked = raw if isinstance(raw, list) else ([] if raw in (None, "") else [raw])
+        selected: list[str] = []
+        for value in picked:
+            text = str(value).strip()
+            if not text:
+                continue
+            if question["options"] and text not in question["options"]:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Invalid option for {question['label']}: {text}",
+                )
+            if text not in selected:
+                selected.append(text)
+        if question["required"] and not selected:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Please answer: {question['label']}")
+        return selected or None
+
+    if raw is None or isinstance(raw, list) or str(raw).strip() == "":
+        if question["required"]:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Please answer: {question['label']}")
+        return None
+
+    if question["type"] == "scale":
+        try:
+            scale = int(raw)
+        except (TypeError, ValueError):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid scale for {question['label']}") from None
+        if scale < 1 or scale > 5:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Scale must be 1-5 for {question['label']}"
+            )
+        return scale
+    if question["type"] in {"yes_no", "single_choice", "dropdown"}:
+        option_text = str(raw).strip()
+        if question["options"] and option_text not in question["options"]:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid option for {question['label']}")
+        return option_text
+    return str(raw).strip()
+
+
+def _submission_answers(payload: SurveyResponseCreate) -> dict[int, dict[str, Any]]:
+    """The payload as ``{item_id: {question_id: value}}``, in either body shape.
+
+    The current body keys answers by item. The pre-item-form body names one
+    item and keys its answers by question; that is read as a one-item
+    submission, so an old embedded form keeps working.
+    """
+    if payload.survey_item_id is not None:
+        return {int(payload.survey_item_id): dict(payload.answers or {})}
+    answers: dict[int, dict[str, Any]] = {}
+    for key, value in (payload.answers or {}).items():
+        try:
+            item_id = int(key)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, f"Invalid survey item id: {key}"
+            ) from None
+        if not isinstance(value, dict):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Answers must be keyed by item then question")
+        answers[item_id] = dict(value)
+    return answers
+
+
 def _create_survey_response(company: Any, payload: SurveyResponseCreate, token: str) -> dict:
+    """One respondent, every item they answered, one submission row.
+
+    Answers land one row per item x question, so a survey whose items ask
+    different questions needs no per-item form posts and no shared answer blob.
+    A second submission from the same email updates the first: the unique index
+    on (company, survey, lower(email)) is the rule, and the route reads it
+    rather than relying on a client to behave.
+    """
     company_id = int(company["id"])
     text = str(token or "").strip()
     with connect() as conn:
@@ -382,172 +473,111 @@ def _create_survey_response(company: Any, payload: SurveyResponseCreate, token: 
         else:
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "survey_token_required")
 
-        period_item = execute(
-            conn,
-            """
-            SELECT id, catalog_item_id
-            FROM survey_period_items
-            WHERE survey_period_id = ? AND catalog_item_id = ?
-            """,
-            (period["id"], payload.survey_item_id),
-        ).fetchone()
-        if period_item is None:
-            raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey item not found in the open survey")
+        pool = parse_survey_questions(period["questions_json"])
+        ticks = period_item_question_map(conn, int(period["id"]))
+        items = {
+            int(row["id"]): {
+                "row": row,
+                "questions": questions_for_item(pool, ticks.get(int(row["id"]), [])),
+            }
+            for row in list_period_items(conn, int(period["id"]))
+        }
 
-        questions = parse_survey_questions(period["questions_json"])
-        answers = {str(key): value for key, value in (payload.answers or {}).items()}
-
-        # Back-compat: an older client sends interest/notes as legacy fields only.
-        # Its Yes/No is translated into the survey's own interest question (first
-        # option = yes, second = no), so a renamed or relabelled question still
-        # accepts it instead of rejecting a value it never offered.
-        if not answers:
-            interest_question = resolve_interest_question(questions)
-            if payload.recommend_rollout in {"Yes", "No"}:
-                if interest_question is not None:
-                    options = interest_question.get("options") or []
-                    answers[interest_question["id"]] = (
-                        options[0] if payload.recommend_rollout == "Yes" and options
-                        else options[1] if payload.recommend_rollout == "No" and len(options) > 1
-                        else payload.recommend_rollout
-                    )
-                else:
-                    answers["interest"] = payload.recommend_rollout
-            if payload.feedback.strip():
-                text_question = next((q for q in questions if q["type"] == "text"), None)
-                answers[(text_question or {"id": "feedback"})["id"]] = payload.feedback.strip()
-
-        for question in questions:
-            raw = answers.get(question["id"])
-
-            if question["type"] == "checkbox":
-                # Multi-select: a list, validated element by element.
-                picked = raw if isinstance(raw, list) else ([] if raw in (None, "") else [raw])
-                selected: list[str] = []
-                for value in picked:
-                    value_text = str(value).strip()
-                    if not value_text:
-                        continue
-                    if question["options"] and value_text not in question["options"]:
-                        raise HTTPException(
-                            status.HTTP_400_BAD_REQUEST,
-                            f"Invalid option for {question['label']}: {value_text}",
-                        )
-                    if value_text not in selected:
-                        selected.append(value_text)
-                if question["required"] and not selected:
+        submitted = _submission_answers(payload)
+        if not submitted:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "No answers were submitted")
+        by_question: dict[int, dict[str, Any]] = {}
+        for item_id, raw_answers in submitted.items():
+            item = items.get(item_id)
+            if item is None:
+                raise HTTPException(status.HTTP_404_NOT_FOUND, "Survey item not found in the open survey")
+            asked = {question["id"]: question for question in item["questions"]}
+            cleaned: dict[str, Any] = {}
+            for question_id, value in raw_answers.items():
+                question = asked.get(str(question_id))
+                if question is None:
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
-                        f"Please answer: {question['label']}",
+                        "This survey changed while it was open. Reload the page and answer again.",
                     )
-                if selected:
-                    answers[question["id"]] = selected
-                else:
-                    answers.pop(question["id"], None)
-                continue
-
-            unanswered = raw is None or isinstance(raw, list) or str(raw).strip() == ""
-            if question["required"] and unanswered:
-                raise HTTPException(
-                    status.HTTP_400_BAD_REQUEST,
-                    f"Please answer: {question['label']}",
-                )
-            if unanswered:
-                continue
-
-            if question["type"] == "scale":
-                try:
-                    scale = int(raw)
-                except (TypeError, ValueError):
-                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Invalid scale for {question['label']}")
-                if scale < 1 or scale > 5:
-                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Scale must be 1-5 for {question['label']}")
-                answers[question["id"]] = scale
-            elif question["type"] in {"yes_no", "single_choice", "dropdown"}:
-                option_text = str(raw).strip()
-                if question["options"] and option_text not in question["options"]:
+                answer = _clean_answer(question, value)
+                if answer is not None:
+                    cleaned[str(question_id)] = answer
+            for question in item["questions"]:
+                if question["required"] and question["id"] not in cleaned:
                     raise HTTPException(
-                        status.HTTP_400_BAD_REQUEST,
-                        f"Invalid option for {question['label']}",
+                        status.HTTP_400_BAD_REQUEST, f"Please answer: {question['label']}"
                     )
-                answers[question["id"]] = option_text
-            elif question["type"] == "text":
-                answers[question["id"]] = str(raw).strip()
+            by_question[item_id] = cleaned
 
-        recommend, feedback, attention, retail, stands_out, price_reasonable = mirror_legacy_response_fields(
-            questions,
-            answers,
+        email = str(payload.email or "").strip().lower()
+        # The legacy columns are per response and the header now covers many
+        # items, so they mirror the first item that was answered - nothing reads
+        # them for a new survey, and the (item, question) answers are the record.
+        first_item_id = next(iter(by_question))
+        interest, feedback, attention, retail, stands_out, price_reasonable = mirror_legacy_response_fields(
+            items[first_item_id]["questions"],
+            by_question[first_item_id],
         )
         if payload.feedback.strip() and not feedback:
             feedback = payload.feedback.strip()
 
-        email = str(payload.email).lower()
-        answers_json = json.dumps(answers)
-        # Last write wins: the unique index is on (company, period, item,
-        # lower(email)), so a second answer for the same shopper is an update
-        # of the one row, never a second row.
-        key_args = (company_id, period["id"], payload.survey_item_id, email)
-        existing = execute(
-            conn,
-            """
-            SELECT id FROM survey_responses
-            WHERE company_id = ? AND survey_period_id = ? AND survey_item_id = ? AND lower(email) = ?
-            """,
-            key_args,
-        ).fetchone()
+        existing = find_submission(conn, company_id, int(period["id"]), email) if email else None
         if existing is not None:
             execute(
                 conn,
                 """
                 UPDATE survey_responses
-                SET email = ?, attention_effectiveness = ?, recommend_rollout = ?,
-                    retail_engagement = ?, stands_out = ?, price_reasonable = ?,
-                    feedback = ?, answers_json = ?, updated_at = CURRENT_TIMESTAMP
+                SET attention_effectiveness = ?, recommend_rollout = ?, retail_engagement = ?,
+                    stands_out = ?, price_reasonable = ?, feedback = ?,
+                    updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (email, attention, recommend, retail, stands_out, price_reasonable, feedback, answers_json, existing["id"]),
+                (attention, interest, retail, stands_out, price_reasonable, feedback, existing["id"]),
             )
-            row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (existing["id"],)).fetchone()
+            response_id = int(existing["id"])
         else:
             values = (
                 company_id,
                 period["id"],
-                payload.survey_item_id,
                 email,
                 attention,
-                recommend,
+                interest,
                 retail,
                 stands_out,
                 price_reasonable,
                 feedback,
-                answers_json,
             )
             sql = """
                 INSERT INTO survey_responses (
-                    company_id, survey_period_id, survey_item_id, email, attention_effectiveness, recommend_rollout,
-                    retail_engagement, stands_out, price_reasonable, feedback, answers_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    company_id, survey_period_id, survey_item_id, email, attention_effectiveness,
+                    recommend_rollout, retail_engagement, stands_out, price_reasonable, feedback, answers_json
+                ) VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, '{}')
             """
             try:
                 if IS_POSTGRES:
                     row = execute(conn, with_returning(sql), values).fetchone()
+                    response_id = int(row["id"])
                 else:
                     cursor = execute(conn, sql, values)
-                    row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (cursor.lastrowid,)).fetchone()
+                    response_id = int(cursor.lastrowid)
             except Exception:
                 # A parallel submit from the same shopper won the insert; take
                 # it as an update rather than a 500.
-                row = execute(
-                    conn,
-                    """
-                    SELECT * FROM survey_responses
-                    WHERE company_id = ? AND survey_period_id = ? AND survey_item_id = ? AND lower(email) = ?
-                    """,
-                    key_args,
-                ).fetchone()
+                row = find_submission(conn, company_id, int(period["id"]), email)
                 if row is None:
                     raise
-    return {"response": survey_response_to_public(row)}
+                response_id = int(row["id"])
+
+        answered = 0
+        for item_id, answers in by_question.items():
+            answered += save_submission_answers(conn, response_id, item_id, answers)
+
+        row = execute(conn, "SELECT * FROM survey_responses WHERE id = ?", (response_id,)).fetchone()
+    result = survey_response_to_public(row)
+    result["item_count"] = len(by_question)
+    result["answer_count"] = answered
+    return {"response": result}
 
 
 @router.post("/survey-responses")
